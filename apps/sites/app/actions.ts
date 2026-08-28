@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers";
 import { convexClient } from "@/lib/convex";
-import { submitQuote } from "@/lib/api";
+import { api } from "@cc/convex/api";
 
 /**
  * The quote form posts through a server action, not a browser mutation.
@@ -33,7 +33,7 @@ export async function submitQuoteAction(payload: {
 
   try {
     const userAgent = (await headers()).get("user-agent") ?? undefined;
-    await convex.mutation(submitQuote, { ...payload, userAgent });
+    await convex.mutation(api.public.quote.submit, { ...payload, userAgent });
     return { ok: true };
   } catch (error) {
     // The customer gets a route to a human, never a stack trace. The detail

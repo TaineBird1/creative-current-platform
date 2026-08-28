@@ -4,7 +4,11 @@
     {
       "name": "sites",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@cc/sites", "dev"],
+      "runtimeArgs": [
+        "--filter",
+        "@cc/sites",
+        "dev"
+      ],
       "port": 3100
     }
   ]

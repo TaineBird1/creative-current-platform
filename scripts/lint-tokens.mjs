@@ -32,6 +32,9 @@ const COLOUR_ALLOWLIST = new Set([
   // the preview route exists to feed one through the ramp. The rule is about
   // colour that ships as style, and this is the seam where data enters.
   join("apps", "sites", "app", "preview", "page.tsx"),
+  // Same seam: seed data supplies a client's brand colour, which is a hex by
+  // definition. It is fed through the ramp, not painted.
+  join("convex", "seed.ts"),
 ]);
 
 const SKIP_DIRS = new Set([

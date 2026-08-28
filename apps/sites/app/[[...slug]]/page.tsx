@@ -3,7 +3,8 @@ import { permanentRedirect, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { safeParseSiteConfig } from "@cc/site-config";
 import { convexClient } from "@/lib/convex";
-import { resolveSite, redirectFor, type ResolvedSite } from "@/lib/api";
+import { api } from "@cc/convex/api";
+import type { FunctionReturnType } from "convex/server";
 import { SiteRenderer } from "@/components/SiteRenderer";
 import { HoldingPage } from "@/components/HoldingPage";
 import { NotConnected } from "@/components/NotConnected";
@@ -22,6 +23,8 @@ import { submitQuoteAction } from "../actions";
  */
 
 export const dynamic = "force-dynamic";
+
+type ResolvedSite = FunctionReturnType<typeof api.public.site.resolve>;
 
 type Params = { params: Promise<{ slug?: string[] }>; searchParams: Promise<{ site?: string }> };
 
@@ -47,7 +50,7 @@ async function resolve(
   const slug = site ?? segments?.[0];
   const path = "/" + (segments ?? []).join("/");
 
-  const result = await convex.query(resolveSite, { host, slug });
+  const result = await convex.query(api.public.site.resolve, { host, slug });
   return { state: "resolved", result, path };
 }
 
@@ -99,7 +102,7 @@ export default async function SitePage({ params, searchParams }: Params) {
   // otherwise 404 on.
   if (path !== "/" && path !== `/${result.slug}`) {
     const convex = convexClient();
-    const hit = await convex?.query(redirectFor, { slug: result.slug, path });
+    const hit = await convex?.query(api.public.site.redirectFor, { slug: result.slug, path });
     if (hit) redirect(hit.to);
   }
 

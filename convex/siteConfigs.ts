@@ -1,5 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { parseSiteConfig, SITE_CONFIG_VERSION } from "@cc/site-config";
+import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { tenantMutation, tenantQuery } from "./lib/functions";
 import { assertOwned, auditWrite } from "./lib/tenancy";
 
@@ -18,6 +20,37 @@ import { assertOwned, auditWrite } from "./lib/tenancy";
 
 const invalid = (issues: string) =>
   new ConvexError({ code: "INVALID_CONFIG", message: issues });
+
+/**
+ * The site-insert primitive. Lives here because guards.test.ts holds this file
+ * as the ONLY writer of the sites table — the config column is v.any(), so
+ * this Zod parse is the only thing standing between the database and rubbish.
+ * Callers (onboarding, demo generation, seeding) come through here.
+ */
+export async function insertSite(
+  ctx: MutationCtx,
+  args: {
+    clientId: Id<"clients">;
+    slug: string;
+    config: unknown;
+    status: "draft" | "demo" | "live" | "archived";
+    isDemo: boolean;
+    publish?: boolean;
+  },
+) {
+  const parsed = parseSiteConfig(args.config);
+  return ctx.db.insert("sites", {
+    clientId: args.clientId,
+    slug: args.slug,
+    status: args.status,
+    config: parsed,
+    publishedConfig: args.publish ? parsed : undefined,
+    publishedAt: args.publish ? Date.now() : undefined,
+    version: 1,
+    configSchemaVersion: SITE_CONFIG_VERSION,
+    isDemo: args.isDemo,
+  });
+}
 
 export const get = tenantQuery("staff")({
   args: {},

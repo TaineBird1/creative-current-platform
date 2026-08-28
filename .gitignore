@@ -10,3 +10,9 @@ out/
 .vercel
 convex/_generated/
 .DS_Store
+
+# Convex AI assistance: vendored third-party skills, reinstallable from the
+# lockfile with `npx convex ai-files install`. The lockfile IS committed.
+.claude/skills/
+.agents/
+convex/_generated/ai/

@@ -1,4 +1,4 @@
-import { contrastRatio } from "./primitives";
+import { contrastRatio, SURFACE_FLOOR } from "./primitives";
 import type { z } from "zod";
 import type { accentRamp } from "./primitives";
 
@@ -16,9 +16,11 @@ export type RampStep = (typeof RAMP_STEPS)[number];
  *      out a generic mid-blue has been given someone else's brand. So the ramp
  *      is anchored: the brand lands exactly on whichever step its own lightness
  *      is nearest, and the rest of the scale is built around it.
- *   2. AA OR IT DOES NOT SHIP. Step 700 is body/link text on white and must
- *      clear 4.5:1. Step 500 is a button fill and must clear 4.5:1 against
- *      whichever of black/white sits on it. Both are corrected, not hoped over.
+ *   2. AA OR IT DOES NOT SHIP. Step 700 is body/link text and must clear
+ *      4.5:1 against SURFACE_FLOOR -- the darkest light band it sits on, not
+ *      pure white, which flatters the number by about 0.15 and let two real
+ *      brand colours ship at 4.40:1. Step 500 is a button fill and must clear
+ *      4.5:1 against whichever of black/white sits on it. Both are corrected.
  *   3. MONOTONIC. Every step is strictly lighter than the next. A correction
  *      that pushes 700 past 800 produces a ramp that looks broken in a way no
  *      contrast check catches -- which is exactly what the first version did.
@@ -123,10 +125,10 @@ export function buildAccentRamp(brandColour: string): AccentRamp {
   }
 
   // --- 2. correct the two anchors that carry an accessibility contract -----
-  // 700 is body text and links on white.
+  // 700 is body text and links, on the darkest light band it can land on.
   lightness[700] = Math.min(
     lightness[700]!,
-    maxLightnessPassing(h, s, "#ffffff", 4.5, lightness[700]!),
+    maxLightnessPassing(h, s, SURFACE_FLOOR, 4.5, lightness[700]!),
   );
 
   // 500 is a button fill. Prefer keeping it as-is with whichever foreground
@@ -136,7 +138,7 @@ export function buildAccentRamp(brandColour: string): AccentRamp {
   if (contrastRatio(hslToHex(h, s, lightness[500]!), fgFor(hslToHex(h, s, lightness[500]!))) < 4.5) {
     lightness[500] = Math.min(
       lightness[500]!,
-      maxLightnessPassing(h, s, "#ffffff", 4.5, lightness[500]!),
+      maxLightnessPassing(h, s, SURFACE_FLOOR, 4.5, lightness[500]!),
     );
   }
 
@@ -160,6 +162,15 @@ export function buildAccentRamp(brandColour: string): AccentRamp {
     // and, if neither does, fall back to the darkest permitted lightness.
     lightness[500] = clamp(lightness[600]! + MIN_GAP / 2, 0, 0.99);
     s500 = hslToHex(h, s, lightness[500]!);
+  }
+
+  // The tinted band paints step 50 and writes step 700 on it. That pairing has
+  // its own floor, and it is tighter than the page ground for saturated hues.
+  for (let i = 0; i < 40; i++) {
+    if (contrastRatio(hslToHex(h, s, lightness[700]!), hslToHex(h, s, lightness[50]!)) >= 4.5) break;
+    lightness[700] = clamp(lightness[700]! - 0.01, 0.02, 1);
+    lightness[800] = clamp(Math.min(lightness[800]!, lightness[700]! - MIN_GAP), 0.02, 1);
+    lightness[900] = clamp(Math.min(lightness[900]!, lightness[800]! - MIN_GAP), 0.02, 1);
   }
 
   const hex = (step: RampStep) => hslToHex(h, s, lightness[step]!);

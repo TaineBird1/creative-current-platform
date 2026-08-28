@@ -1,0 +1,145 @@
+/*
+ * apps/sites — public client websites. World: client.
+ * Colours, fonts and radii come from packages/tokens. Nothing literal here.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  text-wrap: balance;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* ---- the one authored moment ---------------------------------------- */
+/*
+ * Bands settle on first paint, from an ALREADY VISIBLE default. If JS never
+ * runs, if the animation is blocked, if motion is reduced — the page is still
+ * fully readable. Nothing here is load-bearing.
+ */
+@keyframes band-settle {
+  from {
+    opacity: 0.55;
+    transform: translateY(var(--space-xs));
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+.band {
+  animation: band-settle var(--duration-slow) var(--ease-out) both;
+  animation-timeline: view();
+  animation-range: entry 0% cover 22%;
+}
+
+@supports not (animation-timeline: view()) {
+  .band {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .band {
+    animation: none;
+  }
+}
+
+/* ---- shared section scaffolding -------------------------------------- */
+
+.band {
+  padding-block: var(--space-2xl);
+}
+
+.band--tight {
+  padding-block: var(--space-xl);
+}
+
+.shell {
+  width: min(100% - var(--space-m) * 2, 74rem);
+  margin-inline: auto;
+}
+
+.prose {
+  max-width: var(--measure);
+}
+
+.rule {
+  border: 0;
+  border-top: var(--border-hairline) solid var(--border);
+  margin: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * A skip link that never becomes visible is not a skip link. Keyboard users
+ * were getting a 1x1 target with no way to see where focus had gone.
+ */
+a.sr-only:focus-visible {
+  position: fixed;
+  top: var(--space-s);
+  left: var(--space-s);
+  z-index: 100;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: var(--space-2xs) var(--space-s);
+  clip-path: none;
+  background: var(--accent-500);
+  color: var(--on-accent);
+  border-radius: var(--radius-m);
+  font-weight: 600;
+}

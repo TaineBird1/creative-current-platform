@@ -28,6 +28,10 @@ const COLOUR_ALLOWLIST = new Set([
   join("packages", "site-config", "src", "accent.ts"),
   join("packages", "site-config", "src", "primitives.ts"),
   join("scripts", "lint-tokens.mjs"),
+  // A brand colour is CONTENT, not styling -- clients hand you "#f26a1b" and
+  // the preview route exists to feed one through the ramp. The rule is about
+  // colour that ships as style, and this is the seam where data enters.
+  join("apps", "sites", "app", "preview", "page.tsx"),
 ]);
 
 const SKIP_DIRS = new Set([
@@ -71,14 +75,18 @@ const RULES = [
   },
   {
     id: "inline-font",
-    // font-family: "Whatever" — but var(--font-*) is fine.
-    pattern: /font-family\s*:\s*(?!var\()[^;\n]+/g,
+    // Capture the VALUE and test it, rather than putting a negative lookahead
+    // after \s* — that backtracks to zero width, the lookahead then passes on
+    // the space, and the rule flags the exact thing it exists to permit.
+    pattern: /font-family\s*:([^;\n]+)/g,
+    valueOk: (value) => value.trim().startsWith("var("),
     message: "inline font-family — use var(--font-sans|--font-display|--font-mono)",
     allow: new Set([TOKENS_FILE]),
   },
   {
     id: "magic-radius",
-    pattern: /border-radius\s*:\s*(?!var\()\d+(?:px|rem)/g,
+    pattern: /border-radius\s*:([^;\n]+)/g,
+    valueOk: (value) => !/^\s*\d/.test(value),
     message: "hard-coded radius — use var(--radius-*)",
     allow: new Set([TOKENS_FILE]),
   },
@@ -98,9 +106,10 @@ for (const file of files) {
     lines.forEach((line, i) => {
       // A comment explaining a colour is fine; a colour that ships is not.
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
-      const matches = line.match(rule.pattern);
-      if (!matches) return;
-      for (const m of matches) {
+      const matches = [...line.matchAll(rule.pattern)];
+      if (matches.length === 0) return;
+      for (const match of matches) {
+        if (rule.valueOk && match[1] !== undefined && rule.valueOk(match[1])) continue;
         failures++;
         console.error(`${rel.split(sep).join("/")}:${i + 1}  [${rule.id}] ${rule.message}`);
         console.error(`    ${line.trim()}`);

@@ -1,0 +1,456 @@
+/* Section presentation for template solar-trades, variant ink. */
+
+/* ---- hero ------------------------------------------------------------ */
+.hero {
+  padding-block: clamp(var(--space-2xl), 12vw, var(--space-3xl)) var(--space-2xl);
+}
+
+.heroHeadline {
+  font-size: var(--step-5);
+  max-width: 18ch;
+  margin-bottom: var(--space-m);
+}
+
+.heroSub {
+  font-size: var(--step-1);
+  color: var(--text-muted);
+  max-width: 46ch;
+  margin-bottom: var(--space-l);
+}
+
+.heroActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.heroTrust {
+  margin-top: var(--space-m);
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+/* ---- buttons --------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  padding: var(--space-xs) var(--space-m);
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid transparent;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.btnPrimary {
+  background: var(--accent-500);
+  color: var(--on-accent);
+}
+
+.btnPrimary:hover {
+  background: var(--accent-600);
+}
+
+.btnPrimary:active {
+  transform: translateY(1px);
+}
+
+.btnSecondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.btnSecondary:hover {
+  border-color: var(--text);
+  background: var(--bg-sunken);
+}
+
+/* ---- statBand: a ruled data line, not metric tiles ------------------- */
+.stats {
+  display: grid;
+  gap: 0;
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.statRow {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--space-2xs) var(--space-m);
+  align-items: baseline;
+  padding-block: var(--space-s);
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.statValue {
+  font-size: var(--step-3);
+  font-weight: 600;
+  color: var(--accent-700);
+  min-width: 6ch;
+}
+
+.statLabel {
+  font-size: var(--step-0);
+  color: var(--text);
+}
+
+/* A number without its source is a claim. The source is not fine print. */
+.statSource {
+  display: block;
+  font-size: var(--step--1);
+  color: var(--text-faint);
+  margin-top: var(--space-3xs);
+}
+
+/* ---- narrative ------------------------------------------------------- */
+.narrativeHeading {
+  font-size: var(--step-4);
+  max-width: 16ch;
+  margin-bottom: var(--space-m);
+}
+
+.narrativeGrid {
+  display: grid;
+  gap: var(--space-l);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 60rem) {
+  .narrativeGrid {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    gap: var(--space-xl);
+  }
+}
+
+.narrativeBody > p + p {
+  margin-top: var(--space-s);
+}
+
+.pullQuote {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  line-height: var(--leading-snug);
+  color: var(--accent-700);
+  margin-top: var(--space-l);
+  padding-top: var(--space-m);
+  border-top: var(--border-hairline) solid var(--border);
+  max-width: 30ch;
+}
+
+/* ---- process: numbered because the sequence carries information ------ */
+.steps {
+  display: grid;
+  gap: 0;
+  margin-top: var(--space-l);
+  counter-reset: step;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  gap: var(--space-s);
+  padding-block: var(--space-m);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.stepMarker {
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--accent-700);
+  padding-top: 0.2em;
+}
+
+.stepTitle {
+  font-size: var(--step-1);
+  margin-bottom: var(--space-3xs);
+}
+
+.stepBody {
+  color: var(--text-muted);
+  max-width: 60ch;
+}
+
+/* ---- cards: bordered editorial columns, never boxes ------------------ */
+.columns {
+  display: grid;
+  gap: 0;
+  margin-top: var(--space-l);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+@media (min-width: 48rem) {
+  .columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-l);
+  }
+}
+
+@media (min-width: 72rem) {
+  .columns[data-columns="3"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .columns[data-columns="4"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.column {
+  padding-block: var(--space-m);
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.columnTitle {
+  font-size: var(--step-1);
+  margin-bottom: var(--space-2xs);
+}
+
+.columnBody {
+  color: var(--text-muted);
+  font-size: var(--step-0);
+}
+
+/* ---- logoStrip ------------------------------------------------------- */
+.logos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-l);
+  align-items: center;
+  padding-block: var(--space-m);
+  border-block: var(--border-hairline) solid var(--border);
+}
+
+.logoName {
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.disclaimer {
+  margin-top: var(--space-m);
+  color: var(--text-faint);
+  max-width: var(--measure);
+  font-size: var(--step--1);
+}
+
+/* ---- faq ------------------------------------------------------------- */
+.faqList {
+  margin-top: var(--space-l);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.faqItem {
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.faqSummary {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-m);
+  padding-block: var(--space-m);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+  list-style: none;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.faqSummary::-webkit-details-marker {
+  display: none;
+}
+
+.faqSummary:hover {
+  color: var(--accent-700);
+}
+
+.faqMark {
+  flex: none;
+  color: var(--accent-700);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.faqItem[open] .faqMark {
+  transform: rotate(45deg);
+}
+
+.faqAnswer {
+  padding-bottom: var(--space-m);
+  color: var(--text-muted);
+  max-width: var(--measure);
+}
+
+/* ---- forms ----------------------------------------------------------- */
+.form {
+  display: grid;
+  gap: var(--space-m);
+  margin-top: var(--space-l);
+  max-width: 44rem;
+}
+
+.fieldRow {
+  display: grid;
+  gap: var(--space-m);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 40rem) {
+  .fieldRow[data-cols="2"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.field {
+  display: grid;
+  gap: var(--space-3xs);
+}
+
+.label {
+  font-weight: 600;
+  font-size: var(--step--1);
+}
+
+.optional {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.control {
+  width: 100%;
+  padding: var(--space-xs) var(--space-s);
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: var(--radius-m);
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.control::placeholder {
+  color: var(--text-faint);
+}
+
+.control:hover {
+  border-color: var(--text-faint);
+}
+
+.control[aria-invalid="true"] {
+  border-color: var(--signal-danger);
+}
+
+textarea.control {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+.consent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2xs);
+  align-items: start;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+.consent {
+  padding-block: var(--space-2xs);
+  cursor: pointer;
+}
+
+.consent input {
+  margin-top: 0.15em;
+  accent-color: var(--accent-600);
+  width: 1.25em;
+  height: 1.25em;
+  flex: none;
+}
+
+.error {
+  color: var(--signal-danger);
+  font-size: var(--step--1);
+}
+
+.success {
+  padding: var(--space-m);
+  border: var(--border-hairline) solid var(--accent-300);
+  border-radius: var(--radius-m);
+  background: var(--accent-50);
+  color: var(--accent-900);
+  max-width: 44rem;
+  margin-top: var(--space-l);
+}
+
+/* ---- contact --------------------------------------------------------- */
+.contactGrid {
+  display: grid;
+  gap: var(--space-l);
+  margin-top: var(--space-l);
+  border-top: var(--border-hairline) solid var(--border);
+  padding-top: var(--space-m);
+}
+
+@media (min-width: 48rem) {
+  .contactGrid {
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  }
+}
+
+.contactLabel {
+  font-size: var(--step--1);
+  color: var(--text-faint);
+  margin-bottom: var(--space-3xs);
+}
+
+.contactValue {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--step-1);
+  /* A phone number on a phone is the highest-intent target on the page. */
+  min-height: 2.75rem;
+}
+
+/* ---- sticky bar ------------------------------------------------------ */
+.sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: var(--border-hairline);
+  background: var(--border);
+  border-top: var(--border-hairline) solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (min-width: 48rem) {
+  .sticky {
+    display: none;
+  }
+}
+
+.stickyAction {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3xs);
+  padding: var(--space-s);
+  background: var(--bg-raised);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: var(--step--1);
+  min-height: 3.25rem;
+}
+
+.stickyAction[data-primary="true"] {
+  background: var(--accent-500);
+  color: var(--on-accent);
+}

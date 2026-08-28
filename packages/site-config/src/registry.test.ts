@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, test } from "vitest";
 import { anchorStep, buildAccentRamp, RAMP_STEPS } from "./accent";
-import { contrastRatio, relativeLuminance } from "./primitives";
+import { contrastRatio, relativeLuminance, SURFACE_FLOOR } from "./primitives";
 import { safeParseSiteConfig, parseSiteConfig } from "./site-config";
 import { solarTradesTemplate } from "./templates/solar-trades";
 import { SECTION_TYPES } from "./sections";
@@ -172,9 +172,14 @@ describe("accent ramp", () => {
     expect(drift, `${brand} drifted to ${ramp[step]} at step ${step}`).toBeLessThan(1.45);
   });
 
-  test.each(brands)("%s produces an AA-safe ramp", (brand) => {
+  test.each(brands)("%s produces an AA-safe ramp on every ground it lands on", (brand) => {
     const ramp = buildAccentRamp(brand);
-    expect(contrastRatio(ramp[700], "#ffffff")).toBeGreaterThanOrEqual(4.5);
+    // Against the DARKEST light band, not pure white. Measuring on white
+    // flattered the number by ~0.15 and shipped two brands at 4.40:1.
+    expect(contrastRatio(ramp[700], SURFACE_FLOOR)).toBeGreaterThanOrEqual(4.5);
+    // The tinted band paints 50 and writes 700 on it.
+    expect(contrastRatio(ramp[700], ramp[50])).toBeGreaterThanOrEqual(4.5);
+    // The button fill under whichever foreground it was given.
     expect(contrastRatio(ramp[500], ramp.onAccent)).toBeGreaterThanOrEqual(4.5);
   });
 

@@ -51,6 +51,15 @@ export function contrastRatio(a: string, b: string): number {
  * `onAccent` is the text colour used on top of step 500 — it must clear
  * AA 4.5:1 or the config is rejected.
  */
+/**
+ * The DARKEST light ground an accent ever sits on: the sunken band (ink-50).
+ * Correcting against #ffffff instead was a real bug -- a ramp that cleared
+ * 4.5:1 on pure white measured 4.40:1 on the page's actual warm ground, so
+ * the gate passed and the rendered page failed. Validate against the surface
+ * you actually paint, not the one that flatters the number.
+ */
+export const SURFACE_FLOOR = "#f7f7f6";
+
 export const accentRamp = z
   .object({
     50: hexColour,
@@ -66,11 +75,19 @@ export const accentRamp = z
     onAccent: hexColour,
   })
   .superRefine((ramp, ctx) => {
-    const body = contrastRatio(ramp[700], "#ffffff");
+    const body = contrastRatio(ramp[700], SURFACE_FLOOR);
     if (body < 4.5) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `accent.700 on white is ${body.toFixed(2)}:1, needs >= 4.5:1`,
+        message: `accent.700 on the page ground is ${body.toFixed(2)}:1, needs >= 4.5:1`,
+      });
+    }
+    // The tinted band uses step 50 as its ground and step 700 as its text.
+    const onTint = contrastRatio(ramp[700], ramp[50]);
+    if (onTint < 4.5) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `accent.700 on accent.50 is ${onTint.toFixed(2)}:1, needs >= 4.5:1`,
       });
     }
     const button = contrastRatio(ramp[500], ramp.onAccent);

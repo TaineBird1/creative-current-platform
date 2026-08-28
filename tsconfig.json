@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "paths": { "@cc/site-config": ["./packages/site-config/src/index.ts"] }
+  },
+  "include": ["convex/**/*.ts", "scripts/**/*.mjs"]
+}

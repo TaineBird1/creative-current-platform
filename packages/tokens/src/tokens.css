@@ -1,0 +1,164 @@
+/*
+ * TWO VISUAL WORLDS. Never restyle one while changing the other.
+ *
+ *   .world-admin  -- the owner's console. Monochrome ink. NO client colour
+ *                    ever appears here; a tinted admin is how you misread
+ *                    whose data you are looking at.
+ *   .world-client -- the client's back office and public site. Warm neutral
+ *                    ground, tinted by that client's accent ramp, which is
+ *                    injected at runtime as --accent-* custom properties.
+ *
+ * Raw hex outside this file fails `pnpm lint:tokens`. That lint rule is the
+ * thing that actually holds -- skills and docs do not survive a session
+ * boundary.
+ */
+
+:root {
+  /* ---- type ---------------------------------------------------------- */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Instrument Serif", ui-serif, Georgia, serif;
+  /* Tabular figures on every number, price, time and phone. Not optional. */
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --step--1: clamp(0.83rem, 0.81rem + 0.1vw, 0.89rem);
+  --step-0: clamp(1rem, 0.96rem + 0.18vw, 1.13rem);
+  --step-1: clamp(1.2rem, 1.13rem + 0.33vw, 1.42rem);
+  --step-2: clamp(1.44rem, 1.33rem + 0.55vw, 1.8rem);
+  --step-3: clamp(1.73rem, 1.55rem + 0.87vw, 2.27rem);
+  --step-4: clamp(2.07rem, 1.81rem + 1.32vw, 2.87rem);
+  --step-5: clamp(2.49rem, 2.1rem + 1.94vw, 3.62rem);
+
+  --leading-tight: 1.08;
+  --leading-snug: 1.28;
+  --leading-body: 1.6;
+  --tracking-tight: -0.022em;
+  --tracking-normal: 0;
+
+  /* ---- space (one 4px-rooted scale, both worlds) --------------------- */
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-s: 1rem;
+  --space-m: 1.5rem;
+  --space-l: 2.25rem;
+  --space-xl: 3.5rem;
+  --space-2xl: 5.5rem;
+  --space-3xl: 8rem;
+
+  --radius-s: 4px;
+  --radius-m: 8px;
+  --radius-l: 16px;
+  --radius-full: 999px;
+
+  --border-hairline: 1px;
+  --measure: 68ch;
+
+  /* ---- motion -------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --duration-fast: 120ms;
+  --duration-base: 220ms;
+  --duration-slow: 420ms;
+
+  /* ---- neutral ink ramp (shared substrate, not a world) --------------- */
+  --ink-0: #ffffff;
+  --ink-50: #f7f7f6;
+  --ink-100: #eeeeec;
+  --ink-200: #dededa;
+  --ink-300: #c2c2bd;
+  --ink-400: #9a9a94;
+  --ink-500: #74746e;
+  --ink-600: #55554f;
+  --ink-700: #3d3d38;
+  --ink-800: #272723;
+  --ink-900: #161613;
+  --ink-950: #0b0b09;
+
+  --signal-positive: #17694a;
+  --signal-warning: #8a5b00;
+  --signal-danger: #a02020;
+  --signal-info: #1f4d7a;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 1ms;
+    --duration-base: 1ms;
+    --duration-slow: 1ms;
+  }
+}
+
+/* ---- WORLD: ADMIN --------------------------------------------------- */
+/* Monochrome. There is deliberately no --accent-* here. */
+.world-admin {
+  --bg: var(--ink-950);
+  --bg-raised: var(--ink-900);
+  --bg-sunken: #000000;
+  --surface: var(--ink-800);
+  --border: var(--ink-700);
+  --border-strong: var(--ink-600);
+  --text: var(--ink-50);
+  --text-muted: var(--ink-400);
+  --text-faint: var(--ink-500);
+  --focus: var(--ink-100);
+  --density: 1;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+/* ---- WORLD: CLIENT -------------------------------------------------- */
+/*
+ * --accent-* are injected per client from the AA-validated ramp in
+ * packages/site-config/src/accent.ts. They are never authored by hand, and a
+ * ramp that fails AA cannot be persisted, so anything reaching this file has
+ * already passed contrast.
+ */
+.world-client {
+  --bg: #fdfcfa;
+  --bg-raised: #ffffff;
+  --bg-sunken: var(--ink-50);
+  --surface: #ffffff;
+  --border: var(--ink-200);
+  --border-strong: var(--ink-300);
+  --text: var(--ink-900);
+  --text-muted: var(--ink-600);
+  --text-faint: var(--ink-500);
+
+  /* Fallbacks only. Overridden per client at runtime. */
+  --accent-50: var(--ink-50);
+  --accent-100: var(--ink-100);
+  --accent-200: var(--ink-200);
+  --accent-300: var(--ink-300);
+  --accent-400: var(--ink-400);
+  --accent-500: var(--ink-700);
+  --accent-600: var(--ink-800);
+  --accent-700: var(--ink-800);
+  --accent-800: var(--ink-900);
+  --accent-900: var(--ink-950);
+  --on-accent: var(--ink-0);
+
+  --focus: var(--accent-700);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+.world-client[data-tone="dark"] {
+  --bg: var(--ink-950);
+  --bg-raised: var(--ink-900);
+  --surface: var(--ink-800);
+  --border: var(--ink-700);
+  --text: var(--ink-50);
+  --text-muted: var(--ink-300);
+  --text-faint: var(--ink-400);
+}
+
+/* ---- numerals ------------------------------------------------------- */
+/* Every number, price, time and phone. Applied by class, checked in review. */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}

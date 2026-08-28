@@ -1,0 +1,36 @@
+.wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-l);
+  background: var(--bg);
+}
+
+.inner {
+  max-width: 42ch;
+  text-align: left;
+}
+
+.name {
+  font-size: var(--step--1);
+  color: var(--text-faint);
+  margin-bottom: var(--space-s);
+}
+
+.heading {
+  font-size: var(--step-3);
+  margin-bottom: var(--space-s);
+}
+
+.body {
+  color: var(--text-muted);
+}
+
+.phone {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  margin-top: var(--space-m);
+  font-size: var(--step-1);
+  font-weight: 600;
+}

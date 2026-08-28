@@ -22,10 +22,13 @@ export function QuoteForm({
   section,
   slug,
   onSubmit,
+  preview = false,
 }: {
   section: QuoteSection;
   slug: string;
   onSubmit?: (payload: Record<string, unknown>) => Promise<void>;
+  /** Variant preview: nothing is recorded, and the page must say so. */
+  preview?: boolean;
 }) {
   const formId = useId();
   const [values, setValues] = useState<Record<string, string>>({});
@@ -76,18 +79,28 @@ export function QuoteForm({
     try {
       await onSubmit?.({ slug, sectionId: section.id, name, phone, answers: values, consentAccepted: consent });
       setState("sent");
-    } catch {
+    } catch (error) {
       setState("idle");
-      setErrors({ form: "That did not send. Try again, or phone us instead." });
+      // The action already produced a message aimed at this customer. Use it,
+      // and fall back only when there genuinely is not one.
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "That did not send. Try again, or phone us instead.";
+      setErrors({ form: message });
     }
   }
 
   if (state === "sent") {
     return (
       <Band id={section.id} tone="accent" label={section.heading}>
-        <h2 className={s.narrativeHeading}>Thanks — that is with us.</h2>
+        <h2 className={s.narrativeHeading}>
+          {preview ? "That would have sent." : "Thanks — that is with us."}
+        </h2>
         <p className={s.success} role="status">
-          {section.successMessage}
+          {preview
+            ? "This is a template preview, so nothing was recorded and nobody will call. On a live site this is where the client's own message appears."
+            : section.successMessage}
         </p>
       </Band>
     );

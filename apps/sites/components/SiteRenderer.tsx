@@ -29,10 +29,13 @@ export function SiteRenderer({
   config,
   slug,
   onQuoteSubmit,
+  preview = false,
 }: {
   config: SiteConfig;
   slug: string;
   onQuoteSubmit?: (payload: Record<string, unknown>) => Promise<void>;
+  /** Variant preview: the quote form says nothing was recorded. */
+  preview?: boolean;
 }) {
   const ramp = config.brand.accent ?? buildAccentRamp(config.brand.colour);
   const visible = config.sections.filter((section) => !section.hidden);
@@ -67,6 +70,7 @@ export function SiteRenderer({
                   section={section}
                   slug={slug}
                   onSubmit={onQuoteSubmit}
+                  preview={preview}
                 />
               );
             case "contact":

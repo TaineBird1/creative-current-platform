@@ -30,10 +30,13 @@ const channel = (c: number) => {
 
 export function relativeLuminance(hex: string): number {
   const n = parseInt(hex.slice(1), 16);
+  // Every channel must be linearised. Missing channel() on any one of them
+  // inflates luminance by up to ~18x and makes the whole AA gate a no-op --
+  // silently, because both sides of the comparison use the same function.
   return (
     0.2126 * channel((n >> 16) & 255) +
     0.7152 * channel((n >> 8) & 255) +
-    0.0722 * (n & 255)
+    0.0722 * channel(n & 255)
   );
 }
 

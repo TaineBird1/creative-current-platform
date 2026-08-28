@@ -3,22 +3,28 @@ import type { z } from "zod";
 import type { accentRamp } from "./primitives";
 
 export type AccentRamp = z.infer<typeof accentRamp>;
+export const RAMP_STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900] as const;
+export type RampStep = (typeof RAMP_STEPS)[number];
 
 /**
  * Brand colour -> AA-safe accent ramp.
  *
- * The client picks a colour; we do not get to refuse it, and we do not get to
- * ship 3.9:1 body text because their brand happens to be a light teal. So the
- * ramp is DERIVED and then CORRECTED until it passes, rather than generated
- * and hoped over. accentRamp's superRefine rejects anything that still fails,
- * which makes this function the only thing standing between a brand colour and
- * an unpublishable config.
+ * Three properties this has to hold, because the client picks the colour and
+ * we do not get to refuse it:
  *
- * Two anchors do the work:
- *   - step 700 is the body/link colour. Darkened until it clears 4.5:1 on white.
- *   - step 500 is the button fill. `onAccent` is whichever of black/white
- *     contrasts better against it; if neither clears 4.5:1, 500 is darkened
- *     until white does.
+ *   1. THE BRAND COLOUR APPEARS IN THE RAMP. A navy client whose accent comes
+ *      out a generic mid-blue has been given someone else's brand. So the ramp
+ *      is anchored: the brand lands exactly on whichever step its own lightness
+ *      is nearest, and the rest of the scale is built around it.
+ *   2. AA OR IT DOES NOT SHIP. Step 700 is body/link text on white and must
+ *      clear 4.5:1. Step 500 is a button fill and must clear 4.5:1 against
+ *      whichever of black/white sits on it. Both are corrected, not hoped over.
+ *   3. MONOTONIC. Every step is strictly lighter than the next. A correction
+ *      that pushes 700 past 800 produces a ramp that looks broken in a way no
+ *      contrast check catches -- which is exactly what the first version did.
+ *
+ * accentRamp's superRefine rejects anything that still fails, so this function
+ * is the only thing between a brand colour and an unpublishable config.
  */
 
 const clamp = (n: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, n));
@@ -67,67 +73,110 @@ function hslToHex(h: number, s: number, l: number): string {
   return rgbToHex(hue(h + 1 / 3) * 255, hue(h) * 255, hue(h - 1 / 3) * 255);
 }
 
-/** Lightness targets per step, before correction. */
-const STEP_LIGHTNESS: Record<string, number> = {
-  50: 0.97,
-  100: 0.94,
-  200: 0.87,
-  300: 0.78,
-  400: 0.67,
-  500: 0.56,
-  600: 0.47,
-  700: 0.39,
-  800: 0.30,
-  900: 0.21,
+/** Nominal lightness per step, before anchoring and correction. */
+const NOMINAL: Record<RampStep, number> = {
+  50: 0.97, 100: 0.94, 200: 0.87, 300: 0.78, 400: 0.67,
+  500: 0.56, 600: 0.47, 700: 0.39, 800: 0.30, 900: 0.21,
 };
 
-/** Darken `hex` in 1% lightness steps until `test` passes, or we hit black. */
-function darkenUntil(hex: string, test: (candidate: string) => boolean): string {
-  const [r, g, b] = hexToRgb(hex);
-  const [h, s, l] = rgbToHsl(r, g, b);
-  let lightness = l;
-  let candidate = hex;
-  // 100 iterations is a hard bound; at 1% per step it reaches black.
-  for (let i = 0; i < 100 && !test(candidate); i++) {
-    lightness = clamp(lightness - 0.01);
-    candidate = hslToHex(h, s, lightness);
-    if (lightness <= 0) break;
+/** Minimum lightness gap between adjacent steps, so the ramp reads as a ramp. */
+const MIN_GAP = 0.035;
+
+/**
+ * The highest lightness at this hue/saturation that still clears `min` against
+ * `against`. Scans downward in 0.5% steps; returns 0 if even black fails,
+ * which cannot happen for white but keeps the function total.
+ */
+function maxLightnessPassing(
+  h: number,
+  s: number,
+  against: string,
+  min: number,
+  startL: number,
+): number {
+  let l = startL;
+  for (let i = 0; i < 200; i++) {
+    if (contrastRatio(hslToHex(h, s, l), against) >= min) return l;
+    l -= 0.005;
+    if (l <= 0) return 0;
   }
-  return candidate;
+  return 0;
 }
 
 export function buildAccentRamp(brandColour: string): AccentRamp {
   const [r, g, b] = hexToRgb(brandColour);
-  const [h, rawS] = rgbToHsl(r, g, b);
-  // A near-grey brand colour produces a near-grey ramp, which reads as broken.
-  // Floor the saturation so the accent is still visibly an accent.
+  const [rawH, rawS, brandL] = rgbToHsl(r, g, b);
+  // A near-grey brand produces a near-grey ramp, which reads as broken rather
+  // than as restraint. Floor the saturation so an accent is still an accent.
   const s = Math.max(rawS, 0.18);
+  const h = rawH;
 
-  const step = (key: keyof typeof STEP_LIGHTNESS) => hslToHex(h, s, STEP_LIGHTNESS[key]!);
+  // --- 1. anchor: shift the scale so the brand lands on its nearest step ----
+  const anchor = RAMP_STEPS.reduce((best, step) =>
+    Math.abs(NOMINAL[step] - brandL) < Math.abs(NOMINAL[best] - brandL) ? step : best,
+  );
+  const offset = brandL - NOMINAL[anchor];
 
-  // Body/link anchor: must clear AA on white.
-  const s700 = darkenUntil(step("700"), (c) => contrastRatio(c, "#ffffff") >= 4.5);
-
-  // Button anchor: pick the better foreground, darken the fill if neither works.
-  let s500 = step("500");
-  const best = (fill: string) =>
-    contrastRatio(fill, "#ffffff") >= contrastRatio(fill, "#111111") ? "#ffffff" : "#111111";
-  if (contrastRatio(s500, best(s500)) < 4.5) {
-    s500 = darkenUntil(s500, (c) => contrastRatio(c, "#ffffff") >= 4.5);
+  const lightness: Record<number, number> = {};
+  for (const step of RAMP_STEPS) {
+    lightness[step] = clamp(NOMINAL[step] + offset, 0.04, 0.98);
   }
-  const onAccent = best(s500);
+
+  // --- 2. correct the two anchors that carry an accessibility contract -----
+  // 700 is body text and links on white.
+  lightness[700] = Math.min(
+    lightness[700]!,
+    maxLightnessPassing(h, s, "#ffffff", 4.5, lightness[700]!),
+  );
+
+  // 500 is a button fill. Prefer keeping it as-is with whichever foreground
+  // works; only darken if neither black nor white clears AA on it.
+  const fgFor = (fill: string) =>
+    contrastRatio(fill, "#ffffff") >= contrastRatio(fill, "#111111") ? "#ffffff" : "#111111";
+  if (contrastRatio(hslToHex(h, s, lightness[500]!), fgFor(hslToHex(h, s, lightness[500]!))) < 4.5) {
+    lightness[500] = Math.min(
+      lightness[500]!,
+      maxLightnessPassing(h, s, "#ffffff", 4.5, lightness[500]!),
+    );
+  }
+
+  // --- 3. monotonicity, outward from each corrected anchor ----------------
+  // Darker steps must stay darker than 700; lighter steps must stay lighter.
+  for (const step of [800, 900] as const) {
+    const prev = step === 800 ? lightness[700]! : lightness[800]!;
+    lightness[step] = clamp(Math.min(lightness[step]!, prev - MIN_GAP), 0.02, 1);
+  }
+  const ascending = [600, 500, 400, 300, 200, 100, 50] as const;
+  let floor = lightness[700]!;
+  for (const step of ascending) {
+    lightness[step] = clamp(Math.max(lightness[step]!, floor + MIN_GAP), 0, 0.99);
+    floor = lightness[step]!;
+  }
+
+  // Nudging 500 upward for monotonicity can cost it its contrast; re-check.
+  let s500 = hslToHex(h, s, lightness[500]!);
+  if (contrastRatio(s500, fgFor(s500)) < 4.5) {
+    // 500 is boxed in between 600 and 400, so take the foreground that wins
+    // and, if neither does, fall back to the darkest permitted lightness.
+    lightness[500] = clamp(lightness[600]! + MIN_GAP / 2, 0, 0.99);
+    s500 = hslToHex(h, s, lightness[500]!);
+  }
+
+  const hex = (step: RampStep) => hslToHex(h, s, lightness[step]!);
+  const onAccent = fgFor(hex(500));
 
   return {
-    50: step("50"),
-    100: step("100"),
-    200: step("200"),
-    300: step("300"),
-    400: step("400"),
-    500: s500,
-    600: step("600"),
-    700: s700,
-    800: step("800"),
-    900: step("900"),
+    50: hex(50), 100: hex(100), 200: hex(200), 300: hex(300), 400: hex(400),
+    500: hex(500), 600: hex(600), 700: hex(700), 800: hex(800), 900: hex(900),
     onAccent,
   };
+}
+
+/** Which step, if any, is the client's own colour. For logo lockups. */
+export function anchorStep(brandColour: string): RampStep {
+  const [r, g, b] = hexToRgb(brandColour);
+  const [, , l] = rgbToHsl(r, g, b);
+  return RAMP_STEPS.reduce((best, step) =>
+    Math.abs(NOMINAL[step] - l) < Math.abs(NOMINAL[best] - l) ? step : best,
+  );
 }

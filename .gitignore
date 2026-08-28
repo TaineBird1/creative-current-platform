@@ -16,3 +16,6 @@ convex/_generated/
 .claude/skills/
 .agents/
 convex/_generated/ai/
+
+# Never commit auth keys, even transiently.
+.auth-keys.json

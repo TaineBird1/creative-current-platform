@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@9.12.0",
-  "engines": { "node": ">=20.11" },
+  "engines": {
+    "node": ">=20.11"
+  },
   "scripts": {
     "dev": "turbo run dev",
     "dev:backend": "convex dev",
@@ -18,13 +20,15 @@
   "devDependencies": {
     "@edge-runtime/vm": "^4.0.4",
     "convex-test": "^0.0.34",
+    "jose": "^5.9.6",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "@convex-dev/auth": "^0.0.80",
+    "@auth/core": "0.37.4",
     "@cc/site-config": "workspace:*",
+    "@convex-dev/auth": "^0.0.80",
     "convex": "^1.17.4",
     "convex-helpers": "^0.1.68",
     "zod": "^3.24.1"

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@auth/core':
+        specifier: 0.37.4
+        version: 0.37.4
       '@cc/site-config':
         specifier: workspace:*
         version: link:packages/site-config
@@ -30,6 +33,9 @@ importers:
       convex-test:
         specifier: ^0.0.34
         version: 0.0.34(convex@1.45.0(react@19.2.8))
+      jose:
+        specifier: ^5.9.6
+        version: 5.10.0
       turbo:
         specifier: ^2.3.3
         version: 2.10.12

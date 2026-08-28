@@ -75,18 +75,37 @@ describe("tenancy", () => {
     ).toEqual([]);
   });
 
-  test("no scoped function accepts a clientId argument", () => {
+  test("no TENANT-scoped function accepts a clientId argument", () => {
     const offenders: string[] = [];
-    // `clientId: v.id("clients")` as a table COLUMN is correct and required;
-    // as a function ARGUMENT it is the exact hole this design closes. The two
-    // are separated by location.
+    // The rule is about tenant scope, and only tenant scope.
+    //
+    // A tenantQuery/tenantMutation derives its client from the caller's own
+    // memberships; taking a clientId argument would hand that choice back to
+    // the browser and reopen the exact hole the design closes.
+    //
+    // A platformQuery/platformMutation is different in kind: the caller has
+    // already been verified as platform staff, and operating across every
+    // tenant IS the owner console's job. `inviteClientOwner({ clientId })` is
+    // correct there and would be impossible otherwise.
+    //
+    // `clientId: v.id("clients")` as a table COLUMN is required everywhere.
     for (const file of sourceFiles) {
       if (file.path.startsWith("lib/") || file.path.startsWith("tables/")) continue;
       if (file.path === "schema.ts" || PUBLIC_ALLOWLIST.has(file.path)) continue;
 
-      for (const m of file.text.matchAll(/args:\s*\{([^}]*)\}/g)) {
-        if (/clientId:\s*v\.id\("clients"\)/.test(m[1]!)) {
-          offenders.push(`${file.path}: takes clientId as an argument`);
+      // Each exported function, with its constructor and its args together.
+      for (const chunk of file.text.split(/export const /).slice(1)) {
+        const body = chunk.split(/\nexport /)[0]!;
+        const isTenantScoped = /=\s*tenant(Query|Mutation)\s*\(/.test(body);
+        if (!isTenantScoped) continue;
+
+        const args =
+          body.match(/args:\s*\{([\s\S]*?)\n {2}\},/)?.[1] ??
+          body.match(/args:\s*\{([^}]*)\}/)?.[1] ??
+          "";
+        if (/clientId:\s*v\.id\("clients"\)/.test(args)) {
+          const name = chunk.match(/^(\w+)/)?.[1] ?? "unknown";
+          offenders.push(`${file.path}: ${name} takes clientId as an argument`);
         }
       }
     }

@@ -2,15 +2,19 @@ import { v } from "convex/values";
 import {
   customQuery,
   customMutation,
+  customAction,
   customCtx,
 } from "convex-helpers/server/customFunctions";
-import { query, mutation } from "../_generated/server";
+import { makeFunctionReference } from "convex/server";
+import { query, mutation, action } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
 import {
   requireTenant,
   requirePlatform,
   assertWritable,
   type TenantContext,
   type TenantRole,
+  type PlatformRole,
 } from "./tenancy";
 
 /**
@@ -67,6 +71,33 @@ export const ownerQuery = customQuery(
 export const ownerMutation = customMutation(
   mutation,
   customCtx(async (ctx) => ({ platform: await requirePlatform(ctx, "owner") })),
+);
+
+/**
+ * Actions reach the network, so they cannot be guarded the way queries and
+ * mutations are — there is no ctx.db to read memberships from. They DO carry
+ * the caller's identity into runQuery, so the check is delegated there.
+ *
+ * Every action in this codebase must use this. A bare `action()` is a public,
+ * unauthenticated endpoint; guards.test.ts fails on one.
+ */
+/**
+ * Referenced by PATH rather than through `internal`, deliberately.
+ *
+ * Importing the generated api here creates a true cycle: this module is
+ * imported by every function module, and the api type is built from all of
+ * them. TypeScript resolves that to `any` and silently un-types every action
+ * in the codebase rather than erroring where the cycle is.
+ */
+const requireCaller = makeFunctionReference<
+  "query",
+  Record<string, never>,
+  { userId: Id<"users">; role: PlatformRole }
+>("platform:requireCaller");
+
+export const platformAction = customAction(
+  action,
+  customCtx(async (ctx) => ({ platform: await ctx.runQuery(requireCaller, {}) })),
 );
 
 export type TenantQueryCtx = { tenant: TenantContext };

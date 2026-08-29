@@ -89,7 +89,10 @@ const RULES = [
   {
     id: "magic-radius",
     pattern: /border-radius\s*:([^;\n]+)/g,
-    valueOk: (value) => !/^\s*\d/.test(value),
+    // `0` is the ABSENCE of a radius, not a magic number — and it is required
+    // wherever a single-sided border is used, since rounded corners on one
+    // side read as a rendering bug.
+    valueOk: (value) => value.trim() === "0" || !/^\s*\d/.test(value),
     message: "hard-coded radius — use var(--radius-*)",
     allow: new Set([TOKENS_FILE]),
   },

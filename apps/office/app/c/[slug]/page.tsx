@@ -1,4 +1,5 @@
 import { fetchQuery } from "convex/nextjs";
+import type { QuoteRequestRow } from "@cc/convex-src/quoteRequests";
 import { convexAuthNextjsToken } from "@convex-dev/auth/nextjs/server";
 import { api } from "@cc/convex/api";
 import { accentStyle } from "@/lib/accent-css";
@@ -28,7 +29,9 @@ export default async function BackOffice({
   // things: "you have no access" (correct, expected, shows Not found) and
   // "the request never happened" (a bug, and one that looks identical to the
   // user). Separate them, and let anything unrecognised reach the server log.
-  let requests: Awaited<ReturnType<typeof fetchQuery<typeof api.quoteRequests.list>>> | null = null;
+  // FunctionReturnType, not Awaited<ReturnType<typeof fetchQuery<...>>> — the
+  // latter resolves loosely and silently gives up type safety on every row.
+  let requests: QuoteRequestRow[] | null = null;
   let denied = false;
   let expired = false;
 
@@ -122,10 +125,10 @@ export default async function BackOffice({
                 </div>
 
                 <dl className={s.answers}>
-                  {Object.entries(request.answers).map(([key, value]) => (
-                    <div key={key}>
-                      <dt className={s.answerKey}>{humanise(key)}</dt>
-                      <dd className={s.answerValue}>{value}</dd>
+                  {request.answers.map((answer) => (
+                    <div key={answer.key}>
+                      <dt className={s.answerKey}>{humanise(answer.key)}</dt>
+                      <dd className={s.answerValue}>{answer.value}</dd>
                     </div>
                   ))}
                 </dl>

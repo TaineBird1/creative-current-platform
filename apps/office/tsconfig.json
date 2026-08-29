@@ -13,6 +13,9 @@
       ],
       "@cc/convex/*": [
         "../../convex/_generated/*"
+      ],
+      "@cc/convex-src/*": [
+        "../../convex/*"
       ]
     },
     "verbatimModuleSyntax": false,

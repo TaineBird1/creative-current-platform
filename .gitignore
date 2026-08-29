@@ -8,14 +8,21 @@ out/
 .env.local
 .env.*.local
 .vercel
-convex/_generated/
 .DS_Store
 
 # Convex AI assistance: vendored third-party skills, reinstallable from the
-# lockfile with `npx convex ai-files install`. The lockfile IS committed.
+# lockfile with `npx convex ai-files install`.
 .claude/skills/
 .agents/
 convex/_generated/ai/
+
+# convex/_generated IS committed, deliberately.
+#
+# It is build output, and the instinct is to ignore it. But `next build`
+# typechecks against it, so a fresh checkout without it fails — and the fix
+# would be handing a production DEPLOY key to both Vercel projects just so
+# they can run codegen. Committing it means `git clone && pnpm install &&
+# pnpm build` works with no credentials at all, and CI fails if it drifts.
 
 # Never commit auth keys, even transiently.
 .auth-keys.json

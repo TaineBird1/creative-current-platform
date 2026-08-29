@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # A newer push supersedes an in-flight run. Without this, two pushes a minute
+  # apart can deploy the backend out of order.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Tests, lint, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # convex/_generated is COMMITTED, so tests and builds need no credentials.
+      # This regenerates it and fails if the result differs — committed build
+      # output that silently goes stale is worse than not committing it, and
+      # the failure would otherwise appear as a confusing type error later.
+      - name: Check generated Convex types are current
+        run: |
+          npx convex codegen
+          git diff --exit-code -- convex/_generated             || (echo "::error::convex/_generated is stale. Run 'npx convex dev --once' and commit." && exit 1)
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+      # 155 tests, including the structural guards that are the only thing
+      # stopping a future function from opting out of tenancy.
+      - run: pnpm test
+
+      - run: pnpm lint:tokens
+
+      - run: pnpm --filter @cc/sites build
+      - run: pnpm --filter @cc/office build
+
+  deploy-backend:
+    name: Deploy Convex
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Gated on `check` passing. A schema push that breaks tenancy is not
+      # something to discover in production.
+      - name: Deploy to Convex production
+        run: npx convex deploy
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}

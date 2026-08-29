@@ -1,0 +1,120 @@
+/* Operate mode: scanability first. Nothing decorative. */
+
+.bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-m);
+  padding: var(--space-m) var(--space-m) var(--space-s);
+  border-bottom: var(--border-hairline) solid var(--border);
+  background: var(--bg);
+}
+
+.main {
+  padding: var(--space-m);
+  background: var(--bg);
+  min-height: 60dvh;
+}
+
+.empty,
+.emptyState {
+  padding: var(--space-xl) var(--space-m);
+  background: var(--bg);
+  max-width: 42ch;
+}
+
+.eyebrow {
+  margin: 0 0 var(--space-3xs);
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+.heading {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.subheading {
+  margin: 0 0 var(--space-2xs);
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+.body {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+/* Bordered rows, not cards. A dense list is read; a grid of cards is scanned
+   and then re-read, which is slower for the same information. */
+.row {
+  display: grid;
+  gap: var(--space-2xs) var(--space-m);
+  padding-block: var(--space-m);
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+@media (min-width: 48rem) {
+  .row {
+    grid-template-columns: minmax(0, 14rem) minmax(0, 1fr) minmax(0, 10rem);
+    align-items: start;
+  }
+}
+
+.name {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--step-0);
+}
+
+.phone {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--accent-700);
+}
+
+.withheld {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+.answers {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: 0;
+}
+
+@media (min-width: 30rem) {
+  .answers {
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  }
+}
+
+.answerKey {
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+.answerValue {
+  margin: 0;
+  font-size: var(--step-0);
+}
+
+.when {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}

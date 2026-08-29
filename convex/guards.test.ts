@@ -25,6 +25,7 @@ const CONVEX_DIR = __dirname;
 const PUBLIC_ALLOWLIST = new Set([
   "public/site.ts",
   "public/quote.ts",
+  "public/brand.ts",
   "http.ts",
   "auth.ts",
 ]);

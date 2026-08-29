@@ -10,6 +10,16 @@
         "dev"
       ],
       "port": 3100
+    },
+    {
+      "name": "office",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@cc/office",
+        "dev"
+      ],
+      "port": 3200
     }
   ]
 }

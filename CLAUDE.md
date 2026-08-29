@@ -106,6 +106,28 @@ fails for no visible reason:
 npx convex run health:authConfig
 ```
 
+## Region — EU West (Ireland), deliberately
+
+Convex offers US East (N. Virginia) and EU West (Ireland). No African region;
+Canada and Australia are next. Ireland is therefore the closest available to
+Durban and is the team default.
+
+Two reasons, in order of how much they bite:
+
+- **Latency.** Durban to eu-west-1 is roughly 150ms round trip, to us-east-1
+  roughly 230ms. The public sites are server-rendered, so every page load pays
+  it, against an LCP budget of under 2.0s on a mid-range Android.
+- **POPIA.** Section 72 permits cross-border transfer with adequate protection,
+  so US hosting is workable — but the data is our clients' CUSTOMERS' names and
+  phone numbers, and choosing the nearer, EU-adequate region is the cheaper
+  posture to defend.
+
+**An existing deployment's region cannot be changed.** Moving one means
+creating a new deployment in the target region and export/importing. The first
+production deployment landed in US East because `convex deploy` inherited the
+team default before it was set, and the CLI cannot yet select a region — so
+check the region on any new deployment before putting data in it.
+
 ## Bootstrapping the first platform owner
 
 `invites.inviteToPlatform` needs an existing owner, so the first one comes

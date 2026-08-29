@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuthActions } from "@convex-dev/auth/react";
 import s from "./sign-in.module.css";
 
@@ -35,6 +36,7 @@ export function SignIn({
   redirectTo: string;
 }) {
   const { signIn } = useAuthActions();
+  const router = useRouter();
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -75,7 +77,16 @@ export function SignIn({
     setBusy(true);
     setError(null);
     try {
-      await signIn("resend-otp", { email: email.trim(), code: clean, redirectTo });
+      await signIn("resend-otp", { email: email.trim(), code: clean });
+
+      // `redirectTo` only applies to OAuth and magic-link flows. A code
+      // sign-in resolves with a live session and goes nowhere, so navigating
+      // is our job — without this the session is real and the button sits on
+      // "Checking…" forever, which reads as a broken code.
+      router.replace(redirectTo);
+      // The landing page is a server component reading the session cookie, so
+      // its cache has to be dropped or it renders the signed-out branch.
+      router.refresh();
     } catch {
       setError("That code did not work. It may have expired — send a new one.");
       setBusy(false);

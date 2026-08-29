@@ -22,3 +22,7 @@ convex/_generated/ai/
 
 # Generated per-app copies of the root .env.local (scripts/sync-env.mjs).
 apps/*/.env.local
+
+# Convex CLI agent artefacts. Reinstallable with `npx convex ai-files install`.
+skills-lock.json
+AGENTS.md

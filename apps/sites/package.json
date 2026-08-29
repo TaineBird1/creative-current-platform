@@ -6,7 +6,9 @@
     "dev": "next dev --port 3100",
     "build": "next build",
     "start": "next start --port 3100",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "predev": "node ../../scripts/sync-env.mjs",
+    "prebuild": "node ../../scripts/sync-env.mjs"
   },
   "dependencies": {
     "@cc/site-config": "workspace:*",

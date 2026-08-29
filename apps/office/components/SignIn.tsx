@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useAuthActions } from "@convex-dev/auth/react";
 import s from "./sign-in.module.css";
 
@@ -36,7 +35,6 @@ export function SignIn({
   redirectTo: string;
 }) {
   const { signIn } = useAuthActions();
-  const router = useRouter();
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -79,16 +77,22 @@ export function SignIn({
     try {
       await signIn("resend-otp", { email: email.trim(), code: clean });
 
-      // `redirectTo` only applies to OAuth and magic-link flows. A code
-      // sign-in resolves with a live session and goes nowhere, so navigating
-      // is our job — without this the session is real and the button sits on
-      // "Checking…" forever, which reads as a broken code.
-      router.replace(redirectTo);
-      // The landing page is a server component reading the session cookie, so
-      // its cache has to be dropped or it renders the signed-out branch.
-      router.refresh();
+      // A FULL document load, not router.replace().
+      //
+      // `redirectTo` only applies to OAuth and magic-link flows, so a code
+      // sign-in has to navigate itself. But the destination is a server
+      // component behind middleware, and both read the session COOKIE — which
+      // ConvexAuthNextjsProvider writes asynchronously after signIn resolves.
+      // A client-side navigation races that write and can arrive before the
+      // server can see the session, bouncing straight back to sign-in.
+      // A hard load cannot start until the browser has the cookie.
+      window.location.assign(redirectTo);
     } catch {
       setError("That code did not work. It may have expired — send a new one.");
+    } finally {
+      // Always clear it. A successful sign-in that leaves the button on
+      // "Checking…" reads as a REJECTED code: the user retries, burns the
+      // code, and concludes auth is broken while their session works.
       setBusy(false);
     }
   }

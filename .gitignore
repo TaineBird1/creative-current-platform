@@ -19,3 +19,6 @@ convex/_generated/ai/
 
 # Never commit auth keys, even transiently.
 .auth-keys.json
+
+# Generated per-app copies of the root .env.local (scripts/sync-env.mjs).
+apps/*/.env.local

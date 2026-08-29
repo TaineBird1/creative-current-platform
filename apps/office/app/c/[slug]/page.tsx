@@ -22,16 +22,57 @@ export default async function BackOffice({
   const { slug } = await params;
   const token = await convexAuthNextjsToken();
 
-  const [brand, requests] = await Promise.all([
-    fetchQuery(api.public.brand.forSignIn, { slug }).catch(() => null),
-    fetchQuery(api.quoteRequests.list, { clientSlug: slug }, { token }).catch(
-      () => null,
-    ),
-  ]);
+  const brand = await fetchQuery(api.public.brand.forSignIn, { slug }).catch(() => null);
 
-  // The query refusing is the correct outcome for someone with no membership
-  // on this tenant, and it is indistinguishable from an unknown slug by design.
-  if (requests === null) {
+  // A blanket `.catch(() => null)` here conflates two completely different
+  // things: "you have no access" (correct, expected, shows Not found) and
+  // "the request never happened" (a bug, and one that looks identical to the
+  // user). Separate them, and let anything unrecognised reach the server log.
+  let requests: Awaited<ReturnType<typeof fetchQuery<typeof api.quoteRequests.list>>> | null = null;
+  let denied = false;
+  let expired = false;
+
+  try {
+    requests = await fetchQuery(api.quoteRequests.list, { clientSlug: slug }, { token });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (/NOT_FOUND|FORBIDDEN/.test(message)) {
+      // A real answer: this tenant is not yours. Indistinguishable from an
+      // unknown slug, by design.
+      denied = true;
+    } else if (/UNAUTHENTICATED|AuthProvider|Unauthorized|token/i.test(message)) {
+      // We hold a cookie we cannot verify — an expired session, or one signed
+      // with a rotated key. NOT the same as "no access", and it needs its own
+      // exit, because a stale cookie is otherwise a trap: the middleware sees
+      // a token and lets you through, the query refuses, and redirecting to
+      // sign-in just bounces back here. Only signing out breaks the loop, so
+      // that is what this state offers.
+      console.warn("[back-office] unverifiable session", { slug, message });
+      expired = true;
+    } else {
+      console.error("[back-office] quoteRequests.list failed", { slug, hasToken: Boolean(token), message });
+      throw error;
+    }
+  }
+
+  if (expired) {
+    return (
+      <div className="world-client">
+        <main className={s.empty}>
+          <h1 className={s.heading}>Your session has expired.</h1>
+          <p className={s.body}>
+            Sign out and sign in again — it takes about thirty seconds.
+          </p>
+          <SignOut />
+        </main>
+      </div>
+    );
+  }
+
+  // Refusal is the correct outcome for someone with no membership on this
+  // tenant, and it is indistinguishable from an unknown slug by design.
+  if (denied || requests === null) {
     return (
       <div className="world-client">
         <main className={s.empty}>

@@ -27,7 +27,9 @@ if (existsSync(rootEnv)) {
 export default {
   reactStrictMode: true,
   transpilePackages: ["@cc/site-config", "@cc/tokens"],
-  experimental: { optimizePackageImports: ["@cc/site-config"] },
+  experimental: {
+    optimizePackageImports: ["@cc/site-config"],
+  },
   env: {
     CONVEX_URL: process.env.CONVEX_URL ?? "",
     // The office runs a browser Convex client (auth needs one), so this URL

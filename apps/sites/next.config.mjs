@@ -23,6 +23,23 @@ if (existsSync(rootEnv)) {
   }
 }
 
+/*
+ * A WARNING here, not a failure — unlike apps/office.
+ *
+ * The public sites have a designed state for this: NotConnected in dev, a
+ * branded holding page in production. That is deliberate, so a missing URL is
+ * survivable rather than fatal. It is still almost certainly a mistake, so it
+ * should be loud in the build log.
+ */
+if (process.env.NODE_ENV === "production" && !process.env.CONVEX_URL) {
+  console.warn(
+    "
+  ⚠  CONVEX_URL is not set. apps/sites will build, but every request " +
+      "will render the holding page.
+",
+  );
+}
+
 /** @type {import('next').NextConfig} */
 export default {
   reactStrictMode: true,

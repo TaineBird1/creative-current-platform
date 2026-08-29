@@ -78,6 +78,11 @@ Five must be set on every deployment. `npx convex env list` to check.
 | `AUTH_RESEND_KEY` | Resend, Sending access only. Not the outreach key — a separate one means "last used" tells you whether sign-in works. |
 | `AUTH_EMAIL_FROM` | Must be on a Resend-verified domain. |
 
+Vercel needs only `CONVEX_URL` per project. `apps/office/next.config.mjs`
+derives `NEXT_PUBLIC_CONVEX_URL` from it, so there is one value to keep right
+— and that config THROWS on a production build if it is missing, because
+Convex Auth would otherwise fail at runtime after a green deploy.
+
 **Never set these from PowerShell.** It strips the double quotes out of JSON
 before the CLI sees them, so `JWKS` lands as `{keys:[...]}` instead of
 `{"keys":[...]}`. Convex then cannot build a key set and EVERY token
@@ -105,6 +110,38 @@ fails for no visible reason:
 ```bash
 npx convex run health:authConfig
 ```
+
+## Domains and origins — do not let this drift
+
+| Host | Vercel project | Serves |
+|---|---|---|
+| `app.thecreativecurrent.co.za` | `cc-office` | `/admin` and every `/c/<slug>` back office |
+| the client's own domain | `cc-sites` | that one client's public website |
+| `sites.thecreativecurrent.co.za` | `cc-sites` | demos and previews, by path |
+
+**`cc-office` gets ONE origin and no other domain. Ever.**
+
+Not tidiness — the back office is an installable PWA with web push, and
+service worker scope, push subscriptions, and cookies are all bound to an
+origin. A second host means a second PWA install, a second push subscription,
+and a session that appears to vanish when a client reaches the "wrong" one.
+Adding a domain to `cc-office` is therefore a breaking change for every client
+who has already installed it, and it cannot be undone by removing the domain
+again.
+
+**Demos are PATH-based, not subdomains.** `sites.thecreativecurrent.co.za/<slug>`,
+which the existing `[[...slug]]` resolution already serves. The alternative,
+`<slug>.demo.thecreativecurrent.co.za`, needs a WILDCARD domain — and Vercel
+requires the nameserver method for wildcards, meaning the whole zone moves off
+10Web with every existing record recreated by hand. A subdomain does not make
+a demo more convincing (it still is not the lead's own domain), so it buys
+nothing for that cost.
+
+Real client domains are added to `cc-sites` individually through the domain
+wizard. Apex needs an A record, a subdomain needs a CNAME — both work from
+10Web's DNS panel with no nameserver change. So **nothing here forces a
+nameserver move.** Moving to Vercel DNS may still be worth it later for
+convenience; it is not a prerequisite for anything.
 
 ## Region — EU West (Ireland), deliberately
 

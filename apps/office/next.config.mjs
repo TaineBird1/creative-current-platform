@@ -23,6 +23,27 @@ if (existsSync(rootEnv)) {
   }
 }
 
+/*
+ * FAIL THE BUILD, not the browser.
+ *
+ * The office runs a browser Convex client, and @convex-dev/auth throws
+ * `Missing environment variable NEXT_PUBLIC_CONVEX_URL` at runtime if it is
+ * absent — after a green build and a successful deploy. `?? ""` below would
+ * otherwise turn a missing var into an empty string that passes every check
+ * and fails on the first page load.
+ *
+ * Set CONVEX_URL in Vercel; NEXT_PUBLIC_CONVEX_URL is derived from it so
+ * there is one value to keep right. To build without a backend on purpose,
+ * set CONVEX_URL to anything.
+ */
+if (process.env.NODE_ENV === "production" && !process.env.CONVEX_URL) {
+  throw new Error(
+    "CONVEX_URL is not set. apps/office cannot run without it — the browser " +
+      "Convex client and Convex Auth both require it, and the failure would " +
+      "otherwise appear at runtime, after a green deploy.",
+  );
+}
+
 /** @type {import('next').NextConfig} */
 export default {
   reactStrictMode: true,
@@ -32,8 +53,10 @@ export default {
   },
   env: {
     CONVEX_URL: process.env.CONVEX_URL ?? "",
-    // The office runs a browser Convex client (auth needs one), so this URL
-    // is necessarily public. It is a deployment address, not a secret.
+    // Public by necessity: the office runs a browser Convex client, and
+    // Convex Auth reads this exact name. It is a deployment address, not a
+    // secret — every request to it is still authenticated, and every function
+    // still re-derives its own tenant.
     NEXT_PUBLIC_CONVEX_URL: process.env.CONVEX_URL ?? "",
   },
 };

@@ -41,11 +41,12 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 98 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 125 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
-- no bare `query`/`mutation` outside a 4-file public allowlist
-- no scoped function accepts a `clientId` argument
+- no bare `query`/`mutation` outside a 5-file public allowlist
+- no TENANT-scoped function accepts a `clientId` argument (platform functions
+  may: operating across every tenant is the owner console's job)
 - `ledgerEntries`, `auditLog` and `consents` are append-only
 - `siteConfigs.ts` is the ONLY writer of the `sites` table — `config` is
   `v.any()`, so its Zod parse is the only thing holding the shape
@@ -66,19 +67,72 @@ client is warm white-label tinted per client by an AA-safe accent ramp derived
 from their brand colour. The ramp is corrected against the real page ground,
 not pure white — that distinction was a live bug.
 
+## Deployment environment variables
+
+Five must be set on every deployment. `npx convex env list` to check.
+
+| Variable | Source |
+|---|---|
+| `JWT_PRIVATE_KEY`, `JWKS` | Generated as a matching PAIR with `jose`. Rotating one without the other invalidates every session. |
+| `SITE_URL` | The OFFICE origin (`http://localhost:3200` in dev). Unused by the OTP flow; it is the redirect target for any OAuth or magic-link provider added later. |
+| `AUTH_RESEND_KEY` | Resend, Sending access only. Not the outreach key — a separate one means "last used" tells you whether sign-in works. |
+| `AUTH_EMAIL_FROM` | Must be on a Resend-verified domain. |
+
+**Never set these from PowerShell.** It strips the double quotes out of JSON
+before the CLI sees them, so `JWKS` lands as `{keys:[...]}` instead of
+`{"keys":[...]}`. Convex then cannot build a key set and EVERY token
+verification fails with `AuthProviderDiscoveryFailed` — which surfaces as
+"middleware thinks nobody is signed in", "the back office says not found",
+and a client retry storm in the logs. It cost an hour of misdiagnosis.
+
+Use the Convex dashboard's env settings (masked field, no shell), or Git Bash:
+
+```bash
+npx convex env set "JWKS=$(cat jwks.json)"
+```
+
+Generate a fresh pair headlessly — never the interactive `npx @convex-dev/auth`
+wizard, which hangs without a TTY:
+
+```bash
+node scripts/gen-auth-keys.mjs
+```
+
+Verify it took. Every line must read `ok`; `JWKS` reporting `INVALID JSON` is
+the quote-stripping above, and is the single likeliest cause of a sign-in that
+fails for no visible reason:
+
+```bash
+npx convex run health:authConfig
+```
+
+## Bootstrapping the first platform owner
+
+`invites.inviteToPlatform` needs an existing owner, so the first one comes
+from `bootstrap:claimPlatformOwner`, which refuses once an ACTIVE owner
+exists. Sign in once first — it grants to an existing account, and will not
+create one.
+
+```bash
+npx convex run bootstrap:claimPlatformOwner '{"email":"you@example.com"}'
+```
+
 ## Commands
 
 ```bash
-pnpm test                        # 98 tests
+pnpm test                        # 125 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
+pnpm --filter @cc/office dev     # admin + back offices on :3200
 npx convex dev                   # backend; leave running while developing
 npx convex run seed:solarClient  # one live seed client, served at /renu-solar
 ```
 
-Convex writes `.env.local` at the repo root; `apps/sites/next.config.mjs`
-reads it from there so there is one source of truth rather than a duplicated
-`CONVEX_URL`.
+Convex writes `.env.local` at the REPO ROOT, because `convex/` lives there.
+Next only reads `.env.local` from the app directory, and passing the value
+through `next.config`'s `env` does not reach the middleware runtime — so
+`scripts/sync-env.mjs` copies it into each app, wired into `predev` and
+`prebuild`. One source of truth, owned by the Convex CLI.
 
 <!-- convex-ai-start -->
 

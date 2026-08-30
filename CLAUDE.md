@@ -35,6 +35,15 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   indistinguishable from a nonexistent one. Cross-tenant access has failing
   tests in `convex/tenancy.test.ts`. Never soften one to make a feature pass.
 - Client sites are data. One renderer. Never fork code per client.
+- **`apps/sites` does not query Convex per pageview.** `SiteConfig` is served
+  from ISR, with tag-based revalidation when a config is written — never a live
+  query on the request path. This was always required by the LCP budget; it is
+  now also the cost control, because EU deployments bill on demand with no
+  included usage, so a per-request query would make Convex spend scale with
+  traffic. Convex calls must scale with **bookings and admin usage, not
+  pageviews**. Live queries belong to the interactive paths — availability,
+  booking, quote submit, the office app — which are also the only places the
+  region's latency is felt.
 - Every screen goes through the `impeccable` skill. Tokens only.
 - Never mark anything done without a deployed preview URL and a human tapping
   it on a real phone.
@@ -149,21 +158,36 @@ Convex offers US East (N. Virginia) and EU West (Ireland). No African region;
 Canada and Australia are next. Ireland is therefore the closest available to
 Durban and is the team default.
 
-Two reasons, in order of how much they bite:
+**The reason is interactive round trips, not pageviews.** Durban to eu-west-1
+is roughly 150ms, to us-east-1 roughly 230ms. That 80ms is paid on every
+availability check, slot booking, quote submit and every action in the office
+app — the things a person waits on while looking at a spinner. Public pageviews
+do **not** pay it, because the site does not query Convex per request (see
+"apps/sites does not query Convex per pageview" below).
 
-- **Latency.** Durban to eu-west-1 is roughly 150ms round trip, to us-east-1
-  roughly 230ms. The public sites are server-rendered, so every page load pays
-  it, against an LCP budget of under 2.0s on a mid-range Android.
-- **POPIA.** Section 72 permits cross-border transfer with adequate protection,
-  so US hosting is workable — but the data is our clients' CUSTOMERS' names and
-  phone numbers, and choosing the nearer, EU-adequate region is the cheaper
-  posture to defend.
+POPIA is deliberately **not** a reason here, and earlier notes that said so were
+wrong. Section 72 permits cross-border transfer under its conditions and has
+never required EU or SA residency; US East would not have breached it. Do not
+record a legal constraint that does not exist — it makes the real argument
+harder to weigh and invites a decision nobody can defend.
+
+**EU costs more, and the difference is not the headline number.** On paid plans
+resource-based pricing is 30% higher. More importantly, the included usage on
+Starter and Pro — the 25M function calls a month — **does not apply to EU
+deployments at all**; EU is billed on demand from the first call. Free-plan
+usage is unaffected, so this costs nothing today and starts biting the month we
+go paid. It is affordable only because Convex calls scale with bookings and
+admin usage rather than traffic. Source: Convex's EU launch post, "Just landed
+in Europe".
 
 **An existing deployment's region cannot be changed.** Moving one means
-creating a new deployment in the target region and export/importing. The first
-production deployment landed in US East because `convex deploy` inherited the
-team default before it was set, and the CLI cannot yet select a region — so
-check the region on any new deployment before putting data in it.
+creating a new project or deployment in the target region and migrating by
+export/import. The first production deployment landed in US East because
+`convex deploy` inherited the team default before it was set. **There is still
+no `--region` CLI flag** — the docs say "coming soon", and a launch-post promise
+of one is not the same thing. Regions are selected in the dashboard when you
+create a project or deployment, so check the region on any new deployment
+before putting data in it, and keep the team default set to EU West.
 
 ## Bootstrapping the first platform owner
 

@@ -29,6 +29,7 @@ import type * as public_site from "../public/site.js";
 import type * as quoteRequests from "../quoteRequests.js";
 import type * as seed from "../seed.js";
 import type * as siteConfigs from "../siteConfigs.js";
+import type * as siteRevalidate from "../siteRevalidate.js";
 import type * as tables_growth from "../tables/growth.js";
 import type * as tables_identity from "../tables/identity.js";
 import type * as tables_messaging from "../tables/messaging.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   quoteRequests: typeof quoteRequests;
   seed: typeof seed;
   siteConfigs: typeof siteConfigs;
+  siteRevalidate: typeof siteRevalidate;
   "tables/growth": typeof tables_growth;
   "tables/identity": typeof tables_identity;
   "tables/messaging": typeof tables_messaging;

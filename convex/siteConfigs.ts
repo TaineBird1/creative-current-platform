@@ -1,6 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { parseSiteConfig, SITE_CONFIG_VERSION } from "@cc/site-config";
 import type { MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { tenantMutation, tenantQuery } from "./lib/functions";
 import { assertOwned, auditWrite } from "./lib/tenancy";
@@ -90,6 +91,9 @@ export const replace = tenantMutation("manager")({
       entityId: siteId,
       after: { version: site.version + 1 },
     });
+    // apps/sites caches resolution, so a write has to push. Scheduled, so a
+    // slow or unreachable sites app can never fail an editor's save.
+    await ctx.scheduler.runAfter(0, internal.siteRevalidate.revalidateSite, { siteId });
     return { version: site.version + 1 };
   },
 });
@@ -116,6 +120,8 @@ export const publish = tenantMutation("owner")({
       entityId: siteId,
       after: { version: site.version },
     });
+    // The one that actually changes what a visitor sees.
+    await ctx.scheduler.runAfter(0, internal.siteRevalidate.revalidateSite, { siteId });
   },
 });
 

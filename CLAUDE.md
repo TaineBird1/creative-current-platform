@@ -50,7 +50,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 125 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 163 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -78,7 +78,7 @@ not pure white — that distinction was a live bug.
 
 ## Deployment environment variables
 
-Five must be set on every deployment. `npx convex env list` to check.
+Seven must be set on every deployment. `npx convex env list` to check.
 
 | Variable | Source |
 |---|---|
@@ -86,6 +86,8 @@ Five must be set on every deployment. `npx convex env list` to check.
 | `SITE_URL` | The OFFICE origin (`http://localhost:3200` in dev). Unused by the OTP flow; it is the redirect target for any OAuth or magic-link provider added later. |
 | `AUTH_RESEND_KEY` | Resend, Sending access only. Not the outreach key — a separate one means "last used" tells you whether sign-in works. |
 | `AUTH_EMAIL_FROM` | Must be on a Resend-verified domain. |
+| `SITES_REVALIDATE_URL` | `https://<sites-origin>/api/revalidate`. Where a config write pushes cache invalidation. Unset is survivable — writes still succeed and sites self-heal within the hour — but every publish looks broken for that hour. |
+| `REVALIDATE_SECRET` | A shared secret, set on BOTH the Convex deployment and the sites Vercel project. The route fails closed if it is unset there, so an unset secret means no revalidation at all rather than an open endpoint. |
 
 Vercel needs only `CONVEX_URL` per project. `apps/office/next.config.mjs`
 derives `NEXT_PUBLIC_CONVEX_URL` from it, so there is one value to keep right

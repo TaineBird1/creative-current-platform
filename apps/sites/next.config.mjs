@@ -33,10 +33,8 @@ if (existsSync(rootEnv)) {
  */
 if (process.env.NODE_ENV === "production" && !process.env.CONVEX_URL) {
   console.warn(
-    "
-  ⚠  CONVEX_URL is not set. apps/sites will build, but every request " +
-      "will render the holding page.
-",
+    "\n  ⚠  CONVEX_URL is not set. apps/sites will build, but every request " +
+      "will render the holding page.\n",
   );
 }
 

@@ -2,9 +2,8 @@ import { headers } from "next/headers";
 import { permanentRedirect, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { safeParseSiteConfig } from "@cc/site-config";
-import { convexClient } from "@/lib/convex";
-import { api } from "@cc/convex/api";
-import type { FunctionReturnType } from "convex/server";
+import { isConvexConfigured } from "@/lib/convex";
+import { resolveSite, redirectFor, type ResolvedSite } from "@/lib/site-cache";
 import { SiteRenderer } from "@/components/SiteRenderer";
 import { HoldingPage } from "@/components/HoldingPage";
 import { NotConnected } from "@/components/NotConnected";
@@ -22,9 +21,16 @@ import { submitQuoteAction } from "../actions";
  * through to another tenant's content.
  */
 
-export const dynamic = "force-dynamic";
-
-type ResolvedSite = FunctionReturnType<typeof api.public.site.resolve>;
+/**
+ * There is deliberately no `dynamic = "force-dynamic"` here.
+ *
+ * Reading `headers()` for host-based tenancy makes this route render per
+ * request regardless — but the Convex call underneath it is cached and
+ * tag-invalidated (lib/site-cache.ts), so a busy site serves thousands of
+ * pageviews on one round trip to Ireland. Convex spend scales with bookings
+ * and admin usage, not with traffic. Do not reintroduce a per-request query
+ * on this path.
+ */
 
 type Params = { params: Promise<{ slug?: string[] }>; searchParams: Promise<{ site?: string }> };
 
@@ -32,8 +38,7 @@ async function resolve(
   params: Params["params"],
   searchParams: Params["searchParams"],
 ): Promise<{ state: "unconfigured" } | { state: "resolved"; result: ResolvedSite; path: string }> {
-  const convex = convexClient();
-  if (!convex) return { state: "unconfigured" };
+  if (!isConvexConfigured()) return { state: "unconfigured" };
 
   const [{ slug: segments }, { site }, headerList] = await Promise.all([
     params,
@@ -50,7 +55,10 @@ async function resolve(
   const slug = site ?? segments?.[0];
   const path = "/" + (segments ?? []).join("/");
 
-  const result = await convex.query(api.public.site.resolve, { host, slug });
+  // A preview must never be served from cache — the whole point of ?site= is
+  // seeing the change you just made.
+  const result = await resolveSite(host ?? "", slug, Boolean(site));
+  if (!result) return { state: "unconfigured" };
   return { state: "resolved", result, path };
 }
 
@@ -101,8 +109,7 @@ export default async function SitePage({ params, searchParams }: Params) {
   // Legacy 301s from the site we replaced, checked only for paths we would
   // otherwise 404 on.
   if (path !== "/" && path !== `/${result.slug}`) {
-    const convex = convexClient();
-    const hit = await convex?.query(api.public.site.redirectFor, { slug: result.slug, path });
+    const hit = await redirectFor(result.slug, path);
     if (hit) redirect(hit.to);
   }
 

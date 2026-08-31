@@ -42,11 +42,16 @@ module.exports = {
         // runner variance without letting a real regression through.
         "categories:performance": ["error", { minScore: 0.93 }],
 
-        // Target 1.0. Currently 0.97: 81 elements fail AA contrast, e.g.
-        // #797972 on the page ground at 4.12:1 against a 4.5:1 requirement.
-        // That contradicts DESIGN.md's AA-safe claim and is a real bug in the
-        // muted-text token, not a Lighthouse quirk.
-        "categories:accessibility": ["error", { minScore: 0.97 }],
+        // Target 1.0. 81 elements fail AA contrast, e.g. #797972 on the page
+        // ground at 4.12:1 against a 4.5:1 requirement. That contradicts
+        // DESIGN.md's AA-safe claim and is a real bug in the muted-text token,
+        // not a Lighthouse quirk.
+        //
+        // Set to the UBUNTU number. A Windows dev machine scores 0.97 here and
+        // the CI runner scores 0.96, dead consistent across three runs — font
+        // rasterisation differs, so the same pixels land either side of the
+        // 4.5:1 line. Trust the runner: it is what gates the branch.
+        "categories:accessibility": ["error", { minScore: 0.96 }],
 
         // Target 1.0. Currently 0.82, held down by /robots.txt returning the
         // app's HTML — the [[...slug]] catch-all answers it with a rendered

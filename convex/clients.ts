@@ -1,20 +1,38 @@
-import { platformQuery } from "./lib/functions";
+import { v, ConvexError } from "convex/values";
+import { ownerMutation, platformQuery } from "./lib/functions";
+import { currency } from "./tables/tenants";
 
 /**
  * The client list, platform-side. Operating across every tenant is exactly
  * what the owner console is for, so this is a platformQuery and takes no
  * tenant argument at all.
+ *
+ * `ventureId` filters rather than scopes — it is a reporting lens for the
+ * switcher, not a security boundary. Platform functions are already allowed
+ * across every tenant; if this were a tenant function it would take a slug
+ * and derive its own scope, which is the rule that has its own test.
  */
 export const list = platformQuery({
-  args: {},
-  handler: async (ctx) => {
-    const clients = await ctx.db.query("clients").collect();
+  args: { ventureId: v.optional(v.id("ventures")) },
+  handler: async (ctx, { ventureId }) => {
+    const clients = ventureId
+      ? await ctx.db
+          .query("clients")
+          .withIndex("by_venture", (q) => q.eq("ventureId", ventureId))
+          .collect()
+      : await ctx.db.query("clients").collect();
+
+    const ventures = await ctx.db.query("ventures").collect();
+    const ventureById = new Map(ventures.map((venture) => [venture._id, venture]));
+
     const rows = [];
     for (const client of clients) {
       const domains = await ctx.db
         .query("domains")
         .withIndex("by_client", (q) => q.eq("clientId", client._id))
         .collect();
+      const venture = ventureById.get(client.ventureId);
+
       rows.push({
         _id: client._id,
         name: client.name,
@@ -22,10 +40,100 @@ export const list = platformQuery({
         kind: client.kind,
         status: client.status,
         isSeed: client.isSeed,
+        isDemo: client.isDemo,
+        ventureId: client.ventureId,
+        ventureName: venture?.name ?? null,
+        ventureType: venture?.type ?? null,
+        currency: client.currency,
         domainCount: domains.length,
         liveDomain: domains.find((d) => d.verificationStatus === "verified")?.hostname ?? null,
       });
     }
     return rows.sort((a, b) => a.name.localeCompare(b.name));
+  },
+});
+
+/**
+ * EXTERNAL CLIENTS (Part 5.2) — the consulting and side work.
+ *
+ * An external client is a real client that is not a tenant. They get contact
+ * details, a timeline, tasks, documents, and invoices through the SAME
+ * invoice engine and ledger as everyone else. They do NOT get a public site,
+ * a back office, a subscription, a slug or a feature set.
+ *
+ * That distinction is enforced here rather than trusted, because the failure
+ * is quiet and expensive: a slug is what `app.<domain>/c/<slug>` resolves,
+ * so an external client that acquired one would mint a back office nobody
+ * intended, for a client who never bought one, reachable by anyone who
+ * guessed the URL. Nothing downstream re-checks `kind` before serving it.
+ */
+export const createExternal = ownerMutation({
+  args: {
+    ventureId: v.id("ventures"),
+    name: v.string(),
+    legalName: v.optional(v.string()),
+    currency,
+    timezone: v.optional(v.string()),
+    primaryContactName: v.optional(v.string()),
+    primaryContactPhone: v.optional(v.string()),
+    primaryContactEmail: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const name = args.name.trim();
+    if (!name) {
+      throw new ConvexError({ code: "INVALID", message: "A client needs a name." });
+    }
+
+    const venture = await ctx.db.get(args.ventureId);
+    if (!venture) {
+      throw new ConvexError({ code: "NO_SUCH_VENTURE", message: "No such venture." });
+    }
+    if (!venture.active) {
+      throw new ConvexError({
+        code: "VENTURE_ARCHIVED",
+        message: `"${venture.name}" is archived. Restore it before adding clients.`,
+      });
+    }
+
+    const clientId = await ctx.db.insert("clients", {
+      ventureId: args.ventureId,
+      kind: "external",
+      name,
+      legalName: args.legalName?.trim() || undefined,
+      /*
+       * NO SLUG. Not "" and not a generated one — absent. The back office
+       * resolves by slug, so the only safe value for a client who did not buy
+       * one is nothing to resolve.
+       */
+      status: "live",
+      timezone: args.timezone ?? "Africa/Johannesburg",
+      currency: args.currency,
+      primaryContactName: args.primaryContactName?.trim() || undefined,
+      primaryContactPhone: args.primaryContactPhone?.trim() || undefined,
+      primaryContactEmail: args.primaryContactEmail?.trim() || undefined,
+      /*
+       * Empty, not populated. Feature flags drive the client's own back
+       * office, which an external client does not have. The Feature Manager
+       * hides absent modules rather than locking them, so an empty record is
+       * the correct "this does not apply" — a populated one would render a
+       * console for a client with nowhere to sign in.
+       */
+      featureFlags: {},
+      isDemo: false,
+      isSeed: false,
+    });
+
+    await ctx.db.insert("auditLog", {
+      actorUserId: ctx.platform.userId,
+      action: "client.createExternal",
+      entityTable: "clients",
+      entityId: clientId,
+      ventureId: args.ventureId,
+      clientId,
+      after: { name, kind: "external", venture: venture.name, currency: args.currency },
+      at: Date.now(),
+    });
+
+    return { clientId, name, ventureId: args.ventureId };
   },
 });

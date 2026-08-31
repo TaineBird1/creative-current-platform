@@ -54,7 +54,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 163 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 176 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -63,6 +63,10 @@ and fail CI rather than relying on anyone remembering:
 - `ledgerEntries`, `auditLog` and `consents` are append-only
 - `siteConfigs.ts` is the ONLY writer of the `sites` table — `config` is
   `v.any()`, so its Zod parse is the only thing holding the shape
+- an EXTERNAL client never has a slug. `app.<domain>/c/<slug>` resolves on
+  slug alone and nothing downstream re-checks `kind`, so a slug on a
+  consulting client would mint a back office nobody sold, for a client with
+  nowhere to sign in, reachable by anyone who guessed the URL
 - `lib/reseller.ts` is the ONLY writer of `clients.resellerId` and enforces
   reseller depth exactly 1, which is what makes the one-hop membership walk in
   `requireTenant` correct
@@ -309,7 +313,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 163 tests
+pnpm test                        # 176 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

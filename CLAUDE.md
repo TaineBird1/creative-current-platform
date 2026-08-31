@@ -35,6 +35,28 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   indistinguishable from a nonexistent one. Cross-tenant access has failing
   tests in `convex/tenancy.test.ts`. Never soften one to make a feature pass.
 - Client sites are data. One renderer. Never fork code per client.
+- **A BOOKING is an appointment; a JOB is multi-day work. They are different
+  tables with different rules, and the boundary is here so it is obvious
+  rather than discovered.**
+
+  A **booking** reserves calendar time. It is overlap-checked against other
+  bookings and block-outs at its location, on windows expanded by the
+  service's buffers, and it **may not exceed 24 hours**. That cap is a product
+  rule first: an appointment longer than a day is not an appointment. It is
+  also load-bearing for correctness — the overlap query looks back exactly 24
+  hours, so the cap is what makes that range provably contain everything that
+  could overlap. Raise one and you must raise the other.
+
+  A **job** is quoted → accepted → scheduled → in progress → complete, carries
+  a crew, materials and photos, and spans days. Multi-day work is a job, never
+  a long booking.
+
+  **A job does NOT reserve calendar time.** It has `scheduledFor` and no end,
+  no duration and no location-time index, so nothing overlap-checks it. That
+  is the current schema, not an oversight to code around: crew time that must
+  be reserved is booked as bookings against the job. If a job ever needs to
+  hold the calendar itself, it needs an end time and an index first — decide
+  that in the schema, not in a handler.
 - **`apps/sites` does not query Convex per pageview.** `SiteConfig` is served
   from ISR, with tag-based revalidation when a config is written — never a live
   query on the request path. Measured against a production build on 31 Aug 2026:
@@ -54,7 +76,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 223 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 237 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -320,7 +342,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 223 tests
+pnpm test                        # 237 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

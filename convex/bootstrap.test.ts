@@ -78,11 +78,53 @@ describe("bootstrapping the first platform owner", () => {
     ).resolves.toMatchObject({ role: "owner" });
   });
 
-  test("refuses an email with no account", async () => {
+  /*
+   * This used to assert NO_SUCH_USER — "sign in once first". That is
+   * impossible on a fresh deployment and deadlocked it: resolveSignIn refuses
+   * an unknown email without a pending invite, and an invite needs a
+   * createdBy user that does not exist yet. The old test passed while the
+   * product could not be set up at all.
+   */
+  test("CREATES the account when there is none — a fresh deployment has no users", async () => {
     const h = harness();
+
+    const result = await h.mutation(internal.bootstrap.claimPlatformOwner, {
+      email: "First@TheCreativeCurrent.co.za",
+    });
+    expect(result.role).toBe("owner");
+    expect(result.email).toBe("first@thecreativecurrent.co.za");
+
+    const user = await h.run((ctx) => ctx.db.get(result.userId));
+    expect(user?.email).toBe("first@thecreativecurrent.co.za");
+    // The OTP flow verifies the address. Asserting it here would be a lie.
+    expect(user?.emailVerificationTime).toBeUndefined();
+  });
+
+  test("the created account can actually reach the platform", async () => {
+    // The whole point: a bare user row that cannot reach anything is the bug.
+    const h = harness();
+    const { userId } = await h.mutation(internal.bootstrap.claimPlatformOwner, {
+      email: "first@thecreativecurrent.co.za",
+    });
+
+    await expect(asUser(h, userId).query(api.platform.me, {})).resolves.toEqual({
+      role: "owner",
+    });
+  });
+
+  test("still refuses a second claim, even though it now creates accounts", async () => {
+    // Creating users must not turn this into an open privilege escalation.
+    const h = harness();
+    await h.mutation(internal.bootstrap.claimPlatformOwner, {
+      email: "first@thecreativecurrent.co.za",
+    });
+
     await expect(
-      h.mutation(internal.bootstrap.claimPlatformOwner, { email: "ghost@example.test" }),
-    ).rejects.toThrow(/NO_SUCH_USER/);
+      h.mutation(internal.bootstrap.claimPlatformOwner, { email: "attacker@example.test" }),
+    ).rejects.toThrow(/ALREADY_BOOTSTRAPPED/);
+
+    const users = await h.run((ctx) => ctx.db.query("users").collect());
+    expect(users).toHaveLength(1); // and it did NOT leave a user row behind
   });
 
   test("the grant is written to the audit log", async () => {

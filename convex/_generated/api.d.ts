@@ -11,6 +11,7 @@
 import type * as auth from "../auth.js";
 import type * as bootstrap from "../bootstrap.js";
 import type * as clients from "../clients.js";
+import type * as customers from "../customers.js";
 import type * as domains from "../domains.js";
 import type * as expenses from "../expenses.js";
 import type * as finance from "../finance.js";
@@ -31,6 +32,7 @@ import type * as public_quote from "../public/quote.js";
 import type * as public_site from "../public/site.js";
 import type * as quoteRequests from "../quoteRequests.js";
 import type * as seed from "../seed.js";
+import type * as services from "../services.js";
 import type * as siteConfigs from "../siteConfigs.js";
 import type * as siteRevalidate from "../siteRevalidate.js";
 import type * as tables_growth from "../tables/growth.js";
@@ -53,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   bootstrap: typeof bootstrap;
   clients: typeof clients;
+  customers: typeof customers;
   domains: typeof domains;
   expenses: typeof expenses;
   finance: typeof finance;
@@ -73,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   "public/site": typeof public_site;
   quoteRequests: typeof quoteRequests;
   seed: typeof seed;
+  services: typeof services;
   siteConfigs: typeof siteConfigs;
   siteRevalidate: typeof siteRevalidate;
   "tables/growth": typeof tables_growth;

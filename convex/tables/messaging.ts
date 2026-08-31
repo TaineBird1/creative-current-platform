@@ -31,8 +31,16 @@ export const messagingTables = {
       v.literal("sent"), v.literal("delivered"), v.literal("failed"),
       v.literal("suppressed_consent"), v.literal("suppressed_demo"),
     ),
-    /** Quiet hours are evaluated in the RECIPIENT's timezone, stored here. */
-    recipientTimezone: v.string(),
+    /**
+     * The SITE's timezone, not the recipient's — named for what it actually
+     * holds. Bookings collect a name and a phone number and nothing else, so
+     * no recipient timezone exists anywhere to populate. Quiet hours are
+     * therefore evaluated against the business's local time, which is an
+     * approximation that is right for a customer in the same city and wrong
+     * for one abroad. Fixing it needs a real source for a recipient's
+     * timezone, not a field nothing can fill.
+     */
+    quietHoursTimezone: v.string(),
     scheduledFor: v.number(),
     sentAt: v.optional(v.number()),
     providerMessageId: v.optional(v.string()),

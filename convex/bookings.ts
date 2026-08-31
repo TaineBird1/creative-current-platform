@@ -268,6 +268,9 @@ export const book = tenantMutation("staff")({
       staffUserId: args.staffUserId,
       startsAt,
       endsAt,
+      // 1 at creation; any future reschedule must bump it, or the customer's
+      // confirmation for the new time is suppressed as a duplicate.
+      messageRevision: 1,
       status: "confirmed",
       source: args.source ?? "back_office",
       notes: args.notes?.trim() || undefined,

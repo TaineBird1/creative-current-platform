@@ -2,6 +2,7 @@ import { v, ConvexError } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, auditWrite } from "./lib/tenancy";
+import { resolveConsent } from "./lib/consent";
 
 /**
  * CUSTOMERS — the tenant's end customers, and the lock-in memory.
@@ -328,12 +329,14 @@ export const consentState = tenantQuery("staff")({
       .withIndex("by_customer_channel", (q) => q.eq("customerId", customerId))
       .collect();
 
-    const latest = (channel: "whatsapp" | "email" | "sms") => {
-      const forChannel = rows
-        .filter((row) => row.channel === channel)
-        .sort((a, b) => b.at - a.at);
-      return forChannel[0]?.state ?? null;
-    };
+    /*
+     * resolveConsent, not a sort. Two rows recorded in the same millisecond
+     * sort equally, and the scan order that breaks the tie is not guaranteed
+     * — CI caught exactly that as a test that passed locally and failed on
+     * the runner. On an exact tie, withdrawn wins.
+     */
+    const latest = (channel: "whatsapp" | "email" | "sms") =>
+      resolveConsent(rows.filter((row) => row.channel === channel))?.state ?? null;
 
     return { whatsapp: latest("whatsapp"), email: latest("email"), sms: latest("sms") };
   },

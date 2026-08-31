@@ -1,0 +1,433 @@
+/*
+ * THE OWNER'S CONSOLE. Operate mode: the owner is mid-task, usually with a
+ * client on the phone. Scanability and consistency outrank expression, and
+ * the surface should disappear into the work.
+ *
+ * Monochrome throughout — no client colour reaches this world, because a
+ * tinted console is how you misread whose data you are looking at.
+ *
+ * Type is a FIXED rem scale here, not the fluid --step-* clamps the client
+ * world uses. A clamped heading shrinks in a narrow pane and reads as a
+ * different hierarchy at two window sizes; product UI is viewed at consistent
+ * DPI and wants one answer. Ratio is ~1.2, tighter than a brand surface,
+ * because there are far more type elements on this screen.
+ */
+
+.shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- top bar ---------------------------------------------------------- */
+/*
+ * Identity lives here rather than as a kicker over the heading. An eyebrow
+ * stacked on a heading is a label the heading does not need, and it pushes
+ * the actual page title down the scan order.
+ */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-m);
+  padding: var(--space-xs) var(--space-m);
+  border-bottom: var(--border-hairline) solid var(--border);
+  background: var(--bg-raised);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.brand {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  margin: 0;
+}
+
+.who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.role {
+  font-variant: all-small-caps;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+/* ---- page ------------------------------------------------------------- */
+.page {
+  flex: 1;
+  width: min(100% - var(--space-m) * 2, 78rem);
+  margin-inline: auto;
+  padding-block: var(--space-l) var(--space-2xl);
+}
+
+.h1 {
+  font-family: var(--font-sans);
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: var(--tracking-tight);
+  margin: 0 0 var(--space-2xs);
+}
+
+.lede {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  margin: 0 0 var(--space-l);
+  max-width: 70ch;
+}
+
+/* ---- venture switcher -------------------------------------------------- */
+/*
+ * Links, not a control. The venture lens belongs in the URL: it survives a
+ * refresh, it can be bookmarked, it works with the back button, and it needs
+ * no client JavaScript. A <select> would have given up all four for a widget.
+ */
+.switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3xs);
+  border-bottom: var(--border-hairline) solid var(--border);
+  margin-bottom: var(--space-l);
+}
+
+.switchLink {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs) var(--space-s);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: calc(var(--border-hairline) * -1);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.switchLink:hover {
+  color: var(--text);
+}
+
+/*
+ * aria-current carries the state, and the style hangs off it. One source of
+ * truth: a selected tab that is visually current but not programmatically
+ * current is a lie told only to sighted users.
+ */
+.switchLink[aria-current="page"] {
+  color: var(--text);
+  border-bottom-color: var(--text);
+  font-weight: 600;
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.6875rem;
+  color: var(--text-faint);
+}
+
+.switchLink[aria-current="page"] .count {
+  color: var(--text-muted);
+}
+
+/* ---- sections ---------------------------------------------------------- */
+.section {
+  margin-bottom: var(--space-xl);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-m);
+  margin-bottom: var(--space-s);
+}
+
+.h2 {
+  font-family: var(--font-sans);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  margin: 0;
+}
+
+/* ---- table ------------------------------------------------------------- */
+/*
+ * A real table, because this is tabular data and a screen reader should be
+ * told so. Density is a virtue in Operate: the owner wants to see the whole
+ * portfolio without scrolling.
+ */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.6875rem;
+  font-variant: all-small-caps;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding: var(--space-2xs) var(--space-s) var(--space-2xs) 0;
+  border-bottom: var(--border-hairline) solid var(--border);
+  white-space: nowrap;
+}
+
+.td {
+  padding: var(--space-xs) var(--space-s) var(--space-xs) 0;
+  border-bottom: var(--border-hairline) solid var(--border);
+  vertical-align: baseline;
+}
+
+.row:hover .td {
+  background: var(--bg-raised);
+}
+
+.name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  letter-spacing: var(--tracking-tight);
+}
+
+/* ---- badges ------------------------------------------------------------ */
+/*
+ * Outlined, not filled. A filled chip in a monochrome world has to borrow
+ * lightness from the text ramp to be legible, which makes it compete with the
+ * client's name — the thing the eye is actually scanning for.
+ */
+.badge {
+  display: inline-block;
+  padding: 0 var(--space-2xs);
+  font-size: 0.6875rem;
+  font-variant: all-small-caps;
+  letter-spacing: 0.05em;
+  line-height: 1.6;
+  border: var(--border-hairline) solid var(--control-border);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.badgeStrong {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+/* ---- empty states ------------------------------------------------------ */
+/*
+ * An empty state teaches the interface. "No clients" tells the owner nothing
+ * they did not already know; what they need is why it is empty here and what
+ * the next move is.
+ */
+.empty {
+  border: var(--border-hairline) dashed var(--border-strong);
+  border-radius: var(--radius-m);
+  padding: var(--space-l) var(--space-m);
+  text-align: left;
+}
+
+.emptyTitle {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-2xs);
+}
+
+.emptyBody {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 62ch;
+}
+
+/* ---- disclosure + form -------------------------------------------------- */
+/*
+ * A native <details>, not a modal. The owner is adding a client, not being
+ * interrupted — there is nothing to protect focus from, and a modal here
+ * would be reached for out of habit. Native also means keyboard and screen
+ * reader behaviour we do not have to reimplement.
+ */
+.disclosure {
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--bg-raised);
+}
+
+.summary {
+  padding: var(--space-xs) var(--space-m);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary::before {
+  content: "+";
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+}
+
+.disclosure[open] .summary::before {
+  content: "−";
+}
+
+.form {
+  padding: 0 var(--space-m) var(--space-m);
+  display: grid;
+  gap: var(--space-s);
+  max-width: 42rem;
+}
+
+.fieldRow {
+  display: grid;
+  gap: var(--space-s);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 40rem) {
+  .fieldRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.field {
+  display: grid;
+  gap: var(--space-3xs);
+}
+
+.label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+/*
+ * --control-border, not --border. The edge of an input IS its affordance, so
+ * WCAG asks 3:1 of it; --border measures 1.80:1 on this ground and would be a
+ * control nobody can see the boundary of.
+ */
+.input,
+.select {
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: var(--bg);
+  border: var(--border-hairline) solid var(--control-border);
+  border-radius: var(--radius-s);
+  padding: var(--space-2xs) var(--space-xs);
+  min-height: 2.25rem;
+  width: 100%;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.input:hover,
+.select:hover {
+  border-color: var(--text-muted);
+}
+
+.input:disabled,
+.select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.input::placeholder {
+  color: var(--text-faint);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  flex-wrap: wrap;
+}
+
+.btn {
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: var(--space-2xs) var(--space-m);
+  min-height: 2.25rem;
+  border-radius: var(--radius-s);
+  border: var(--border-hairline) solid var(--control-border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.btnPrimary {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  background: var(--text-muted);
+  border-color: var(--text-muted);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---- feedback ----------------------------------------------------------- */
+/*
+ * The error names the problem AND the recovery. A bare "failed" makes the
+ * owner guess, on a call, in front of a client.
+ */
+.error {
+  font-size: 0.8125rem;
+  color: var(--signal-danger);
+  margin: 0;
+}
+
+.success {
+  font-size: 0.8125rem;
+  color: var(--text);
+  margin: 0;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  margin: 0;
+  max-width: 62ch;
+}

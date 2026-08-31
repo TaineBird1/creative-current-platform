@@ -112,6 +112,35 @@
   --surface: var(--ink-800);
   --border: var(--ink-700);
   --border-strong: var(--ink-600);
+  /*
+   * THE EDGE OF AN INTERACTIVE CONTROL, and not the same thing as --border.
+   *
+   * WCAG 1.4.11 asks 3:1 of anything identifying a control, and neither
+   * neutral clears it on this ground: --border measures 1.80:1 and
+   * --border-strong 2.63:1. Both are right for a hairline RULE, which is
+   * decoration and exempt; both are wrong for the outline of an input, where
+   * the border IS the affordance. ink-400 measures 6.96:1 here.
+   *
+   * Use on inputs, selects and secondary buttons. Keep --border for table
+   * rules and section separators.
+   */
+  --control-border: var(--ink-400);
+  /*
+   * SIGNALS, RE-DERIVED FOR A DARK GROUND.
+   *
+   * The base signals are tuned for the warm client ground and do not survive
+   * the move: --signal-danger measures 2.55:1 on this console, well under AA,
+   * so an error message rendered in it is a message the reader has to work to
+   * read — at exactly the moment something has gone wrong.
+   *
+   * These clear 4.5:1 on all three admin surfaces, checked against the
+   * darkest (--surface) rather than the ground, which is the one that fails
+   * first. Hue is held; only lightness moves.
+   */
+  --signal-danger: #ea6a6a;
+  --signal-positive: #4fb389;
+  --signal-warning: #d9a441;
+  --signal-info: #7ab3de;
   --text: var(--ink-50);
   --text-muted: var(--ink-300);
   /*
@@ -141,6 +170,12 @@
   --surface: #ffffff;
   --border: var(--ink-200);
   --border-strong: var(--ink-300);
+  /*
+   * See the admin note. On the warm client ground ink-300 measures 2.16:1 and
+   * ink-400 2.76:1, both under the 3:1 a control edge needs; ink-500 clears at
+   * 4.59:1. A control edge is not a rule and does not take --border.
+   */
+  --control-border: var(--ink-500);
   --text: var(--ink-900);
   --text-muted: var(--ink-600);
   --text-faint: var(--ink-550);

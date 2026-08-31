@@ -32,16 +32,33 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # convex/_generated is COMMITTED, so tests and builds need no credentials.
-      # This regenerates it and fails if the result differs — committed build
-      # output that silently goes stale is worse than not committing it, and
-      # the failure would otherwise appear as a confusing type error later.
+      # The credential-free half of the staleness guard, and the one that
+      # always runs. convex/_generated is COMMITTED, so if it is missing a
+      # function that code references, this fails here rather than as a
+      # confusing error inside a Next build later.
+      - name: Typecheck
+        run: pnpm exec tsc -p tsconfig.json --noEmit
+
+      # The thorough half, which DOES need credentials — contrary to what the
+      # comment here used to claim. `npx convex codegen` refuses to run without
+      # a configured deployment ("No CONVEX_DEPLOYMENT set"), and CI has no
+      # .env.local, so it depends entirely on this secret. When the secret went
+      # missing the whole pipeline failed here, nothing was tested, and the
+      # deploy job was skipped — silently, for several commits.
+      #
+      # So: skip loudly rather than fail the run. A missing secret is a
+      # configuration problem to fix, not a reason to stop testing the code.
       - name: Check generated Convex types are current
-        run: |
-          npx convex codegen
-          git diff --exit-code -- convex/_generated             || (echo "::error::convex/_generated is stale. Run 'npx convex dev --once' and commit." && exit 1)
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "::warning::CONVEX_DEPLOY_KEY is not set, so convex/_generated was not verified against convex/. Typecheck still ran."
+            exit 0
+          fi
+          npx convex codegen
+          git diff --exit-code -- convex/_generated \
+            || (echo "::error::convex/_generated is stale. Run 'npx convex dev --once' and commit." && exit 1)
 
       # 155 tests, including the structural guards that are the only thing
       # stopping a future function from opting out of tenancy.

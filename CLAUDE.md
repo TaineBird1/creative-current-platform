@@ -54,7 +54,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 176 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 190 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -70,6 +70,9 @@ and fail CI rather than relying on anyone remembering:
 - `lib/reseller.ts` is the ONLY writer of `clients.resellerId` and enforces
   reseller depth exactly 1, which is what makes the one-hop membership walk in
   `requireTenant` correct
+- an expense's client must belong to the expense's VENTURE. Otherwise a cost
+  sits in one venture's P&L while pointing at another's client: the arithmetic
+  still adds up, nothing errors, and every per-venture figure is quietly wrong
 - money is integer cents as `v.number()`, never bigint, always stored beside
   its currency; integer-ness comes from `assertCents()` in `convex/lib/money.ts`
 
@@ -313,7 +316,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 176 tests
+pnpm test                        # 190 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

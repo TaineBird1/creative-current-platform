@@ -18,9 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version` here on purpose. package.json declares
+      # "packageManager": "pnpm@9.12.0", and passing a second, differently
+      # shaped version to action-setup@v4 makes it refuse to guess — which
+      # failed the job before a single step ran, so nothing was tested and
+      # nothing deployed. One source of truth: package.json.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -57,9 +60,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version` here on purpose. package.json declares
+      # "packageManager": "pnpm@9.12.0", and passing a second, differently
+      # shaped version to action-setup@v4 makes it refuse to guess — which
+      # failed the job before a single step ran, so nothing was tested and
+      # nothing deployed. One source of truth: package.json.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:

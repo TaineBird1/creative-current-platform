@@ -221,8 +221,10 @@ Three things about it that are not self-evident:
 - **The required check name IS the job name** in `.github/workflows/ci.yml`.
   Rename the job and the required check stops reporting, so every PR blocks
   forever with nothing failing and nothing to click. Rename both or neither.
-- **Never require `Deploy Convex`.** It is gated to pushes on main, so it never
-  reports on a PR — requiring it would block every merge permanently.
+- **Never require `Deploy Convex`.** It is gated to pushes on main, so on a PR
+  it reports as *skipped* — observed on PR #1 — and never as passed. Requiring
+  it would stake every merge on how GitHub happens to treat a skipped required
+  check, which is not a guarantee worth depending on.
 - **Keep `user.email` on the address linked to the GitHub account.** The rule
   set carries `require_extra_approval_for_unattributed_changes`, so a commit
   whose author GitHub cannot resolve demands an approval that a solo owner

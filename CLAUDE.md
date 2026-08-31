@@ -207,6 +207,31 @@ create one.
 npx convex run bootstrap:claimPlatformOwner '{"email":"you@example.com"}'
 ```
 
+## Branch protection — main takes no direct pushes
+
+Ruleset "protect main" (`~DEFAULT_BRANCH`, active, **no bypass actors**) holds
+four rules: `deletion`, `non_fast_forward`, `pull_request` (0 approvals) and
+`required_status_checks` on **`Tests, lint, build`**. Every change reaches main
+through a branch and a PR whose CI is green. The gate exists because CI sat red
+for three commits and nothing stopped them — history was protected, contents
+were not.
+
+Three things about it that are not self-evident:
+
+- **The required check name IS the job name** in `.github/workflows/ci.yml`.
+  Rename the job and the required check stops reporting, so every PR blocks
+  forever with nothing failing and nothing to click. Rename both or neither.
+- **Never require `Deploy Convex`.** It is gated to pushes on main, so it never
+  reports on a PR — requiring it would block every merge permanently.
+- **Keep `user.email` on the address linked to the GitHub account.** The rule
+  set carries `require_extra_approval_for_unattributed_changes`, so a commit
+  whose author GitHub cannot resolve demands an approval that a solo owner
+  cannot give — GitHub forbids approving your own PR. It is set repo-local;
+  it was previously unset entirely.
+
+No bypass actor is deliberate. One for the owner would recreate exactly the
+hole this closes.
+
 ## Commands
 
 ```bash

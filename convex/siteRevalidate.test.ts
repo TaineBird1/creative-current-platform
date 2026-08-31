@@ -1,5 +1,5 @@
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import { solarTradesTemplate, buildAccentRamp } from "@cc/site-config";
@@ -116,30 +116,50 @@ describe("cache tags for a site", () => {
 });
 
 describe("revalidation is scheduled by the writes that change what a visitor sees", () => {
-  /**
-   * Reading the scheduler table directly is the only way to assert this
-   * without a live sites app. It is also the thing that actually matters: the
-   * mutation's job is to enqueue, and the action's job is to survive the sites
-   * app being down.
+  /*
+   * Fake timers go on BEFORE anything is scheduled, which is the order the
+   * convex-test docs use and the only order that works.
+   *
+   * The failure this guards against is a race, not a logic error.
+   * `runAfter(0, ...)` fires the moment the mutation commits; if the test ends
+   * first, convex-test runs the action against a torn-down harness and throws
+   * "Write outside of transaction ..._scheduled_functions". It passed locally
+   * every single time and only failed under CI's timing.
+   *
+   * `finishInProgressScheduledFunctions` is not enough on its own — it drains
+   * what is already running, and a job scheduled for +0ms is still pending.
    */
-  const scheduled = (h: Harness) =>
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const jobs = (h: Harness) =>
     h.run(async (ctx) => {
-      const jobs = await ctx.db.system.query("_scheduled_functions").collect();
-      return jobs.filter((j) => j.name.includes("siteRevalidate"));
+      const all = await ctx.db.system.query("_scheduled_functions").collect();
+      return all.filter((j) => j.name.includes("siteRevalidate"));
     });
 
-  test("publish enqueues a revalidation", async () => {
+  const drain = (h: Harness) => h.finishAllScheduledFunctions(vi.runAllTimers);
+
+  test("publish enqueues a revalidation, and it runs to completion", async () => {
     const h = harness();
     const { siteId, clientId } = await seed(h);
     const owner = await asOwner(h, clientId);
 
-    expect(await scheduled(h)).toHaveLength(0);
+    expect(await jobs(h)).toHaveLength(0);
 
     await owner.mutation(api.siteConfigs.publish, { clientSlug: "alpha", siteId });
 
     // Without this, a publish would look successful while every visitor kept
     // getting the previous config until the fallback window expired.
-    expect(await scheduled(h)).toHaveLength(1);
+    expect(await jobs(h)).toHaveLength(1);
+
+    await drain(h);
+
+    // The row survives completion carrying its outcome, so assert the outcome
+    // rather than its absence. "failed" would mean a publish silently stopped
+    // revalidating — and it would mean SITES_REVALIDATE_URL being unset takes
+    // the write down with it, which is the one thing this must never do.
+    expect((await jobs(h)).map((j) => j.state.kind)).toEqual(["success"]);
   });
 
   test("replace enqueues one too, so an editor save is not invisible", async () => {
@@ -151,7 +171,10 @@ describe("revalidation is scheduled by the writes that change what a visitor see
       clientSlug: "alpha", siteId, config: validConfig(), expectedVersion: 1,
     });
 
-    expect(await scheduled(h)).toHaveLength(1);
+    expect(await jobs(h)).toHaveLength(1);
+
+    await drain(h);
+    expect((await jobs(h)).map((j) => j.state.kind)).toEqual(["success"]);
   });
 
   test("the action does not throw when the sites app is not configured", async () => {

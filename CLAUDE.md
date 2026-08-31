@@ -166,16 +166,32 @@ again.
 **Demos are PATH-based, not subdomains.** `sites.thecreativecurrent.co.za/<slug>`,
 which the existing `[[...slug]]` resolution already serves. The alternative,
 `<slug>.demo.thecreativecurrent.co.za`, needs a WILDCARD domain — and Vercel
-requires the nameserver method for wildcards, meaning the whole zone moves off
-10Web with every existing record recreated by hand. A subdomain does not make
-a demo more convincing (it still is not the lead's own domain), so it buys
+requires the nameserver method for wildcards, meaning the whole zone moves to
+Vercel DNS with every existing record recreated by hand. A subdomain does not
+make a demo more convincing (it still is not the lead's own domain), so it buys
 nothing for that cost.
 
+The cost is smaller than this once claimed — the zone is on Cloudflare, not
+10Web, so a move would be from there — but the conclusion is unchanged, because
+it was never the DNS work that made subdomain demos not worth it.
+
+Both hosts went live 31 Aug 2026 and serve the right app.
+
+**DNS for `thecreativecurrent.co.za` is on CLOUDFLARE**, not 10Web — earlier
+notes here said 10Web and were wrong. Nameservers are `dave.ns.cloudflare.com`
+and `piper.ns.cloudflare.com`. Records are `A <sub> 76.76.21.21`, and they must
+be **"DNS only" (grey cloud)**. A proxied record stops Vercel completing its
+ACME challenge, so no certificate is issued and you get a redirect loop or an
+SSL error that looks like a Vercel fault and is not.
+
+**Vercel did not auto-issue the certificates.** Both subdomains sat at
+"configured OK" for six minutes serving fine over HTTP while HTTPS failed the
+handshake outright — no cert existed. `vercel certs issue <domain>` fixed each
+in 15 seconds. If a client domain ever serves on HTTP but not HTTPS, that is
+the fix; it presents as a DNS problem and is not one.
+
 Real client domains are added to `cc-sites` individually through the domain
-wizard. Apex needs an A record, a subdomain needs a CNAME — both work from
-10Web's DNS panel with no nameserver change. So **nothing here forces a
-nameserver move.** Moving to Vercel DNS may still be worth it later for
-convenience; it is not a prerequisite for anything.
+wizard, the same way. No nameserver change is required for any of it.
 
 ## Region — EU West (Ireland), deliberately
 

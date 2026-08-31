@@ -33,3 +33,6 @@ apps/*/.env.local
 # Convex CLI agent artefacts. Reinstallable with `npx convex ai-files install`.
 skills-lock.json
 AGENTS.md
+
+# Lighthouse CI run output.
+.lighthouseci

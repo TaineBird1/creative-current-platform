@@ -76,7 +76,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 237 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 255 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -99,6 +99,15 @@ and fail CI rather than relying on anyone remembering:
 - income and expenses both require that the client belong to the VENTURE. Otherwise a cost
   sits in one venture's P&L while pointing at another's client: the arithmetic
   still adds up, nothing errors, and every per-venture figure is quietly wrong
+- a quote's total is COMPUTED, never accepted from the caller, and each line
+  is rounded to whole cents before summing so the total equals the sum of the
+  lines the customer actually sees
+- **VAT is not implemented and `taxable` has no home.** Line items carry the
+  flag and quotes carry `subtotalCents`/`totalCents`, but NOTHING stores a tax
+  posture — no registration flag, no rate. Today `total === subtotal`, which is
+  correct while unregistered. On registration the flag needs a schema field
+  first; deriving a rate from a constant would put a tax figure on a customer
+  document that no record justifies
 - money is integer cents as `v.number()`, never bigint, always stored beside
   its currency; integer-ness comes from `assertCents()` in `convex/lib/money.ts`
 
@@ -342,7 +351,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 237 tests
+pnpm test                        # 255 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

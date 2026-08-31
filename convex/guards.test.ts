@@ -131,6 +131,100 @@ describe("tenancy", () => {
   });
 });
 
+describe("message keys", () => {
+  /**
+   * WHOEVER ADDS DRAG-RESCHEDULE WILL SEE THIS FIRST.
+   *
+   * A booking's confirmation and reminders carry `startsAt` AND
+   * `messageRevision` in their idempotency key. That is what makes a
+   * rescheduled booking a NEW message instead of one suppressed as a
+   * duplicate — and a suppressed confirmation is invisible: nobody is told,
+   * and the customer arrives at the old time.
+   *
+   * `book` is the only writer of `startsAt`, and it sets messageRevision to 1.
+   * The moment a second writer appears — Part 2 names drag-reschedule, so it
+   * is coming in M3, not hypothetical — that writer MUST bump
+   * `messageRevision` in the same patch, or a 09:00 -> 10:00 -> 09:00 sequence
+   * reproduces the first key and silently sends nothing.
+   *
+   * This is a test rather than a note in CLAUDE.md on purpose. A note does not
+   * survive a session boundary; CI does.
+   */
+  const STARTS_AT_WRITER = "bookings.ts";
+
+  test("only bookings.ts writes a booking's startsAt", () => {
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      if (file.path === STARTS_AT_WRITER) continue;
+
+      // An insert into bookings anywhere else necessarily sets startsAt.
+      if (/db\.insert\(\s*"bookings"/.test(file.text)) {
+        offenders.push(`${file.path}: inserts into bookings`);
+      }
+
+      /*
+       * A patch that mentions startsAt. Matched loosely on purpose: a false
+       * positive here costs one comment, and a false negative costs a
+       * customer standing outside a locked door.
+       */
+      for (const m of file.text.matchAll(/db\.patch\([^)]*\{[^}]*startsAt/gs)) {
+        void m;
+        offenders.push(`${file.path}: patches startsAt`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "A booking's startsAt is part of its message idempotency key.",
+        "Any writer of startsAt MUST bump messageRevision in the same patch,",
+        "or the customer's confirmation for the new time is suppressed as a",
+        "duplicate and nobody is told the booking moved.",
+        "",
+        "If you are adding reschedule: bump messageRevision, then add this file",
+        "to STARTS_AT_WRITER above and say why it is safe.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("book sets messageRevision, so the key has something to vary on", () => {
+    // Guards against the counter being quietly dropped from the insert.
+    const bookings = sourceFiles.find((f) => f.path === STARTS_AT_WRITER);
+    expect(bookings?.text).toMatch(/messageRevision:\s*1/);
+  });
+});
+
+describe("the send choke point", () => {
+  /**
+   * Every rule a message must obey — never twice, never to demo or seed,
+   * never without consent, never at night — is only safe if it is applied in
+   * ONE place. "Remember to check isSeed" in three callers is two places to
+   * forget, and the failure is a real message to a real business who never
+   * signed up.
+   */
+  const DISPATCH = "lib/messaging.ts";
+
+  test("only lib/messaging.ts writes the messages table", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === DISPATCH) continue;
+      if (/db\.insert\(\s*"messages"/.test(file.text)) {
+        offenders.push(`${file.path}: inserts into messages`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Messages are created by dispatch() in convex/lib/messaging.ts and",
+        "nowhere else. It is the single place that blocks demo/seed rows,",
+        "checks consent, enforces the idempotency key and holds quiet hours.",
+        "Inserting directly bypasses all four.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+});
+
 describe("single writers", () => {
   test("only siteConfigs.ts writes the sites table", () => {
     // The config column is v.any(), so the database will store anything. This

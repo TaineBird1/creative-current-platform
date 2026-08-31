@@ -70,13 +70,34 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   pageviews**. Live queries belong to the interactive paths — availability,
   booking, quote submit, the office app — which are also the only places the
   region's latency is felt.
+- **PREFER SENDING TWICE OVER SUPPRESSING.** A duplicate message is visible
+  and mildly annoying. A suppression is invisible: nobody is told, and the
+  customer arrives at the old time. Every judgement call in the messaging
+  pipeline resolves that way — which is why a booking's idempotency key
+  carries BOTH `startsAt` and `messageRevision`, two chances to differ rather
+  than one. `guards.test.ts` fails if anything but `book` writes `startsAt`,
+  because a second writer that forgets to bump the revision produces exactly
+  the silent failure this rule exists to prevent.
+- **Quiet hours use the SITE's timezone, not the recipient's.** Bookings
+  collect a name and a phone number and nothing else, deliberately, so no
+  recipient timezone exists anywhere to populate. The field is named
+  `quietHoursTimezone` for what it actually holds. This is an approximation:
+  it is right for a customer in the same city and WRONG for one abroad, whose
+  message is held until the business's morning. Fixing it needs a real source
+  for a recipient's timezone — not a field nothing can fill.
+- **Messaging is NOT STOP-compliant, and must not be described as such.** The
+  consent table is checked on every send and a withdrawal suppresses. But
+  nothing can SET `withdrawn` from an inbound STOP: there is no provider
+  webhook and no inbound pipeline at all, so the only withdrawal path today is
+  a staff member recording one by hand. The outbound half is real; the half
+  that makes STOP automatic does not exist.
 - Every screen goes through the `impeccable` skill. Tokens only.
 - Never mark anything done without a deployed preview URL and a human tapping
   it on a real phone.
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 255 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 276 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -351,7 +372,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 255 tests
+pnpm test                        # 276 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

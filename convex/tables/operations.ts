@@ -76,6 +76,17 @@ export const operationsTables = {
     staffUserId: v.optional(v.id("users")),
     startsAt: v.number(),
     endsAt: v.number(),
+    /**
+     * Bumped by ANY change to startsAt. It exists so a rescheduled booking's
+     * confirmation is a NEW message rather than a suppressed duplicate:
+     * message keys carry it alongside startsAt, which is what makes a
+     * 09:00 -> 10:00 -> 09:00 sequence three distinct messages instead of two.
+     *
+     * `book` initialises it at 1. Nothing else writes startsAt today, and
+     * guards.test.ts fails if anything starts to — see "reschedule must bump
+     * the message revision" there before adding drag-reschedule.
+     */
+    messageRevision: v.number(),
     status: v.union(
       v.literal("pending"), v.literal("confirmed"), v.literal("in_progress"),
       v.literal("completed"), v.literal("cancelled"), v.literal("no_show"),

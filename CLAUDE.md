@@ -182,19 +182,39 @@ go paid. It is affordable only because Convex calls scale with bookings and
 admin usage rather than traffic. Source: Convex's EU launch post, "Just landed
 in Europe".
 
-Both current deployments are confirmed on `eu-west-1`: dev
-(`ideal-anteater-637`) and production, checked on the dashboard 31 Aug 2026. No
-migration is outstanding.
+Project `creative-current`, both deployments on `eu-west-1`:
+
+| | Deployment | Verified |
+|---|---|---|
+| dev | `wary-pika-965` | `.eu-west-1.` in the Cloud URL |
+| prod | `shocking-mosquito-587` | same |
+
+**Verify the region from the URL, not from memory.** An EU deployment's URL
+carries an `.eu-west-1.` segment; a US East one has no region segment at all
+(`valiant-rooster-710.convex.cloud`). That single character difference is the
+only cheap way to tell them apart, and it is how the mistake below was finally
+caught.
 
 **An existing deployment's region cannot be changed.** Moving one means
 creating a new project or deployment in the target region and migrating by
-export/import. An early production deployment did land in US East, because
-`convex deploy` inherited the team default before it was set — caught while it
-was still empty, which is the only cheap moment. **There is still no `--region`
-CLI flag**; the docs say "coming soon", and a launch-post promise of one is not
-the same thing. Regions are selected in the dashboard when you create a project
-or deployment, so check the region on any new deployment before putting data in
-it, and keep the team default set to EU West.
+export/import. **There is still no `--region` CLI flag**; the docs say "coming
+soon", and a launch-post promise of one is not the same thing. Regions are
+chosen in the dashboard at creation time, so check the region on any new
+deployment before putting data in it, and keep the team default on EU West.
+
+**This has already gone wrong once, and the failure was silent.** The first
+project's production deployment (`valiant-rooster-710`) was created in US East
+because `convex deploy` inherited the team default before that default was set.
+It went unnoticed because dev was correctly in Ireland and nobody checks the
+deployment they never look at — and it was recorded here as "confirmed EU West,
+no migration outstanding" on an assumption rather than a reading of the
+dashboard. It was caught on 31 Aug 2026 only because a deploy key was being
+generated and the region field happened to be on screen.
+
+The migration cost nothing because prod was still empty — zero documents, no
+auth env vars, nobody had ever signed in. That is the only cheap moment, and it
+ends the day a real installer signs. If a deployment's region is ever in doubt,
+check it before writing to it, not after.
 
 ## Bootstrapping the first platform owner
 
@@ -237,7 +257,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 125 tests
+pnpm test                        # 163 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

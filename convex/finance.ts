@@ -1,4 +1,6 @@
 import { v } from "convex/values";
+import { isRevenue } from "./lib/ledger";
+import { byOrderThenName } from "./lib/ordering";
 import { platformQuery } from "./lib/functions";
 import { sumCents, type Currency } from "./lib/money";
 
@@ -43,7 +45,7 @@ const NOT_TRACKED = [
   },
 ] as const;
 
-const INCOME_TYPES: readonly string[] = ["payment_received", "property_income", "adjustment"];
+// Revenue classification lives in lib/ledger.ts, beside the ledger writer.
 
 export const pnl = platformQuery({
   args: {
@@ -57,7 +59,7 @@ export const pnl = platformQuery({
 
     const ventures = (await ctx.db.query("ventures").collect())
       .filter((venture) => (ventureId ? venture._id === ventureId : true))
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+      .sort(byOrderThenName);
 
     const allLedger = await ctx.db.query("ledgerEntries").collect();
     const allExpenses = await ctx.db.query("expenses").collect();
@@ -66,7 +68,7 @@ export const pnl = platformQuery({
       const income = allLedger.filter(
         (row) =>
           row.ventureId === venture._id &&
-          INCOME_TYPES.includes(row.type) &&
+          isRevenue(row.type) &&
           inWindow(row.occurredAt),
       );
       const expenses = allExpenses.filter(

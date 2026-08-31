@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { byOrderThenName } from "./lib/ordering";
 import { ownerMutation, platformQuery } from "./lib/functions";
 import { currency, ventureType } from "./tables/tenants";
 
@@ -52,7 +53,7 @@ export const list = platformQuery({
       });
     }
 
-    return rows.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    return rows.sort(byOrderThenName);
   },
 });
 

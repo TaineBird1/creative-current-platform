@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { byName } from "./lib/ordering";
 import { ownerMutation, platformQuery } from "./lib/functions";
 import { currency } from "./tables/tenants";
 
@@ -49,7 +50,7 @@ export const list = platformQuery({
         liveDomain: domains.find((d) => d.verificationStatus === "verified")?.hostname ?? null,
       });
     }
-    return rows.sort((a, b) => a.name.localeCompare(b.name));
+    return rows.sort(byName((row) => row.name));
   },
 });
 

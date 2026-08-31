@@ -70,6 +70,30 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   pageviews**. Live queries belong to the interactive paths — availability,
   booking, quote submit, the office app — which are also the only places the
   region's latency is felt.
+- **WHERE THE TWO ERRORS COST DIFFERENTLY, DEFAULT TO THE RECOVERABLE ONE.**
+  The rule the next two are instances of, stated once so it does not have to
+  be re-derived per domain. Sending twice is recoverable and suppressing is
+  not, so messaging sends. Suppressing on ambiguous consent is recoverable and
+  messaging someone who opted out is not, so consent suppresses. The two look
+  contradictory and are the same rule applied to different costs. Settle
+  arguments in money and impersonation the same way: an over-collected payment
+  is refundable, an under-collected one is a conversation with a customer; an
+  action wrongly attributed to staff is correctable, one wrongly attributed to
+  an owner is not. Work out which error you can undo BEFORE picking a default.
+- **`_creationTime` IS WRITE ORDER. IT IS NEVER EVIDENCE OF WHAT A PERSON
+  DID.** It records when a row reached the database and nothing else. For a
+  CSV import it is the order of lines in a file; for a backfill it is the
+  order of a loop; for a retried mutation it is the second attempt. It may
+  therefore NEVER break a tie about a real-world event — which consent it was
+  that the customer meant, which branch a crew was dispatched from. When two
+  rows tie on a real timestamp, resolve on MEANING (`lib/consent.ts` picks
+  withdrawn) or REFUSE to answer (`public/quote.ts` creates no job when the
+  branch is ambiguous). Inventing an answer is worse than having none.
+  The one legitimate use is PRESENTATION: `lib/ordering.ts` appends `_id` to
+  every list sort so a tied list cannot reshuffle between two reads, which is
+  safe precisely because `_id` means nothing and claims nothing. Quote lists
+  sort by `_creationTime` for the same reason — a quote comes into existence
+  when it is written, so there the write IS the event.
 - **PREFER SENDING TWICE OVER SUPPRESSING.** A duplicate message is visible
   and mildly annoying. A suppression is invisible: nobody is told, and the
   customer arrives at the old time. Every judgement call in the messaging
@@ -92,6 +116,71 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   it is right for a customer in the same city and WRONG for one abroad, whose
   message is held until the business's morning. Fixing it needs a real source
   for a recipient's timezone — not a field nothing can fill.
+- **INVOICE NUMBERING PREFERS A GAP.** A gap is recoverable: you explain it
+  to an accountant once and the explanation is boring. A DUPLICATE is not —
+  two documents bearing INV-0042, sent to two customers, and no way to say
+  afterwards which one a payment settled. The meta-rule settles it without
+  further argument. Preferring a gap FORCES the implementation: allocate the
+  number and insert the invoice in ONE mutation. Convex mutations are
+  serializable, so a counter read-and-patch in the same transaction as the
+  insert cannot hand the same number to two concurrent issuers — one retries
+  and takes the next. Split across two mutations, a failure between them
+  burns a number with no invoice behind it, and then someone "tidies up" by
+  reusing it. `guards.test.ts` fails in BOTH directions: allocating without
+  inserting, and inserting without allocating. Nothing writes either table
+  today; the guard is aimed at whoever builds invoicing.
+- **WEBHOOKS: VERIFY BEFORE PARSING, KEY ON THE PROVIDER'S EVENT ID, NEVER
+  ASSUME ORDER.** All three are enforced, not just documented.
+  *Verify first.* `http.ts` reads `request.text()`, verifies the HMAC over
+  those exact bytes, and only then parses. `request.json()` is banned there
+  by a guard test: it runs a parser over bytes a stranger sent to a
+  discoverable URL, and it re-serialises, so the signature would be checked
+  against different bytes and fail in a way that looks like a wrong secret.
+  *A missing secret is a REFUSAL (500), never a skip.* `if (!secret) return
+  true` would turn an unconfigured deployment into one accepting forged
+  payments silently, with a 200. A guard test bans that shape. 500 not 401 so
+  the provider keeps retrying until the config is fixed.
+  *Idempotency is the provider's event id* — a key derived from the payload
+  cannot tell a retry from a genuine second charge of the same amount.
+  *Order is never assumed.* FACTS are appended (a payment is true whenever we
+  hear about it; a sum has no order). STATE is advanced only by an event
+  NEWER than the one that last set it, compared on the PROVIDER's timestamp,
+  which is why `subscriptions.lastEventAt` exists. `charge.success` arriving
+  after `subscription.disable` records the money AND leaves the cancellation
+  standing — treating them as one ordered stream either loses the payment or
+  resurrects the subscription.
+  *What cannot be attributed is parked, not guessed* (`unattributed`), and a
+  ledger refusal is parked too (`refused`) rather than thrown — a throw
+  aborts the mutation that records the event, so the anomaly would exist only
+  in the provider's failed-delivery dashboard. The ledger post happens BEFORE
+  the `payments` row, so a refusal cannot leave an orphan payment.
+- **THE LEDGER STOPS AT THE DOCUMENT.** The ledger records money that
+  actually moved and needs no registered entity to be true — payments,
+  refunds, adjustments, reversals, per-client and per-venture totals, all
+  live. An INVOICE is the other thing: a legal name, a registration number, a
+  sequential number, the document a customer receives and SARS reads. There
+  is no registered entity behind this platform yet, so `invoices` has no
+  writer and `guards.test.ts` holds it that way. Whoever registers the entity
+  finds that test failing and has to name the issuer before the first invoice
+  exists, which is the order those two things have to happen in anyway.
+  Consequence: **there are no receivables.** No `outstanding`, no `aging`, no
+  "what does this client owe me" — and their absence is deliberate. Nothing
+  is owed until something has been issued, so a receivables screen showing R0
+  would be a claim about the world rather than a gap in the data. Same
+  judgement as the P&L's "not tracked". A guard test fails on
+  `outstandingCents`, `receivableCents` and `agingBuckets`.
+- **Every `ledgerEntries` write goes through `postEntry` in `lib/ledger.ts`.**
+  Same shape as `dispatch` for messages, and for the same reason: whole
+  cents, a sign that agrees with the type, a client that belongs to its
+  venture, and demo/seed data that never accrues are only rules if there is
+  one place to break them. Every one of those failures is SILENT — a
+  wrong-signed refund does not error, it reports the refund as revenue, and
+  the month reads better than one in which nothing happened. Revenue
+  classification (`isRevenue`) lives in the same file: it was duplicated in
+  income.ts and finance.ts, and a type recorded by one but missed by the
+  other is money that exists in the ledger and never reaches a P&L.
+  The P&L is CASH basis. `invoice_issued` is not revenue; counting it and the
+  payment against it would report every job twice.
 - **Messaging is NOT STOP-compliant, and must not be described as such.** The
   consent table is checked on every send and a withdrawal suppresses. But
   nothing can SET `withdrawn` from an inbound STOP: there is no provider
@@ -104,7 +193,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 279 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 332 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -379,7 +468,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 279 tests
+pnpm test                        # 332 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

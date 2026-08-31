@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { byDesc } from "./lib/ordering";
 import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, assertLocationAllowed, auditWrite } from "./lib/tenancy";
@@ -127,7 +128,8 @@ export const list = tenantQuery("staff")({
         photoCount: row.photoStorageIds.length,
       });
     }
-    return out.sort((a, b) => (b.scheduledFor ?? 0) - (a.scheduledFor ?? 0));
+    // Every UNSCHEDULED job shares the null, so ties here are the norm.
+    return out.sort(byDesc((row) => row.scheduledFor ?? 0));
   },
 });
 

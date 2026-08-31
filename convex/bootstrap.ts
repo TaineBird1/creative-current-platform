@@ -39,28 +39,41 @@ export const claimPlatformOwner = internalMutation({
     }
 
     const email = normaliseEmail(args.email);
-    const user = await ctx.db
+    const existingUser = await ctx.db
       .query("users")
       .withIndex("email", (q) => q.eq("email", email))
       .unique();
 
-    if (!user) {
-      throw new ConvexError({
-        code: "NO_SUCH_USER",
-        message: `No account for ${email}. Sign in once first, then run this.`,
-      });
-    }
+    /*
+     * CREATE the account if it does not exist. This used to demand that you
+     * sign in first, which is impossible on a fresh deployment and deadlocked
+     * it completely: `resolveSignIn` refuses an unknown email without a
+     * pending invite, and an invite cannot be minted because `createdBy` is a
+     * required `Id<"users">` and there is no user yet to attribute it to. The
+     * old instruction only ever worked on a deployment whose owner account
+     * predated the invite gate.
+     *
+     * A bare user row is exactly what `resolveSignIn` refuses to leave behind,
+     * and rightly — but this one is not bare. It becomes a platform owner in
+     * the same transaction, so it can reach everything the moment it exists.
+     * `emailVerificationTime` is deliberately unset: the OTP flow verifies the
+     * address on first sign-in, and claiming otherwise here would be a lie.
+     *
+     * The safety property was never "an account must already exist" — it is
+     * the ACTIVE-owner check above, which disarms this the first time it runs.
+     */
+    const userId = existingUser?._id ?? (await ctx.db.insert("users", { email }));
 
     const existing = await ctx.db
       .query("platformMembers")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .withIndex("by_user", (q) => q.eq("userId", userId))
       .unique();
 
     if (existing) {
       await ctx.db.patch(existing._id, { role: "owner", active: true });
     } else {
       await ctx.db.insert("platformMembers", {
-        userId: user._id,
+        userId,
         role: "owner",
         active: true,
       });
@@ -69,14 +82,14 @@ export const claimPlatformOwner = internalMutation({
     // The first grant of platform ownership is exactly the event an audit log
     // exists for.
     await ctx.db.insert("auditLog", {
-      actorUserId: user._id,
+      actorUserId: userId,
       action: "platform.bootstrapOwner",
       entityTable: "platformMembers",
-      entityId: user._id,
+      entityId: userId,
       after: { role: "owner", email },
       at: Date.now(),
     });
 
-    return { email, userId: user._id, role: "owner" as const };
+    return { email, userId, role: "owner" as const };
   },
 });

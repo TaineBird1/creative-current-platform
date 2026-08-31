@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { byDesc } from "./lib/ordering";
 import { ConvexError } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
@@ -132,7 +133,7 @@ export const outbox = tenantQuery("staff")({
       .collect();
 
     return rows
-      .sort((a, b) => b.scheduledFor - a.scheduledFor)
+      .sort(byDesc((row) => row.scheduledFor))
       .slice(0, limit ?? 100)
       .map((row) => ({
         _id: row._id,

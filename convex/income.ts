@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { byDesc } from "./lib/ordering";
 import { ownerMutation, platformQuery } from "./lib/functions";
 import { currency } from "./tables/tenants";
 import { assertCents, sumCents, type Currency } from "./lib/money";
@@ -204,7 +205,7 @@ export const list = platformQuery({
     return rows
       .filter((row) => since === undefined || row.occurredAt >= since)
       .filter((row) => until === undefined || row.occurredAt <= until)
-      .sort((a, b) => b.occurredAt - a.occurredAt)
+      .sort(byDesc((row) => row.occurredAt))
       .map((row) => ({
         _id: row._id,
         description: row.description,

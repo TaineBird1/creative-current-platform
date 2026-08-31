@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { byOrderThenName } from "./lib/ordering";
 import { platformQuery } from "./lib/functions";
 import { sumCents, type Currency } from "./lib/money";
 
@@ -57,7 +58,7 @@ export const pnl = platformQuery({
 
     const ventures = (await ctx.db.query("ventures").collect())
       .filter((venture) => (ventureId ? venture._id === ventureId : true))
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+      .sort(byOrderThenName);
 
     const allLedger = await ctx.db.query("ledgerEntries").collect();
     const allExpenses = await ctx.db.query("expenses").collect();

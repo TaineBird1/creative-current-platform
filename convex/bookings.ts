@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { byAsc } from "./lib/ordering";
 import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, assertLocationAllowed, auditWrite } from "./lib/tenancy";
@@ -99,7 +100,7 @@ export const list = tenantQuery("staff")({
 
     return rows
       .filter((row) => (locationId ? row.locationId === locationId : true))
-      .sort((a, b) => a.startsAt - b.startsAt)
+      .sort(byAsc((row) => row.startsAt))
       .map((row) => ({
         _id: row._id,
         startsAt: row.startsAt,

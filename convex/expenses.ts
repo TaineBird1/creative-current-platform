@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { byDesc } from "./lib/ordering";
 import { ownerMutation, platformQuery } from "./lib/functions";
 import { currency } from "./tables/tenants";
 import { assertCents, sumCents, type Currency } from "./lib/money";
@@ -132,7 +133,7 @@ export const list = platformQuery({
     return rows
       .filter((row) => (since === undefined || row.incurredAt >= since))
       .filter((row) => (until === undefined || row.incurredAt <= until))
-      .sort((a, b) => b.incurredAt - a.incurredAt)
+      .sort(byDesc((row) => row.incurredAt))
       .map((row) => ({
         _id: row._id,
         description: row.description,
@@ -200,7 +201,9 @@ export const summary = platformQuery({
             count: entries.length,
             totalCents: sumCents(entries, code as Currency),
           }))
-          .sort((a, b) => b.totalCents - a.totalCents),
+          // Two categories spending the same amount is ordinary, and the name
+          // is the only stable thing to fall back on here.
+          .sort((a, b) => b.totalCents - a.totalCents || a.category.localeCompare(b.category)),
       };
     });
   },

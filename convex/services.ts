@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { byOrderThenName } from "./lib/ordering";
 import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, auditWrite } from "./lib/tenancy";
@@ -82,7 +83,7 @@ export const list = tenantQuery("staff")({
 
     return rows
       .filter((doc) => includeInactive || doc.active)
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+      .sort(byOrderThenName)
       .map(toRow);
   },
 });

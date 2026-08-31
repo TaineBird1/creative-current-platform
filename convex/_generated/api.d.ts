@@ -27,6 +27,7 @@ import type * as lib_functions from "../lib/functions.js";
 import type * as lib_invites from "../lib/invites.js";
 import type * as lib_messaging from "../lib/messaging.js";
 import type * as lib_money from "../lib/money.js";
+import type * as lib_ordering from "../lib/ordering.js";
 import type * as lib_reseller from "../lib/reseller.js";
 import type * as lib_tenancy from "../lib/tenancy.js";
 import type * as lib_vercel from "../lib/vercel.js";
@@ -77,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   "lib/invites": typeof lib_invites;
   "lib/messaging": typeof lib_messaging;
   "lib/money": typeof lib_money;
+  "lib/ordering": typeof lib_ordering;
   "lib/reseller": typeof lib_reseller;
   "lib/tenancy": typeof lib_tenancy;
   "lib/vercel": typeof lib_vercel;

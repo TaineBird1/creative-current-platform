@@ -145,6 +145,10 @@ export const list = tenantQuery("staff")({
 
     const now = Date.now();
     return rows
+      // _creationTime is safe HERE and only here: a quote comes into existence
+      // when it is written, so write order IS the event order. It is unique,
+      // so there is nothing to tie-break. Do not copy this to a list whose
+      // rows record something that happened away from the keyboard.
       .sort((a, b) => b._creationTime - a._creationTime)
       .map((row) => ({
         _id: row._id,

@@ -70,6 +70,30 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   pageviews**. Live queries belong to the interactive paths — availability,
   booking, quote submit, the office app — which are also the only places the
   region's latency is felt.
+- **WHERE THE TWO ERRORS COST DIFFERENTLY, DEFAULT TO THE RECOVERABLE ONE.**
+  The rule the next two are instances of, stated once so it does not have to
+  be re-derived per domain. Sending twice is recoverable and suppressing is
+  not, so messaging sends. Suppressing on ambiguous consent is recoverable and
+  messaging someone who opted out is not, so consent suppresses. The two look
+  contradictory and are the same rule applied to different costs. Settle
+  arguments in money and impersonation the same way: an over-collected payment
+  is refundable, an under-collected one is a conversation with a customer; an
+  action wrongly attributed to staff is correctable, one wrongly attributed to
+  an owner is not. Work out which error you can undo BEFORE picking a default.
+- **`_creationTime` IS WRITE ORDER. IT IS NEVER EVIDENCE OF WHAT A PERSON
+  DID.** It records when a row reached the database and nothing else. For a
+  CSV import it is the order of lines in a file; for a backfill it is the
+  order of a loop; for a retried mutation it is the second attempt. It may
+  therefore NEVER break a tie about a real-world event — which consent it was
+  that the customer meant, which branch a crew was dispatched from. When two
+  rows tie on a real timestamp, resolve on MEANING (`lib/consent.ts` picks
+  withdrawn) or REFUSE to answer (`public/quote.ts` creates no job when the
+  branch is ambiguous). Inventing an answer is worse than having none.
+  The one legitimate use is PRESENTATION: `lib/ordering.ts` appends `_id` to
+  every list sort so a tied list cannot reshuffle between two reads, which is
+  safe precisely because `_id` means nothing and claims nothing. Quote lists
+  sort by `_creationTime` for the same reason — a quote comes into existence
+  when it is written, so there the write IS the event.
 - **PREFER SENDING TWICE OVER SUPPRESSING.** A duplicate message is visible
   and mildly annoying. A suppression is invisible: nobody is told, and the
   customer arrives at the old time. Every judgement call in the messaging
@@ -104,7 +128,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 279 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 289 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -379,7 +403,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 279 tests
+pnpm test                        # 289 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

@@ -117,7 +117,14 @@ export const accept = mutation({
   handler: async (
     ctx,
     { token },
-  ): Promise<{ number: string; totalCents: number; currency: string; alreadyAccepted: boolean }> => {
+  ): Promise<{
+    number: string;
+    totalCents: number;
+    currency: string;
+    alreadyAccepted: boolean;
+    /** False when the branch was ambiguous — staff must create the job. */
+    jobCreated: boolean;
+  }> => {
     const tokenHash = await hashToken(token);
 
     const quote = await ctx.db
@@ -138,6 +145,7 @@ export const accept = mutation({
         totalCents: quote.totalCents,
         currency: quote.currency,
         alreadyAccepted: true,
+        jobCreated: false,
       };
     }
 
@@ -159,13 +167,26 @@ export const accept = mutation({
      * quietly reserving time from a public endpoint would let anyone with a
      * link block a business's calendar.
      */
-    const customer = await ctx.db.get(quote.customerId);
-    const location = customer
-      ? await ctx.db
-          .query("locations")
-          .withIndex("by_client", (q) => q.eq("clientId", quote.clientId))
-          .first()
-      : null;
+    /*
+     * WHICH BRANCH? Only answer when there is one answer.
+     *
+     * This used `.first()` on the client's locations, which for a multi-branch
+     * business assigned the job to whichever row the scan happened to return —
+     * a crew dispatched from the wrong depot, decided by database ordering. A
+     * tie that decides a FACT may not be broken arbitrarily.
+     *
+     * So: exactly one active location means the branch is unambiguous and the
+     * job is created. Zero or several means we do not know, and guessing is
+     * worse than not knowing. The ACCEPTANCE still stands either way — that is
+     * the customer's act and it is recorded above — and staff create the job
+     * choosing the branch, which they can do and we cannot.
+     */
+    const locations = await ctx.db
+      .query("locations")
+      .withIndex("by_client", (q) => q.eq("clientId", quote.clientId))
+      .collect();
+    const active = locations.filter((row) => row.active);
+    const location = active.length === 1 ? active[0]! : null;
 
     if (location) {
       await ctx.db.insert("jobs", {
@@ -196,6 +217,7 @@ export const accept = mutation({
       totalCents: quote.totalCents,
       currency: quote.currency,
       alreadyAccepted: false,
+      jobCreated: location !== null,
     };
   },
 });

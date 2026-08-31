@@ -1,0 +1,202 @@
+/*
+ * P&L presentation. Shares the console's shell, top bar, table and form
+ * vocabulary by importing console.module.css — the same button in two places
+ * must not look like two buttons. Only the P&L-specific pieces live here.
+ */
+
+/* ---- period ------------------------------------------------------------ */
+/*
+ * A P&L without a month boundary is not a P&L, so the period is a first-class
+ * control rather than a filter tucked in a corner. It lives in the URL for
+ * the same reason the venture lens does: bookmarkable, back-button-safe, and
+ * it survives a refresh while the owner is comparing two months.
+ */
+.period {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  margin-bottom: var(--space-l);
+  flex-wrap: wrap;
+}
+
+.periodNav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 2rem;
+  border: var(--border-hairline) solid var(--control-border);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.periodNav:hover {
+  color: var(--text);
+}
+
+.periodLabel {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  min-width: 11ch;
+}
+
+.periodAll {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding-inline: var(--space-2xs);
+}
+
+.periodAll[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---- the P&L block ------------------------------------------------------ */
+.ventureBlock {
+  border-top: var(--border-hairline) solid var(--border);
+  padding-block: var(--space-m);
+}
+
+.ventureName {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-2xs);
+}
+
+.ventureMeta {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  margin: 0 0 var(--space-s);
+}
+
+/*
+ * One statement per currency. There is deliberately no combined "total" line
+ * across currencies anywhere on this screen — that needs a rate, and a rate
+ * baked into a printed figure is a number that silently ages.
+ */
+.statement {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3xs) var(--space-m);
+  max-width: 34rem;
+  margin-bottom: var(--space-m);
+}
+
+.currencyTag {
+  grid-column: 1 / -1;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding-bottom: var(--space-3xs);
+  border-bottom: var(--border-hairline) solid var(--border);
+  margin-bottom: var(--space-2xs);
+}
+
+.lineLabel {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.lineValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  font-size: 0.8125rem;
+  text-align: right;
+  color: var(--text);
+  letter-spacing: var(--tracking-tight);
+}
+
+.netRow {
+  border-top: var(--border-hairline) solid var(--border-strong);
+  margin-top: var(--space-2xs);
+  padding-top: var(--space-2xs);
+}
+
+.netLabel {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.netValue {
+  font-weight: 600;
+}
+
+/* A loss is stated, not decorated. Colour carries it; the sign carries it too. */
+.negative {
+  color: var(--signal-danger);
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-faint);
+}
+
+/* ---- not tracked -------------------------------------------------------- */
+/*
+ * The most important block on the screen.
+ *
+ * Rendering an unbuilt line as R0 says "you earned nothing from
+ * subscriptions" when the truth is "nothing tracks subscriptions yet". A zero
+ * cannot tell a business fact from a build state, so these lines never get a
+ * number — they get a reason and the milestone that will fill them.
+ */
+.notTracked {
+  border: var(--border-hairline) dashed var(--border-strong);
+  border-radius: var(--radius-m);
+  padding: var(--space-m);
+  margin-top: var(--space-l);
+}
+
+.notTrackedTitle {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-2xs);
+}
+
+.notTrackedIntro {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin: 0 0 var(--space-s);
+  max-width: 68ch;
+}
+
+.notTrackedList {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notTrackedRow {
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  gap: var(--space-2xs) var(--space-m);
+  font-size: 0.8125rem;
+  align-items: baseline;
+}
+
+.notTrackedLabel {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/*
+ * Where a number would sit. An em dash, never "R0.00" — the column has to
+ * read as absent at a glance, from across the desk.
+ */
+.notTrackedDash {
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+}
+
+.notTrackedReason {
+  color: var(--text-muted);
+}

@@ -53,11 +53,29 @@ module.exports = {
         // 4.5:1 line. Trust the runner: it is what gates the branch.
         "categories:accessibility": ["error", { minScore: 0.96 }],
 
-        // Target 1.0. Currently 0.82, held down by /robots.txt returning the
-        // app's HTML — the [[...slug]] catch-all answers it with a rendered
-        // page, so crawlers get <!DOCTYPE html> where the file should be.
-        // /sitemap.xml does the same. Both need real route handlers.
-        "categories:seo": ["error", { minScore: 0.82 }],
+        // NOT ASSERTED, deliberately — and this is not the bar being lowered.
+        //
+        // CI audits localhost, which is not a mapped custom domain, so it is
+        // the shared demo origin. Our robots.txt correctly answers that origin
+        // with `Disallow: /`, and Lighthouse then scores "Page is blocked from
+        // indexing" as an SEO failure. The score dropped 82 -> 54 the moment
+        // robots.txt started working properly. Asserting the category here
+        // would mean asserting that demos are indexable, which is the opposite
+        // of the rule.
+        //
+        // Two real SEO defects are open and are NOT covered by anything below:
+        //   1. <title> and <meta name="description"> are emitted AFTER </head>
+        //      (byte 18988 vs </head> at 995). generateMetadata awaits the site
+        //      resolution, so React streams them in. Google renders and copes;
+        //      social scrapers and simpler crawlers reading only the initial
+        //      head do not, so descriptions and OG tags are invisible to them.
+        //   2. serviceArea sections carry generatePage:true but no route
+        //      exists, so the per-area LocalBusiness pages are unbuilt.
+        //
+        // Assert the category at 1.0 against a REAL client domain the first
+        // time one is live. That is the only host where the number means
+        // anything.
+        // "categories:seo": ["error", { minScore: 1 }],
 
         // Target 2000ms. Measured 2.5s.
         "largest-contentful-paint": ["error", { maxNumericValue: 3000 }],

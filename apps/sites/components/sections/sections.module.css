@@ -454,3 +454,92 @@ textarea.control {
   background: var(--accent-500);
   color: var(--on-accent);
 }
+
+/* ==== variant `field-manual` ========================================== */
+/*
+ * Scoped through :global() on the attribute so the local class names still
+ * hash. Same markup as `ink`; only the skin differs.
+ */
+
+/* Display drops a step. Authority comes from the ruling, not the size. */
+:global([data-variant="field-manual"]) .heroHeadline {
+  font-size: var(--step-4);
+  max-width: 22ch;
+}
+
+:global([data-variant="field-manual"]) .heroSub {
+  max-width: 54ch;
+}
+
+/*
+ * Each heading is marked by a short accent rule rather than sitting in a
+ * tinted band — the one place the client's colour appears outside the
+ * primary action.
+ */
+:global([data-variant="field-manual"]) .narrativeHeading,
+:global([data-variant="field-manual"]) .heroHeadline {
+  padding-bottom: var(--space-xs);
+  border-bottom: var(--border-hairline) solid var(--border);
+  position: relative;
+}
+
+:global([data-variant="field-manual"]) .narrativeHeading::after,
+:global([data-variant="field-manual"]) .heroHeadline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: calc(var(--border-hairline) * -1);
+  width: var(--space-xl);
+  border-bottom: 2px solid var(--accent-600);
+}
+
+:global([data-variant="field-manual"]) .narrativeHeading {
+  font-size: var(--step-3);
+  max-width: 20ch;
+}
+
+/*
+ * MEASUREMENT goes mono — figures, units, sources, references. Prose does
+ * not. In a specification the figure is the content, so it renders in ink
+ * rather than accent; `ink` does the opposite deliberately.
+ */
+:global([data-variant="field-manual"]) .statValue,
+:global([data-variant="field-manual"]) .stepMarker,
+:global([data-variant="field-manual"]) .contactValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: var(--tracking-tight);
+}
+
+:global([data-variant="field-manual"]) .statValue {
+  font-size: var(--step-2);
+  color: var(--text);
+}
+
+:global([data-variant="field-manual"]) .statSource {
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-tight);
+}
+
+/* The step index is a document reference here, so it reads as one. */
+:global([data-variant="field-manual"]) .stepMarker {
+  color: var(--text-faint);
+  font-size: var(--step--1);
+}
+
+/* Ruled entries, not bordered panels. */
+:global([data-variant="field-manual"]) .column,
+:global([data-variant="field-manual"]) .step {
+  padding-block: var(--space-s);
+}
+
+/* Square the actions off. A spec sheet is not rounded. */
+:global([data-variant="field-manual"]) .btn {
+  border-radius: var(--radius-s);
+}
+
+/* The document is read, not scanned: hold the measure tighter. */
+:global([data-variant="field-manual"]) .narrativeBody {
+  max-width: 62ch;
+}

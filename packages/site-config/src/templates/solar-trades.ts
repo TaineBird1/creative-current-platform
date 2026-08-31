@@ -34,6 +34,14 @@ type SeedInput = {
   whatsapp?: string;
   email?: string;
   timezone?: string;
+  /**
+   * Skin within the template. `ink` (editorial, alternating bands) or
+   * `field-manual` (one ground, ruled, mono for measurement). Both render the
+   * same sections from the same registry — a variant is a stylesheet, never a
+   * second component tree. Demos rotate it so two leads never see the same
+   * site. Defaults to `ink`.
+   */
+  variant?: "ink" | "field-manual";
 };
 
 export function solarTradesTemplate(input: SeedInput): SiteConfig {
@@ -42,7 +50,7 @@ export function solarTradesTemplate(input: SeedInput): SiteConfig {
   return {
     version: SITE_CONFIG_VERSION,
     template: "solar-trades",
-    variant: "ink",
+    variant: input.variant ?? "ink",
     currency: "ZAR",
     defaultTimezone: timezone,
 

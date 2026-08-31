@@ -57,14 +57,22 @@ button {
  * runs, if the animation is blocked, if motion is reduced — the page is still
  * fully readable. Nothing here is load-bearing.
  */
+/*
+ * NO opacity ramp, deliberately. The timeline is scroll-driven, so a band
+ * below the fold RESTS at the from-keyframe until it is scrolled into view —
+ * it is a resting state, not a transient. At 0.55 the muted text measured
+ * 4.27:1 and the faint text 3.97:1 against a 4.5:1 requirement, which is how
+ * an audit found 81 contrast failures on a palette whose tokens are all AA
+ * (ink-550 clears 5.56:1 on the client ground).
+ *
+ * Translate and blur carry the reveal on their own and read better for it.
+ */
 @keyframes band-settle {
   from {
-    opacity: 0.55;
     transform: translateY(var(--space-xs));
     filter: blur(3px);
   }
   to {
-    opacity: 1;
     transform: none;
     filter: none;
   }
@@ -142,4 +150,76 @@ a.sr-only:focus-visible {
   color: var(--on-accent);
   border-radius: var(--radius-m);
   font-weight: 600;
+}
+
+/* ==== template solar-trades · variant `field-manual` ==================== */
+/*
+ * DESIGN.md pinned this variant as "mono-forward, blueprint restraint". It is
+ * a stylesheet, not a second component tree: the markup, the section registry
+ * and the renderer are identical to `ink`.
+ *
+ * What actually differs, and why:
+ *
+ * `ink` alternates paper -> dark -> paper -> accent-tinted, so the page gets
+ * its rhythm from colour. `field-manual` refuses that entirely. Every band
+ * sits on one continuous ground and is separated by a hairline rule, so the
+ * page reads as a single specification document rather than a sequence of
+ * marketing panels. That is the whole idea: a lead comparing two quotes is
+ * looking for the one that behaves like a contractor, not a campaign.
+ *
+ * Mono is promoted ONLY where the content is measurement — figures, units,
+ * sources, references. Prose stays in Hanken Grotesk. Monospace as a costume
+ * for "technical" is the failure mode this variant is closest to, so the line
+ * is drawn at: if it is not a quantity or an identifier, it is not mono.
+ *
+ * The accent stops decorating and starts marking. No tinted bands; the
+ * client's colour appears on the primary action, the focus ring, and a short
+ * rule under each heading. In a spec sheet the number is the content, so
+ * figures render in ink rather than accent — the opposite of `ink`.
+ */
+
+/* One ground. The tone attribute keeps its meaning for other variants. */
+.world-client[data-variant="field-manual"] [data-tone="dark"],
+.world-client[data-variant="field-manual"] [data-tone="accent"],
+.world-client[data-variant="field-manual"] [data-tone="sunken"],
+.world-client[data-variant="field-manual"] [data-tone="paper"] {
+  /*
+   * Set from BASE tokens, never from --bg-raised or --surface. The dark tone
+   * redefines those to ink-900, so `--bg: var(--bg-raised)` resolved straight
+   * back to black — the override applied and changed nothing visible.
+   */
+  --bg: var(--ink-0);
+  --bg-raised: var(--ink-0);
+  --bg-sunken: var(--ink-50);
+  --surface: var(--ink-0);
+  --text: var(--ink-900);
+  --text-muted: var(--ink-600);
+  --text-faint: var(--ink-550);
+  --border: var(--ink-200);
+  --border-strong: var(--ink-300);
+  --focus: var(--accent-700);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* The rule between bands IS the section break. */
+.world-client[data-variant="field-manual"] .band + .band {
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+/*
+ * The binding margin. A hairline gutter rule, inset, the way a printed
+ * specification is ruled for annotation. Hairline on purpose — a heavier
+ * coloured edge would be a callout, which this variant has no use for.
+ */
+@media (min-width: 60rem) {
+  .world-client[data-variant="field-manual"] .shell {
+    border-left: var(--border-hairline) solid var(--border);
+    padding-left: var(--space-l);
+  }
+}
+
+/* Restraint is not thinness: the document still needs air between entries. */
+.world-client[data-variant="field-manual"] .band {
+  padding-block: var(--space-xl);
 }

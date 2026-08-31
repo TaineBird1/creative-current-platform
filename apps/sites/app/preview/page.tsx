@@ -14,16 +14,20 @@ import { SiteRenderer } from "@/components/SiteRenderer";
 export default async function PreviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ brand?: string }>;
+  searchParams: Promise<{ brand?: string; variant?: string }>;
 }) {
-  const { brand } = await searchParams;
+  const { brand, variant } = await searchParams;
   const colour = /^#[0-9a-fA-F]{6}$/.test(brand ?? "") ? brand! : "#f26a1b";
+  // `?variant=field-manual` to review the other skin. An unknown value falls
+  // back rather than erroring, matching how the renderer treats one.
+  const skin = variant === "field-manual" ? "field-manual" : "ink";
 
   const config = parseSiteConfig(
     solarTradesTemplate({
       businessName: "Renu Solar",
       slug: "renu-solar",
       brandColour: colour,
+      variant: skin,
       accent: buildAccentRamp(colour),
       city: "Durban",
       region: "KwaZulu-Natal",

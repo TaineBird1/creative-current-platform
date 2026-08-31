@@ -234,6 +234,19 @@ carries an `.eu-west-1.` segment; a US East one has no region segment at all
 only cheap way to tell them apart, and it is how the mistake below was finally
 caught.
 
+**The VERCEL functions must sit beside Convex too, and did not.** Both projects
+defaulted to `iad1` (Washington) while Convex is in Ireland — the same mistake
+as the Convex one below, a layer up, and invisible unless you read
+`x-vercel-id`. Every server-side call was crossing Washington to Dublin. Pinned
+to `dub1` in `apps/*/vercel.json`; check `x-vercel-id` (format
+`edge::function::id`) after any project or plan change, because the region
+resets to the platform default rather than erroring.
+
+`apps/sites` barely notices — it is ISR-cached and measured at 0 Convex calls
+per pageview. `apps/office` is where it mattered: every availability check,
+booking and admin action is a live round trip, which is the entire reason the
+region was chosen.
+
 **An existing deployment's region cannot be changed.** Moving one means
 creating a new project or deployment in the target region and migrating by
 export/import. **There is still no `--region` CLI flag**; the docs say "coming

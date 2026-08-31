@@ -16,16 +16,16 @@ jobs:
     name: Tests, lint, build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # No `version` here on purpose. package.json declares
       # "packageManager": "pnpm@9.12.0", and passing a second, differently
-      # shaped version to action-setup@v4 makes it refuse to guess — which
-      # failed the job before a single step ran, so nothing was tested and
-      # nothing deployed. One source of truth: package.json.
-      - uses: pnpm/action-setup@v4
+      # shaped version makes action-setup refuse to guess — which failed the
+      # job before a single step ran, so nothing was tested and nothing
+      # deployed. One source of truth: package.json.
+      - uses: pnpm/action-setup@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: pnpm
@@ -39,21 +39,30 @@ jobs:
       - name: Typecheck
         run: pnpm exec tsc -p tsconfig.json --noEmit
 
-      # The thorough half, which DOES need credentials — contrary to what the
-      # comment here used to claim. `npx convex codegen` refuses to run without
-      # a configured deployment ("No CONVEX_DEPLOYMENT set"), and CI has no
-      # .env.local, so it depends entirely on this secret. When the secret went
-      # missing the whole pipeline failed here, nothing was tested, and the
-      # deploy job was skipped — silently, for several commits.
+      # The thorough half, which DOES need credentials. `npx convex codegen`
+      # refuses to run without a configured deployment ("No CONVEX_DEPLOYMENT
+      # set"), and CI has no .env.local, so it depends entirely on this secret.
       #
-      # So: skip loudly rather than fail the run. A missing secret is a
-      # configuration problem to fix, not a reason to stop testing the code.
+      # On MAIN a missing secret is fatal. Main is what deploys, and it is the
+      # same key the deploy job needs — so a rotated or expired one would
+      # otherwise downgrade this guarantee to a warning nobody reads, which is
+      # exactly how CI sat red for three commits unnoticed.
+      #
+      # On a pull request it warns instead: secrets are legitimately
+      # unavailable to forked PRs, and failing those punishes a contributor for
+      # a repo setting they cannot see. Typecheck runs either way, and that is
+      # the check which catches a stale _generated that any code references.
       - name: Check generated Convex types are current
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          IS_MAIN: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
         run: |
           if [ -z "$CONVEX_DEPLOY_KEY" ]; then
-            echo "::warning::CONVEX_DEPLOY_KEY is not set, so convex/_generated was not verified against convex/. Typecheck still ran."
+            if [ "$IS_MAIN" = "true" ]; then
+              echo "::error::CONVEX_DEPLOY_KEY is not set. On main this is fatal - it is the same secret the deploy job needs, so a missing or expired key means convex/_generated was never verified AND production was never updated."
+              exit 1
+            fi
+            echo "::warning::CONVEX_DEPLOY_KEY is not available (expected on a forked PR), so convex/_generated was not verified against convex/. Typecheck still ran."
             exit 0
           fi
           npx convex codegen
@@ -87,16 +96,16 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # No `version` here on purpose. package.json declares
       # "packageManager": "pnpm@9.12.0", and passing a second, differently
-      # shaped version to action-setup@v4 makes it refuse to guess — which
-      # failed the job before a single step ran, so nothing was tested and
-      # nothing deployed. One source of truth: package.json.
-      - uses: pnpm/action-setup@v4
+      # shaped version makes action-setup refuse to guess — which failed the
+      # job before a single step ran, so nothing was tested and nothing
+      # deployed. One source of truth: package.json.
+      - uses: pnpm/action-setup@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: pnpm

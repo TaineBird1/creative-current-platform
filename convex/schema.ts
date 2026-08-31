@@ -9,6 +9,7 @@ import { messagingTables } from "./tables/messaging";
 import { moneyTables } from "./tables/money";
 import { growthTables } from "./tables/growth";
 import { opsTables } from "./tables/ops";
+import { webhookTables } from "./tables/webhooks";
 
 /**
  * THE CREATIVE CURRENT — single Convex backend.
@@ -34,6 +35,7 @@ export default defineSchema({
   ...moneyTables,
   ...growthTables,
   ...opsTables,
+  ...webhookTables,
 });
 
 /** Tables whose rows belong to exactly one tenant. Asserted by the guard test. */
@@ -53,4 +55,4 @@ export const PLATFORM_SCOPED_TABLES = [
 ] as const;
 
 /** Append-only. No patch, no delete. Asserted by immutability tests. */
-export const IMMUTABLE_TABLES = ["ledgerEntries", "auditLog", "consents"] as const;
+export const IMMUTABLE_TABLES = ["ledgerEntries", "auditLog", "consents", "webhookEvents"] as const;

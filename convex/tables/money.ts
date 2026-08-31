@@ -127,6 +127,13 @@ export const moneyTables = {
     nextBillingAt: v.optional(v.number()),
     /** Suspension is explicit-only. Never automatic on a failed charge. */
     suspendedAt: v.optional(v.number()),
+    /**
+     * The PROVIDER's timestamp on the event that last set `status`. Webhooks
+     * arrive out of order, and this is what stops an older one rolling the
+     * status back to a state the customer has already moved on from. Never
+     * set from arrival time: a retry is minutes or hours after the fact.
+     */
+    lastEventAt: v.optional(v.number()),
   })
     .index("by_client", ["clientId"])
     .index("by_status_nextBilling", ["status", "nextBillingAt"]),

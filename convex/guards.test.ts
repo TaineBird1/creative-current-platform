@@ -46,10 +46,35 @@ function walk(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-const sourceFiles = walk(CONVEX_DIR).map((f) => ({
-  path: relative(CONVEX_DIR, f).replace(/\\/g, "/"),
-  text: readFileSync(f, "utf8"),
-}));
+/**
+ * Comments removed, so a guard cannot fire on the paragraph explaining it.
+ *
+ * Two of the webhook rules below caught their own documentation the first
+ * time they ran: the comment saying "`request.json()` never appears in this
+ * file" contains `request.json()`, and the one showing the banned
+ * `if (!secret) return true` shape contains that shape. Both are exactly the
+ * text most likely to exist near a rule worth having, so scanning it is a
+ * false positive generator aimed at the most careful code.
+ *
+ * Deliberately crude — it does not know about `//` inside a string literal.
+ * That is fine for the scans that use it (they look for API calls, not URLs),
+ * and the guards where a loose match is WANTED keep using the raw text: a
+ * false positive on `startsAt` costs one comment, a false negative costs a
+ * customer standing outside a locked door.
+ */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+const sourceFiles = walk(CONVEX_DIR).map((f) => {
+  const text = readFileSync(f, "utf8");
+  return {
+    path: relative(CONVEX_DIR, f).replace(/\\/g, "/"),
+    text,
+    /** Same file with comments removed. See stripComments. */
+    code: stripComments(text),
+  };
+});
 
 describe("tenancy", () => {
   test("every exported function uses a guarded constructor", () => {
@@ -314,6 +339,68 @@ describe("the invoice boundary", () => {
     ).toEqual([]);
   });
 
+  test("a number is never allocated apart from the invoice it belongs to", () => {
+    /**
+     * THE RULE, DERIVED RATHER THAN ASSERTED.
+     *
+     * A GAP in the invoice sequence is recoverable: you explain it to an
+     * accountant, once, and the explanation is boring. A DUPLICATE is not —
+     * two documents bearing number INV-0042, sent to two different customers,
+     * and no way to say afterwards which one the payment was for. So
+     * numbering must prefer a gap, which the meta-rule settles without any
+     * further argument.
+     *
+     * Preferring a gap forces the implementation: allocate the number and
+     * insert the invoice in ONE mutation. Convex mutations are serializable,
+     * so a counter read-and-patch inside the same transaction as the insert
+     * cannot hand the same number to two concurrent issuers — one retries and
+     * takes the next. Split them across two mutations and the failure between
+     * the two produces a consumed number with no invoice: a gap, which is
+     * survivable, and then a standing temptation to "tidy it up" by reusing
+     * the number, which is the duplicate this rule exists to prevent.
+     *
+     * Nothing writes either table today, so this guard is aimed forward: it
+     * fires on whoever builds invoicing, at the moment they get it wrong.
+     */
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      // Per exported function, so "same file" is not mistaken for "same
+      // transaction" — two mutations in one file are still two transactions.
+      for (const chunk of file.text.split(/export const /).slice(1)) {
+        const body = chunk.split(/\nexport /)[0]!;
+        const name = chunk.match(/^(\w+)/)?.[1] ?? "unknown";
+
+        const touchesCounter =
+          /db\.(patch|replace|insert)\([^;]*invoiceCounter/s.test(body) ||
+          /query\(\s*"invoiceCounters"/.test(body);
+        const createsInvoice = /db\.insert\(\s*"invoices"/.test(body);
+
+        if (touchesCounter && !createsInvoice) {
+          offenders.push(`${file.path}: ${name} allocates a number without inserting the invoice`);
+        }
+        if (createsInvoice && !touchesCounter) {
+          offenders.push(`${file.path}: ${name} inserts an invoice without allocating its number`);
+        }
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "Allocate the invoice number and insert the invoice in ONE mutation.",
+        "",
+        "A gap in the sequence is recoverable — you explain it to an accountant.",
+        "A duplicate is not: two documents with the same number, two customers,",
+        "and no way to say which one a payment settled. So numbering prefers a",
+        "gap, and that choice is only real if the two writes cannot come apart.",
+        "",
+        "Split across two mutations, a failure between them burns a number with",
+        "no invoice behind it — and then someone 'tidies up' by reusing it.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
   test("and no reader claims a receivables figure", () => {
     // A receivables total of R0 is a claim that nothing is owed, which is a
     // different statement from "we do not track this". Same reasoning that put
@@ -328,6 +415,63 @@ describe("the invoice boundary", () => {
       offenders,
       "Nothing is owed until something has been issued. Do not report a zero for it.",
     ).toEqual([]);
+  });
+});
+
+describe("webhooks", () => {
+  /**
+   * A webhook endpoint is a URL an unauthenticated stranger can find, and the
+   * only thing standing between it and our ledger is a signature check that
+   * has to happen FIRST. Both rules below protect that ordering, and both
+   * failures are silent — the endpoint keeps returning 200 either way.
+   */
+  const WEBHOOK_ROUTES = "http.ts";
+
+  test("no webhook handler parses a body before verifying it", () => {
+    /*
+     * `request.json()` is the specific hazard: it runs a parser over unverified
+     * bytes, and it re-serialises, so a later signature check would compare
+     * against different bytes from the ones that were signed — failing for a
+     * reason that looks exactly like a wrong secret.
+     */
+    const routes = sourceFiles.find((f) => f.path === WEBHOOK_ROUTES);
+    expect(routes, "convex/http.ts is missing").toBeTruthy();
+    expect(
+      /request\.json\(\)/.test(routes!.code),
+      "Read request.text(), verify the signature over those exact bytes, then JSON.parse.",
+    ).toBe(false);
+    // And the raw read must actually be there.
+    expect(routes!.code).toMatch(/request\.text\(\)/);
+  });
+
+  test("a missing webhook secret cannot degrade to accepting", () => {
+    /*
+     * The shape being banned is `if (!secret) return true` — an unconfigured
+     * deployment that accepts forged payments from anyone who finds the URL,
+     * silently, with a 200. The verifier throws instead, so the provider's own
+     * retry queue holds the events until someone sets the secret.
+     */
+    const verifier = sourceFiles.find((f) => f.path === "lib/webhookVerify.ts");
+    expect(verifier, "convex/lib/webhookVerify.ts is missing").toBeTruthy();
+
+    const offenders: string[] = [];
+    for (const m of verifier!.code.matchAll(
+      /if\s*\(\s*!\s*secret\s*\)\s*(?:\{\s*)?return/g,
+    )) {
+      void m;
+      offenders.push("webhookVerify returns instead of throwing on a missing secret");
+    }
+    expect(
+      offenders,
+      "A missing secret is a refusal (500), never a skip. Rejecting a real webhook is recoverable — the provider retries. Accepting a forged one is not.",
+    ).toEqual([]);
+  });
+
+  test("webhook idempotency keys on the provider's event id, not ours", () => {
+    // A key derived from the payload's contents cannot tell a retry apart from
+    // a genuine second charge of the same amount to the same customer.
+    const ingest = sourceFiles.find((f) => f.path === "webhooks.ts");
+    expect(ingest?.code).toMatch(/by_provider_event/);
   });
 });
 

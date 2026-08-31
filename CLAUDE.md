@@ -116,6 +116,44 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   it is right for a customer in the same city and WRONG for one abroad, whose
   message is held until the business's morning. Fixing it needs a real source
   for a recipient's timezone — not a field nothing can fill.
+- **INVOICE NUMBERING PREFERS A GAP.** A gap is recoverable: you explain it
+  to an accountant once and the explanation is boring. A DUPLICATE is not —
+  two documents bearing INV-0042, sent to two customers, and no way to say
+  afterwards which one a payment settled. The meta-rule settles it without
+  further argument. Preferring a gap FORCES the implementation: allocate the
+  number and insert the invoice in ONE mutation. Convex mutations are
+  serializable, so a counter read-and-patch in the same transaction as the
+  insert cannot hand the same number to two concurrent issuers — one retries
+  and takes the next. Split across two mutations, a failure between them
+  burns a number with no invoice behind it, and then someone "tidies up" by
+  reusing it. `guards.test.ts` fails in BOTH directions: allocating without
+  inserting, and inserting without allocating. Nothing writes either table
+  today; the guard is aimed at whoever builds invoicing.
+- **WEBHOOKS: VERIFY BEFORE PARSING, KEY ON THE PROVIDER'S EVENT ID, NEVER
+  ASSUME ORDER.** All three are enforced, not just documented.
+  *Verify first.* `http.ts` reads `request.text()`, verifies the HMAC over
+  those exact bytes, and only then parses. `request.json()` is banned there
+  by a guard test: it runs a parser over bytes a stranger sent to a
+  discoverable URL, and it re-serialises, so the signature would be checked
+  against different bytes and fail in a way that looks like a wrong secret.
+  *A missing secret is a REFUSAL (500), never a skip.* `if (!secret) return
+  true` would turn an unconfigured deployment into one accepting forged
+  payments silently, with a 200. A guard test bans that shape. 500 not 401 so
+  the provider keeps retrying until the config is fixed.
+  *Idempotency is the provider's event id* — a key derived from the payload
+  cannot tell a retry from a genuine second charge of the same amount.
+  *Order is never assumed.* FACTS are appended (a payment is true whenever we
+  hear about it; a sum has no order). STATE is advanced only by an event
+  NEWER than the one that last set it, compared on the PROVIDER's timestamp,
+  which is why `subscriptions.lastEventAt` exists. `charge.success` arriving
+  after `subscription.disable` records the money AND leaves the cancellation
+  standing — treating them as one ordered stream either loses the payment or
+  resurrects the subscription.
+  *What cannot be attributed is parked, not guessed* (`unattributed`), and a
+  ledger refusal is parked too (`refused`) rather than thrown — a throw
+  aborts the mutation that records the event, so the anomaly would exist only
+  in the provider's failed-delivery dashboard. The ledger post happens BEFORE
+  the `payments` row, so a refusal cannot leave an orphan payment.
 - **THE LEDGER STOPS AT THE DOCUMENT.** The ledger records money that
   actually moved and needs no registered entity to be true — payments,
   refunds, adjustments, reversals, per-client and per-venture totals, all
@@ -155,7 +193,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 310 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 332 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -430,7 +468,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 310 tests
+pnpm test                        # 332 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

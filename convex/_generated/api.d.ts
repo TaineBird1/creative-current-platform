@@ -38,6 +38,7 @@ import type * as tables_operations from "../tables/operations.js";
 import type * as tables_ops from "../tables/ops.js";
 import type * as tables_sites from "../tables/sites.js";
 import type * as tables_tenants from "../tables/tenants.js";
+import type * as ventures from "../ventures.js";
 
 import type {
   ApiFromModules,
@@ -76,6 +77,7 @@ declare const fullApi: ApiFromModules<{
   "tables/ops": typeof tables_ops;
   "tables/sites": typeof tables_sites;
   "tables/tenants": typeof tables_tenants;
+  ventures: typeof ventures;
 }>;
 
 /**

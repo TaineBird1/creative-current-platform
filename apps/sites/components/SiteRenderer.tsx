@@ -42,7 +42,18 @@ export function SiteRenderer({
   const sticky = visible.find((section) => section.type === "stickyBar");
 
   return (
-    <div className="world-client" style={accentStyle(ramp)}>
+    /*
+     * `data-variant` is the ONLY thing a skin gets. Variant styling is CSS
+     * scoped to this attribute — never a second component tree, never a
+     * branch in this file. A client site is data, so a skin is a stylesheet,
+     * and an unknown variant simply inherits the base look rather than
+     * blanking the page.
+     */
+    <div
+      className="world-client"
+      data-variant={config.variant}
+      style={accentStyle(ramp)}
+    >
       <a className="sr-only" href="#main">
         Skip to content
       </a>

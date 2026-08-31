@@ -42,16 +42,15 @@ module.exports = {
         // runner variance without letting a real regression through.
         "categories:performance": ["error", { minScore: 0.93 }],
 
-        // Target 1.0. 81 elements fail AA contrast, e.g. #797972 on the page
-        // ground at 4.12:1 against a 4.5:1 requirement. That contradicts
-        // DESIGN.md's AA-safe claim and is a real bug in the muted-text token,
-        // not a Lighthouse quirk.
-        //
-        // Set to the UBUNTU number. A Windows dev machine scores 0.97 here and
-        // the CI runner scores 0.96, dead consistent across three runs — font
-        // rasterisation differs, so the same pixels land either side of the
-        // 4.5:1 line. Trust the runner: it is what gates the branch.
-        "categories:accessibility": ["error", { minScore: 0.96 }],
+        // AT TARGET. Was ratcheted at 0.96 while 81 elements failed AA
+        // contrast. The cause was not a token — every ink step is AA on the
+        // client ground — it was the band reveal resting at opacity 0.55.
+        // The timeline is scroll-driven, so a band below the fold SITS at the
+        // from-keyframe rather than passing through it, which put muted text
+        // at 4.27:1 and faint text at 3.97:1. Dropping opacity from the
+        // keyframe took contrast failures from 81 to 0 and the category from
+        // 97 to 100.
+        "categories:accessibility": ["error", { minScore: 1 }],
 
         // NOT ASSERTED, deliberately — and this is not the bar being lowered.
         //

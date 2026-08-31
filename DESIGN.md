@@ -60,8 +60,15 @@ headings. That is correct, and clients notice, so say it out loud at onboarding.
 
 ## Template #1 — `solar-trades`, variant `ink`
 
-**One live variant for M1.** "Field manual" (mono-forward, blueprint restraint)
-becomes variant #2 later, not now.
+**Two live variants.** `ink` below; `field-manual` after it. A variant is a
+stylesheet scoped to `[data-variant]` on the renderer root — never a second
+component tree, never a branch in `SiteRenderer`. Both draw the same sections
+from the same registry, so a fix still ships to every client at once, and an
+unknown variant inherits the base look rather than blanking the page.
+
+Review either at `/preview?variant=field-manual&brand=%23f26a1b` with no
+backend, which is also how a skin gets onto a real phone before a client
+exists.
 
 Structure and tone inherited from a real shipped solar site; palette is not —
 that comes from each client's ramp.
@@ -88,10 +95,21 @@ carries information the reader needs. Nowhere else.
 
 ## Motion
 
-One authored moment per page: section bands settle in on first paint with an
-exponential ease-out from an already-visible default, so nothing is invisible
-if JS fails or motion is reduced. `prefers-reduced-motion` collapses every
-duration token to 1ms — the animation still runs, it just arrives instantly.
+One authored moment per page: section bands settle in with an exponential
+ease-out, carried by **translate and blur only**. `prefers-reduced-motion`
+collapses every duration token to 1ms — the animation still runs, it just
+arrives instantly.
+
+**No opacity in the reveal, and this was learned the hard way.** The timeline
+is scroll-driven, so a band below the fold does not pass through the
+from-keyframe — it RESTS there until scrolled into view. At the original
+`opacity: 0.55` that put muted text at 4.27:1 and faint text at 3.97:1 against
+a 4.5:1 requirement, and an audit found 81 contrast failures on a palette
+whose every token is AA. Removing opacity took that to 0 and the accessibility
+score from 97 to 100.
+
+The lesson generalises: with a scroll-driven timeline, the from-keyframe is a
+resting state, not a transient, and everything in it must pass on its own.
 
 ## Browser surfaces
 
@@ -107,3 +125,28 @@ assembled rather than built.
 - LCP < 2.0s on mid Android, CLS < 0.05.
 - Stock, AI or scraped imagery may never appear as the client's real work.
 - Every number on a client site carries its source.
+
+## Template #1 — `solar-trades`, variant `field-manual`
+
+Pinned as "mono-forward, blueprint restraint". Where `ink` gets its rhythm from
+colour — paper → dark → paper → accent-tinted — this variant refuses bands
+entirely. One continuous ground, sections separated by a hairline rule, a
+hairline gutter ruled down the left the way a printed specification is ruled
+for annotation. The page reads as one document rather than a sequence of
+marketing panels, which is the argument: a lead comparing two quotes is
+looking for the one that behaves like a contractor.
+
+**Mono is promoted only where the content is measurement** — figures, units,
+sources, step references. Prose stays in Hanken Grotesk. Monospace as a
+costume for "technical" is the failure this variant sits closest to, so the
+line is: if it is not a quantity or an identifier, it is not mono.
+
+**The accent stops decorating and starts marking.** No tinted bands. The
+client's colour appears on the primary action, the focus ring, and a short
+rule under each heading. Figures render in ink, not accent — in a
+specification the number is the content, not the highlight. That is the exact
+inversion of `ink`, and it is what makes the two skins read as different
+businesses rather than the same site in two palettes.
+
+Inherited unchanged: no eyebrows, no card grids as structure, no big-number
+stat cards, numbered steps only where the sequence carries information.

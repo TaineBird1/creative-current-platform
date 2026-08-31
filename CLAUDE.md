@@ -116,6 +116,33 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   it is right for a customer in the same city and WRONG for one abroad, whose
   message is held until the business's morning. Fixing it needs a real source
   for a recipient's timezone — not a field nothing can fill.
+- **THE LEDGER STOPS AT THE DOCUMENT.** The ledger records money that
+  actually moved and needs no registered entity to be true — payments,
+  refunds, adjustments, reversals, per-client and per-venture totals, all
+  live. An INVOICE is the other thing: a legal name, a registration number, a
+  sequential number, the document a customer receives and SARS reads. There
+  is no registered entity behind this platform yet, so `invoices` has no
+  writer and `guards.test.ts` holds it that way. Whoever registers the entity
+  finds that test failing and has to name the issuer before the first invoice
+  exists, which is the order those two things have to happen in anyway.
+  Consequence: **there are no receivables.** No `outstanding`, no `aging`, no
+  "what does this client owe me" — and their absence is deliberate. Nothing
+  is owed until something has been issued, so a receivables screen showing R0
+  would be a claim about the world rather than a gap in the data. Same
+  judgement as the P&L's "not tracked". A guard test fails on
+  `outstandingCents`, `receivableCents` and `agingBuckets`.
+- **Every `ledgerEntries` write goes through `postEntry` in `lib/ledger.ts`.**
+  Same shape as `dispatch` for messages, and for the same reason: whole
+  cents, a sign that agrees with the type, a client that belongs to its
+  venture, and demo/seed data that never accrues are only rules if there is
+  one place to break them. Every one of those failures is SILENT — a
+  wrong-signed refund does not error, it reports the refund as revenue, and
+  the month reads better than one in which nothing happened. Revenue
+  classification (`isRevenue`) lives in the same file: it was duplicated in
+  income.ts and finance.ts, and a type recorded by one but missed by the
+  other is money that exists in the ledger and never reaches a P&L.
+  The P&L is CASH basis. `invoice_issued` is not revenue; counting it and the
+  payment against it would report every job twice.
 - **Messaging is NOT STOP-compliant, and must not be described as such.** The
   consent table is checked on every send and a withdrawal suppresses. But
   nothing can SET `withdrawn` from an inbound STOP: there is no provider
@@ -128,7 +155,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 289 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 310 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -403,7 +430,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 289 tests
+pnpm test                        # 310 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

@@ -225,6 +225,112 @@ describe("the send choke point", () => {
   });
 });
 
+describe("the ledger", () => {
+  /**
+   * Money has the same shape of problem as messages: several rules that are
+   * only rules if there is one place to break them. Whole cents, a sign that
+   * matches the type, a client that belongs to its venture, and demo data
+   * that never accrues — all applied in postEntry, all bypassed by a direct
+   * insert, and none of them noisy when skipped. A wrong-signed refund does
+   * not error; it reports the refund as revenue.
+   */
+  const LEDGER_WRITER = "lib/ledger.ts";
+
+  test("only lib/ledger.ts writes the ledgerEntries table", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === LEDGER_WRITER) continue;
+      if (/db\.insert\(\s*"ledgerEntries"/.test(file.text)) {
+        offenders.push(`${file.path}: inserts into ledgerEntries`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Ledger rows are written by postEntry() in convex/lib/ledger.ts and",
+        "nowhere else. It is the single place that asserts whole cents, that",
+        "the sign agrees with the type, that the client belongs to the venture,",
+        "and that demo or seed data never accrues money.",
+        "Every one of those failures is silent: the number still adds up.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("revenue is classified in one place, so a P&L cannot miss a type", () => {
+    /*
+     * This list lived in income.ts AND finance.ts. A type accepted by the
+     * recorder and missed by the reporter is money that exists in the ledger
+     * and never appears in a P&L — visible only as a total that is quietly
+     * short.
+     */
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === LEDGER_WRITER) continue;
+      if (/(INCOME_TYPES|REVENUE_TYPES)\s*[:=]\s*\[/.test(file.text)) {
+        offenders.push(`${file.path}: redefines the revenue types`);
+      }
+    }
+    expect(offenders, "Import isRevenue from lib/ledger.ts instead.").toEqual([]);
+  });
+});
+
+describe("the invoice boundary", () => {
+  /**
+   * WHERE THIS BACKEND STOPS, AND WHY IT IS A TEST.
+   *
+   * The ledger needs no registered entity: it records money that actually
+   * moved, and that is true with or without letterhead. An INVOICE is the
+   * other thing. It carries a legal name, a registration number and a
+   * sequential number, it is the document a customer receives, and in South
+   * Africa it is the document SARS reads. Issuing one before there is an
+   * entity to issue it means sending a customer a number that belongs to
+   * nobody.
+   *
+   * So `invoices` has no writer, and this is a test rather than a note,
+   * because a note does not survive a session boundary. Whoever registers the
+   * entity will find this failing and will have to state what the issuer is
+   * before the first invoice can exist — which is the order those two things
+   * have to happen in anyway.
+   */
+  test("nothing writes the invoices table yet", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (/db\.insert\(\s*"invoices"/.test(file.text)) {
+        offenders.push(`${file.path}: inserts into invoices`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "An invoice is a legal document, not a ledger row. It needs an issuer",
+        "legal name and a registration number, and there is no registered",
+        "entity behind this platform yet.",
+        "",
+        "If you are adding invoicing: record the entity first, snapshot it onto",
+        "each invoice at issue (never join to it — a company that renames must",
+        "not silently rewrite documents already sent), then delete this test",
+        "and say in the PR what the issuer is.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("and no reader claims a receivables figure", () => {
+    // A receivables total of R0 is a claim that nothing is owed, which is a
+    // different statement from "we do not track this". Same reasoning that put
+    // "not tracked" in the P&L instead of a zero.
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      for (const m of file.text.matchAll(/(outstandingCents|receivableCents|agingBuckets)/g)) {
+        offenders.push(`${file.path}: reports ${m[1]}`);
+      }
+    }
+    expect(
+      offenders,
+      "Nothing is owed until something has been issued. Do not report a zero for it.",
+    ).toEqual([]);
+  });
+});
+
 describe("single writers", () => {
   test("only siteConfigs.ts writes the sites table", () => {
     // The config column is v.any(), so the database will store anything. This

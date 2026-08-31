@@ -3,6 +3,7 @@ import { byDesc } from "./lib/ordering";
 import { ownerMutation, platformQuery } from "./lib/functions";
 import { currency } from "./tables/tenants";
 import { assertCents, sumCents, type Currency } from "./lib/money";
+import { postEntry, reverseEntry, isRevenue } from "./lib/ledger";
 
 /**
  * MANUAL INCOME — the revenue side, today.
@@ -36,14 +37,12 @@ const manualIncomeType = v.union(
   v.literal("adjustment"),
 );
 
-const INCOME_TYPES = ["payment_received", "property_income", "adjustment"] as const;
-
-/**
- * Which ledger rows count as revenue. Kept beside the validator above so the
- * two cannot drift: a type accepted by `record` but missed here would be
- * money that exists in the ledger and never appears in a P&L.
+/*
+ * Which ledger rows count as revenue now lives in lib/ledger.ts, beside the
+ * writer. It used to be defined here AND in finance.ts, which is the drift
+ * this comment used to worry about: a type recorded by one and missed by the
+ * other is money that exists in the ledger and never reaches a P&L.
  */
-const isIncome = (type: string) => (INCOME_TYPES as readonly string[]).includes(type);
 
 export const record = ownerMutation({
   args: {
@@ -72,31 +71,13 @@ export const record = ownerMutation({
       });
     }
 
-    const venture = await ctx.db.get(args.ventureId);
-    if (!venture) {
-      throw new ConvexError({ code: "NO_SUCH_VENTURE", message: "No such venture." });
-    }
-
     /*
-     * Same invariant as expenses, for the same reason. Revenue booked to one
-     * venture while pointing at another venture's client still adds up, still
-     * errors nowhere, and makes every per-venture figure wrong in the
-     * direction that flatters whichever venture you happened to pick.
+     * Everything else — whole cents, the client belonging to the venture, the
+     * sign agreeing with the type, demo and seed data never accruing — is
+     * enforced by postEntry, which is the only writer of ledgerEntries.
+     * Repeating those checks here would be two places to forget one.
      */
-    if (args.clientId) {
-      const client = await ctx.db.get(args.clientId);
-      if (!client) {
-        throw new ConvexError({ code: "NO_SUCH_CLIENT", message: "No such client." });
-      }
-      if (client.ventureId !== args.ventureId) {
-        throw new ConvexError({
-          code: "CLIENT_VENTURE_MISMATCH",
-          message: `${client.name} does not belong to ${venture.name}.`,
-        });
-      }
-    }
-
-    const entryId = await ctx.db.insert("ledgerEntries", {
+    const entryId = await postEntry(ctx, {
       ventureId: args.ventureId,
       clientId: args.clientId,
       type: args.type,
@@ -132,39 +113,12 @@ export const record = ownerMutation({
 export const reverse = ownerMutation({
   args: { entryId: v.id("ledgerEntries"), reason: v.string() },
   handler: async (ctx, { entryId, reason }) => {
-    const original = await ctx.db.get(entryId);
-    if (!original) {
-      throw new ConvexError({ code: "NOT_FOUND", message: "No such ledger entry." });
-    }
-    if (original.reversesEntryId) {
-      throw new ConvexError({
-        code: "ALREADY_A_REVERSAL",
-        message: "That entry is itself a reversal. Record a fresh entry instead.",
-      });
-    }
-
-    const existing = await ctx.db
-      .query("ledgerEntries")
-      .withIndex("by_venture_occurred", (q) => q.eq("ventureId", original.ventureId))
-      .collect();
-    if (existing.some((entry) => entry.reversesEntryId === entryId)) {
-      throw new ConvexError({
-        code: "ALREADY_REVERSED",
-        message: "That entry has already been reversed.",
-      });
-    }
-
-    const reversalId = await ctx.db.insert("ledgerEntries", {
-      ventureId: original.ventureId,
-      clientId: original.clientId,
-      type: original.type,
-      amountCents: -original.amountCents,
-      currency: original.currency,
-      occurredAt: Date.now(),
-      description: `Reversal: ${original.description} — ${reason.trim() || "no reason given"}`,
-      reversesEntryId: entryId,
-      createdBy: ctx.platform.userId,
-    });
+    const { reversalId, amountCents, original } = await reverseEntry(
+      ctx,
+      entryId,
+      reason,
+      ctx.platform.userId,
+    );
 
     await ctx.db.insert("auditLog", {
       actorUserId: ctx.platform.userId,
@@ -174,11 +128,11 @@ export const reverse = ownerMutation({
       ventureId: original.ventureId,
       clientId: original.clientId,
       before: { amountCents: original.amountCents, description: original.description },
-      after: { amountCents: -original.amountCents, reversesEntryId: entryId },
+      after: { amountCents, reversesEntryId: entryId },
       at: Date.now(),
     });
 
-    return { reversalId, amountCents: -original.amountCents };
+    return { reversalId, amountCents };
   },
 });
 
@@ -195,7 +149,7 @@ export const list = platformQuery({
           .withIndex("by_venture_occurred", (q) => q.eq("ventureId", ventureId))
           .collect()
       : await ctx.db.query("ledgerEntries").collect();
-    const rows = all.filter((row) => isIncome(row.type));
+    const rows = all.filter((row) => isRevenue(row.type));
 
     const ventures = await ctx.db.query("ventures").collect();
     const ventureName = new Map(ventures.map((venture) => [venture._id as string, venture.name]));
@@ -240,7 +194,7 @@ export const summary = platformQuery({
           .withIndex("by_venture_occurred", (q) => q.eq("ventureId", ventureId))
           .collect()
       : await ctx.db.query("ledgerEntries").collect();
-    const rows = all.filter((row) => isIncome(row.type));
+    const rows = all.filter((row) => isRevenue(row.type));
 
     const inWindow = rows
       .filter((row) => since === undefined || row.occurredAt >= since)

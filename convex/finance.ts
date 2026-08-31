@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { isRevenue } from "./lib/ledger";
 import { byOrderThenName } from "./lib/ordering";
 import { platformQuery } from "./lib/functions";
 import { sumCents, type Currency } from "./lib/money";
@@ -44,7 +45,7 @@ const NOT_TRACKED = [
   },
 ] as const;
 
-const INCOME_TYPES: readonly string[] = ["payment_received", "property_income", "adjustment"];
+// Revenue classification lives in lib/ledger.ts, beside the ledger writer.
 
 export const pnl = platformQuery({
   args: {
@@ -67,7 +68,7 @@ export const pnl = platformQuery({
       const income = allLedger.filter(
         (row) =>
           row.ventureId === venture._id &&
-          INCOME_TYPES.includes(row.type) &&
+          isRevenue(row.type) &&
           inWindow(row.occurredAt),
       );
       const expenses = allExpenses.filter(

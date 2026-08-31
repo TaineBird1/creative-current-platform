@@ -182,14 +182,19 @@ go paid. It is affordable only because Convex calls scale with bookings and
 admin usage rather than traffic. Source: Convex's EU launch post, "Just landed
 in Europe".
 
+Both current deployments are confirmed on `eu-west-1`: dev
+(`ideal-anteater-637`) and production, checked on the dashboard 31 Aug 2026. No
+migration is outstanding.
+
 **An existing deployment's region cannot be changed.** Moving one means
 creating a new project or deployment in the target region and migrating by
-export/import. The first production deployment landed in US East because
-`convex deploy` inherited the team default before it was set. **There is still
-no `--region` CLI flag** — the docs say "coming soon", and a launch-post promise
-of one is not the same thing. Regions are selected in the dashboard when you
-create a project or deployment, so check the region on any new deployment
-before putting data in it, and keep the team default set to EU West.
+export/import. An early production deployment did land in US East, because
+`convex deploy` inherited the team default before it was set — caught while it
+was still empty, which is the only cheap moment. **There is still no `--region`
+CLI flag**; the docs say "coming soon", and a launch-post promise of one is not
+the same thing. Regions are selected in the dashboard when you create a project
+or deployment, so check the region on any new deployment before putting data in
+it, and keep the team default set to EU West.
 
 ## Bootstrapping the first platform owner
 

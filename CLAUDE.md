@@ -37,7 +37,11 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 - Client sites are data. One renderer. Never fork code per client.
 - **`apps/sites` does not query Convex per pageview.** `SiteConfig` is served
   from ISR, with tag-based revalidation when a config is written — never a live
-  query on the request path. This was always required by the LCP budget; it is
+  query on the request path. Measured against a production build on 31 Aug 2026:
+  5 pageviews with no invalidation cost **0** Convex calls; 5 after a tag
+  invalidation cost exactly **1**. Re-measure rather than assume if this path
+  changes — an earlier version deduped on an options object and silently never
+  hit, which looks identical from the outside. This was always required by the LCP budget; it is
   now also the cost control, because EU deployments bill on demand with no
   included usage, so a per-request query would make Convex spend scale with
   traffic. Convex calls must scale with **bookings and admin usage, not
@@ -78,7 +82,15 @@ not pure white — that distinction was a live bug.
 
 ## Deployment environment variables
 
-Seven must be set on every deployment. `npx convex env list` to check.
+Seven on production, six on dev. `npx convex env list` to check.
+
+**`SITES_REVALIDATE_URL` is production-only, and this is not an oversight.**
+Convex actions run in Convex's cloud, so `localhost:3100` there resolves to
+*their* machine, not yours — the runtime rejects it outright with
+`Request to http://localhost:3100/... forbidden`, before any HTTP status
+exists. Setting it in dev buys nothing and turns every publish into a red
+ERROR line; unset, the action logs one WARN and returns. To exercise the push
+path locally you need a public tunnel to :3100, not a localhost URL.
 
 | Variable | Source |
 |---|---|

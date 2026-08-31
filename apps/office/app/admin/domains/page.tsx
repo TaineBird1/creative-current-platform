@@ -1,6 +1,7 @@
 import { fetchQuery } from "convex/nextjs";
 import type { FunctionReturnType } from "convex/server";
 import { convexAuthNextjsToken } from "@convex-dev/auth/nextjs/server";
+import Link from "next/link";
 import { api } from "@cc/convex/api";
 import { SignOut } from "@/components/SignOut";
 import { ClientPicker } from "./ClientPicker";
@@ -45,10 +46,19 @@ export default async function DomainsPage() {
   return (
     <div className="world-admin">
       <main className={s.page}>
+        {/*
+          * No kicker over the heading. "The Creative Current" is not
+          * information the owner needs on their own console — it labelled the
+          * heading without adding to it and pushed the actual page title down
+          * the scan order. Identity lives in the top bar on /admin; this
+          * screen inherits the same rule.
+          */}
         <header className={s.pageHead}>
           <div>
-            <p className={s.eyebrow}>The Creative Current</p>
             <h1 className={s.pageHeading}>Domains</h1>
+            <p className={s.backLink}>
+              <Link href="/admin">Console</Link>
+            </p>
           </div>
           <SignOut />
         </header>

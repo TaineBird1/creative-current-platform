@@ -67,7 +67,19 @@ jobs:
       - run: pnpm lint:tokens
 
       - run: pnpm --filter @cc/sites build
+      # apps/office/next.config.mjs THROWS on a production build without
+      # CONVEX_URL, deliberately — a missing value would otherwise surface at
+      # runtime after a green deploy. CI has no .env.local, so the guard fired
+      # here and failed the run.
+      #
+      # This is a compile check, not the artifact anyone serves: Vercel builds
+      # the real thing with the real value. So give it one, exactly as that
+      # config says to ("to build without a backend on purpose, set CONVEX_URL
+      # to anything"). A repo variable is used when set, so the check can run
+      # against the true URL; the placeholder just keeps the compile honest.
       - run: pnpm --filter @cc/office build
+        env:
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://ci-compile-check.convex.cloud' }}
 
   deploy-backend:
     name: Deploy Convex

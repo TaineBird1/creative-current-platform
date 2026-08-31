@@ -101,6 +101,17 @@ path locally you need a public tunnel to :3100, not a localhost URL.
 | `SITES_REVALIDATE_URL` | `https://<sites-origin>/api/revalidate`. Where a config write pushes cache invalidation. Unset is survivable — writes still succeed and sites self-heal within the hour — but every publish looks broken for that hour. |
 | `REVALIDATE_SECRET` | A shared secret, set on BOTH the Convex deployment and the sites Vercel project. The route fails closed if it is unset there, so an unset secret means no revalidation at all rather than an open endpoint. |
 
+**A Vercel env var is invisible to the build unless `turbo.json` names it.**
+Vercel runs `turbo run build`, and Turborepo filters the environment to what
+the task declares — so a variable set correctly in the Vercel dashboard simply
+does not exist inside the build. `apps/office` fails loudly (its config throws
+without `CONVEX_URL`), but **`apps/sites` builds green and serves the holding
+page to every visitor**, which is the dangerous half: a successful deploy that
+cannot reach a backend. Both were observed on the first deploy, 31 Aug 2026.
+Turbo does warn — "set on your Vercel project, but missing from turbo.json" —
+at the END of the build log, under a green checkmark. Any new build-time
+variable goes in `tasks.build.env`.
+
 Vercel needs only `CONVEX_URL` per project. `apps/office/next.config.mjs`
 derives `NEXT_PUBLIC_CONVEX_URL` from it, so there is one value to keep right
 — and that config THROWS on a production build if it is missing, because

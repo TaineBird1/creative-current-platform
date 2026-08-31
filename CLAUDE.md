@@ -78,6 +78,13 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   than one. `guards.test.ts` fails if anything but `book` writes `startsAt`,
   because a second writer that forgets to bump the revision produces exactly
   the silent failure this rule exists to prevent.
+- **AMBIGUOUS CONSENT IS NOT CONSENT**, and this is the one place the rule
+  above is inverted. Two consent rows sharing a timestamp are resolved by
+  `lib/consent.ts`, and a tie resolves to **withdrawn**. There is deliberately
+  no `_creationTime` tie-break: it would resolve by write order, which for a
+  CSV import is the order of lines in a file, not evidence of what the
+  customer did. The conservative error is recoverable — record a grant with a
+  later timestamp. Messaging someone who asked you to stop is not.
 - **Quiet hours use the SITE's timezone, not the recipient's.** Bookings
   collect a name and a phone number and nothing else, deliberately, so no
   recipient timezone exists anywhere to populate. The field is named
@@ -97,7 +104,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 276 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 279 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -372,7 +379,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 276 tests
+pnpm test                        # 279 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

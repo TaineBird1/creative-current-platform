@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { hasConsent } from "./consent";
 
 /**
  * THE SEND CHOKE POINT.
@@ -209,8 +210,9 @@ export async function dispatch(ctx: MutationCtx, input: DispatchInput): Promise<
       q.eq("customerId", input.customerId).eq("channel", input.channel),
     )
     .collect();
-  const latest = consents.sort((a, b) => b.at - a.at)[0];
-  if (!latest || latest.state !== "granted") {
+  // Same tie-break as customers.consentState, from one helper so the two can
+  // never disagree about whether someone consented.
+  if (!hasConsent(consents)) {
     await ctx.db.insert("messages", {
       ventureId: input.ventureId,
       clientId: input.clientId,

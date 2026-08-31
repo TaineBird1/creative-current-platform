@@ -315,3 +315,82 @@ describe("demo and seed data can never be reached", () => {
     expect(rows.every((r) => r.status !== "sent" && r.status !== "delivered")).toBe(true);
   });
 });
+
+describe("consent when two rows tie", () => {
+  test("an EXACT tie resolves to withdrawn", async () => {
+    /*
+     * CI caught this as a test that passed locally and failed on the runner:
+     * a grant and a withdrawal recorded in the same millisecond sort equally,
+     * and the scan order that broke the tie was not guaranteed.
+     *
+     * The tie-break is deliberately the OPPOSITE of this codebase's messaging
+     * default. "Prefer sending twice over suppressing" is right when the cost
+     * is a duplicate. It is wrong here: guessing "granted" messages someone
+     * who asked us to stop. Ambiguous consent is not consent.
+     */
+    const h = harness();
+    const s = await seed(h);
+
+    const sameInstant = AT(8);
+    await h.run(async (ctx) => {
+      for (const state of ["granted", "withdrawn"] as const) {
+        await ctx.db.insert("consents", {
+          clientId: s.clientId, customerId: s.customerId, channel: "whatsapp",
+          state, lawfulBasis: "consent", source: "same millisecond", at: sameInstant,
+        });
+      }
+    });
+
+    const state = await s.owner.query(api.customers.consentState, {
+      clientSlug: "alpha", customerId: s.customerId,
+    });
+    expect(state.whatsapp).toBe("withdrawn");
+
+    // And the send path must agree — one helper, so they cannot diverge.
+    await expect(send(s)).resolves.toMatchObject({ outcome: "suppressed_consent" });
+  });
+
+  test("reversing the insert order does not change the answer", async () => {
+    // The bug was order-dependence. This is the same scenario, inverted.
+    const h = harness();
+    const s = await seed(h);
+
+    const sameInstant = AT(8);
+    await h.run(async (ctx) => {
+      for (const state of ["withdrawn", "granted"] as const) {
+        await ctx.db.insert("consents", {
+          clientId: s.clientId, customerId: s.customerId, channel: "whatsapp",
+          state, lawfulBasis: "consent", source: "same millisecond", at: sameInstant,
+        });
+      }
+    });
+
+    const state = await s.owner.query(api.customers.consentState, {
+      clientSlug: "alpha", customerId: s.customerId,
+    });
+    expect(state.whatsapp).toBe("withdrawn");
+  });
+
+  test("a later grant still wins when the times differ", async () => {
+    // The tie-break must not become "withdrawn always wins".
+    const h = harness();
+    const s = await seed(h);
+
+    await h.run(async (ctx) => {
+      await ctx.db.insert("consents", {
+        clientId: s.clientId, customerId: s.customerId, channel: "whatsapp",
+        state: "withdrawn", lawfulBasis: "consent", source: "older", at: AT(6),
+      });
+      await ctx.db.insert("consents", {
+        clientId: s.clientId, customerId: s.customerId, channel: "whatsapp",
+        state: "granted", lawfulBasis: "consent", source: "newer", at: AT(7),
+      });
+    });
+
+    const state = await s.owner.query(api.customers.consentState, {
+      clientSlug: "alpha", customerId: s.customerId,
+    });
+    expect(state.whatsapp).toBe("granted");
+    await expect(send(s)).resolves.toMatchObject({ outcome: "queued" });
+  });
+});

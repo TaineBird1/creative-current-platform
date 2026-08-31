@@ -75,7 +75,34 @@ jobs:
 
       - run: pnpm lint:tokens
 
+      # CONVEX_URL is inlined at build time by next.config.mjs, so it must be
+      # present HERE, not just when the server starts — without it the build
+      # renders the holding page for every request and Lighthouse would score
+      # an empty shell at 100 while proving nothing.
       - run: pnpm --filter @cc/sites build
+        env:
+          CONVEX_URL: ${{ vars.CONVEX_URL }}
+
+      # Budgets live in lighthouserc.js, which records what each threshold is
+      # and how far it sits from the spec's target. Skipped on forked PRs,
+      # where the repo variable is unavailable — same reasoning as the codegen
+      # guard: do not fail a contributor for a repo setting they cannot see.
+      - name: Lighthouse budgets (apps/sites, mobile)
+        env:
+          CONVEX_URL: ${{ vars.CONVEX_URL }}
+        run: |
+          if [ -z "$CONVEX_URL" ]; then
+            echo "::warning::CONVEX_URL is not set, so apps/sites built without a backend. Skipping Lighthouse - it would measure the holding page."
+            exit 0
+          fi
+          pnpm --filter @cc/sites start &
+          npx --yes wait-on -t 90000 http://localhost:3100/renu-solar
+          # Warm the ISR cache first. A cold request pays a Convex round trip
+          # to Ireland and costs ~3 Lighthouse points, which is enough to fail
+          # a build for a reason no visitor would ever experience.
+          for i in 1 2 3; do curl -s -o /dev/null http://localhost:3100/renu-solar; done
+          npx --yes @lhci/cli@0.14.x autorun
+
       # apps/office/next.config.mjs THROWS on a production build without
       # CONVEX_URL, deliberately — a missing value would otherwise surface at
       # runtime after a green deploy. CI has no .env.local, so the guard fired

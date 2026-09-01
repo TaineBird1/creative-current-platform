@@ -403,13 +403,61 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   webhook and no inbound pipeline at all, so the only withdrawal path today is
   a staff member recording one by hand. The outbound half is real; the half
   that makes STOP automatic does not exist.
+- **EMAIL SENDS. WHATSAPP DOES NOT, AND SAYS SO.** `lib/providers.ts` is the
+  provider seam: one interface, one driver per channel, chosen by `driverFor`.
+  Email is live over Resend. WhatsApp and SMS get a **logging no-op that
+  refuses** — it prints the message in full and returns a non-retryable
+  failure with a readable reason, so the row lands in the outbox saying "no
+  WhatsApp provider is configured". A no-op that returned SUCCESS is the
+  tempting shape and the forbidden one: it would stamp `sent` on rows nobody
+  received, and the outbox — the only screen that answers "did they hear from
+  us" — would agree. A guard test fails on `delivered: true` inside it.
+  Whoever wires WhatsApp deletes the no-op rather than making it agreeable.
+- **THE DRAIN IS THREE MUTATIONS, AND THE MIDDLE ONE IS THE RISK.** A provider
+  call is network I/O, so it runs in an action, and an action has no
+  transaction. So: CLAIM (serializable — exactly one drain gets a row), SEND,
+  RECORD. A row stranded in `sending` because the action died is REQUEUED
+  after ten minutes, not abandoned: that risks a duplicate and rules out
+  silence, which is the standing preference. `scheduledFor` on a claimed row
+  is its reclaim deadline, which is what lets the stall sweep reuse
+  `by_status_scheduledFor` instead of needing a `claimedAt` column.
+  Quiet hours are re-checked at CLAIM time as well as at dispatch: a row
+  written at 19:58 and reached at 20:01 must not go, and the customer whose
+  phone lights up does not care which side of the boundary the write was on.
+- **REMINDERS ARE SWEPT FROM CURRENT STATE, NEVER SCHEDULED AT BOOKING TIME.**
+  `scheduler.runAt(startsAt - 24h, …)` is the tempting version and it is wrong
+  in two ways that both reach a customer: a booking moved from Friday to
+  Monday still fires on Thursday, and a cancelled booking still fires at all.
+  A sweep reads what is true when it runs. Overlapping windows are deliberate
+  and free — the idempotency key refuses the second — which is what makes a
+  missed cron run recoverable rather than a reminder nobody ever gets.
+  `bookings.by_start` exists for this and spans every client; a guard test
+  keeps tenant-scoped code off it.
+- **A BOOKING ESTABLISHES A CONTRACT BASIS, NOT A CONSENT ONE.** Before this,
+  every confirmation was suppressed for want of consent — a pipeline that ran
+  end to end and reached nobody, because the only consent writer was a staff
+  member recording one by hand. `book` now writes a consent row for the one
+  channel its confirmation uses, `lawfulBasis: "contract"`, source "made a
+  booking". POPIA s69 governs direct MARKETING; telling somebody the
+  appointment they just asked for is confirmed is not that, and the basis
+  recorded says so rather than borrowing the word "consent" for something the
+  customer never gave. **It never overrides an existing row** — a withdrawal
+  always stands — and that is the only thing that makes writing one on
+  somebody's behalf defensible. Two writers only: `customers.ts` and
+  `messages.ts`, held by a guard.
+- **`book` QUEUES THE CONFIRMATION IN ITS OWN TRANSACTION**, and returns the
+  outcome. A booking that committed while its confirmation did not is the
+  exact failure: the calendar says the customer was told and the customer was
+  not. And the person who just took the booking is told NOW if nothing will
+  reach this customer — while they can still ask for an email address — the
+  same reasoning as `reachable` on `customers.upsertByPhone`.
 - Every screen goes through the `impeccable` skill. Tokens only.
 - Never mark anything done without a deployed preview URL and a human tapping
   it on a real phone.
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 528 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 577 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -457,7 +505,8 @@ not pure white — that distinction was a live bug.
 
 ## Deployment environment variables
 
-Seven on production, six on dev. `npx convex env list` to check.
+Seven on production, six on dev, plus two optional messaging ones.
+`npx convex env list` to check.
 
 **`SITES_REVALIDATE_URL` is production-only, and this is not an oversight.**
 Convex actions run in Convex's cloud, so `localhost:3100` there resolves to
@@ -473,6 +522,8 @@ path locally you need a public tunnel to :3100, not a localhost URL.
 | `SITE_URL` | The OFFICE origin (`http://localhost:3200` in dev). Unused by the OTP flow; it is the redirect target for any OAuth or magic-link provider added later. |
 | `AUTH_RESEND_KEY` | Resend, Sending access only. Not the outreach key — a separate one means "last used" tells you whether sign-in works. |
 | `AUTH_EMAIL_FROM` | Must be on a Resend-verified domain. |
+| `MESSAGING_RESEND_KEY` | Resend, Sending access. **Optional but wanted.** Customer-facing mail — confirmations and reminders. Separate from the auth key for the same reason the auth key is separate: "last used" then answers a question. Unset, the outbox falls back to `AUTH_RESEND_KEY`; unset with no fallback either, every email retries five times and lands in the outbox saying so, which is deliberate — an unconfigured deployment must fail visibly rather than decide the message was handled. |
+| `MESSAGING_EMAIL_FROM` | Same shape as `AUTH_EMAIL_FROM`, on a verified domain. A bare address gets the CLIENT's name as its display name; the client's own domain is never the envelope sender, because it is not verified with Resend and would be rejected or filed as spam. |
 | `SITES_REVALIDATE_URL` | `https://<sites-origin>/api/revalidate`. Where a config write pushes cache invalidation. Unset is survivable — writes still succeed and sites self-heal within the hour — but every publish looks broken for that hour. |
 | `REVALIDATE_SECRET` | A shared secret, set on BOTH the Convex deployment and the sites Vercel project. The route fails closed if it is unset there, so an unset secret means no revalidation at all rather than an open endpoint. |
 
@@ -684,7 +735,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 528 tests
+pnpm test                        # 577 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

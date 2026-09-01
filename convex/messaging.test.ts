@@ -25,11 +25,23 @@ const asUser = (h: Harness, userId: Id<"users">) =>
 const AT = (hourUtc: number) => Date.UTC(2026, 8, 15, hourUtc);
 const JHB = "Africa/Johannesburg";
 
+type SeedOptions = {
+  isSeed?: boolean;
+  isDemo?: boolean;
+  email?: string;
+  /**
+   * Consent rows written BEFORE the booking, which matters: `book` establishes
+   * a contract basis only where no row exists, so anything set here is what
+   * the booking finds and leaves alone.
+   */
+  consents?: { channel?: "whatsapp" | "email" | "sms"; state: "granted" | "withdrawn"; at: number }[];
+};
+
 /**
  * A real client, service, customer and BOOKING — so the tests drive the same
- * producer a cron would, not a shim written for the tests.
+ * producers the office and the crons do, not a shim written for the tests.
  */
-async function seed(h: Harness, over: { isSeed?: boolean; isDemo?: boolean } = {}) {
+async function seed(h: Harness, over: SeedOptions = {}) {
   const ids = await h.run(async (ctx) => {
     const ventureId = await ctx.db.insert("ventures", {
       name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
@@ -53,35 +65,64 @@ async function seed(h: Harness, over: { isSeed?: boolean; isDemo?: boolean } = {
 
   const owner = asUser(h, ids.owner);
   const { customerId } = await owner.mutation(api.customers.upsertByPhone, {
-    clientSlug: "alpha", name: "Thabo M", phone: "0825551234",
+    clientSlug: "alpha", name: "Thabo M", phone: "0825551234", email: over.email,
   });
+
+  for (const row of over.consents ?? []) {
+    await h.run((ctx) =>
+      ctx.db.insert("consents", {
+        clientId: ids.clientId, customerId, channel: row.channel ?? "whatsapp",
+        state: row.state, lawfulBasis: "consent", source: "pre-existing", at: row.at,
+      }),
+    );
+  }
+
   const { serviceId } = await owner.mutation(api.services.create, {
     clientSlug: "alpha", key: "assessment", name: "Assessment",
     durationMinutes: 60, priceCents: 95000,
   });
-  const { bookingId } = await owner.mutation(api.bookings.book, {
+  const booking = await owner.mutation(api.bookings.book, {
     clientSlug: "alpha", locationId: ids.locationId, serviceId, customerId,
     startsAt: AT(9),
   });
-  return { ...ids, owner, customerId, serviceId, bookingId };
+  return { ...ids, owner, customerId, serviceId, bookingId: booking.bookingId, booking };
 }
 
-const grantWhatsapp = (s: Awaited<ReturnType<typeof seed>>) =>
+type Seeded = Awaited<ReturnType<typeof seed>>;
+
+const grantWhatsapp = (s: Seeded) =>
   s.owner.mutation(api.customers.recordConsent, {
     clientSlug: "alpha", customerId: s.customerId, channel: "whatsapp",
     state: "granted", lawfulBasis: "consent", source: "booking form",
   });
 
-/** Drives the real producer a cron would call, not a shim for the tests. */
+/**
+ * Drives a producer with an injectable `now`, which is what the quiet-hours
+ * tests need.
+ *
+ * The REMINDER rather than the confirmation: booking now queues a confirmation
+ * inside the booking transaction, so the confirmation's key is already taken
+ * by the time a test runs and every call would come back `duplicate`. The
+ * reminder goes through the same `dispatch` and the same four rules; only the
+ * key differs.
+ */
 const send = (
-  s: Awaited<ReturnType<typeof seed>>,
+  s: Seeded,
   over: { channel?: "whatsapp" | "email" | "sms"; now?: number } = {},
 ) =>
-  s.owner.mutation(internal.messages.queueBookingConfirmation, {
+  s.owner.mutation(internal.messages.queueBookingReminder, {
     bookingId: s.bookingId,
+    hoursBefore: 24,
     channel: over.channel,
     now: over.now ?? AT(8),
   });
+
+const messagesIn = (h: Harness, templateKey: string) =>
+  h.run(async (ctx) =>
+    (await ctx.db.query("messages").collect()).filter((m) => m.templateKey === templateKey),
+  );
+
+const reminders = (h: Harness) => messagesIn(h, "reminder_24h");
 
 describe("idempotency keys", () => {
   const booking = "k1234" as Id<"bookings">;
@@ -183,6 +224,76 @@ describe("quiet hours use the SITE's timezone", () => {
   });
 });
 
+describe("taking a booking is what tells the customer", () => {
+  /**
+   * The wiring, tested from the outside: nobody calls a producer, somebody
+   * takes a booking. The confirmation has to be a consequence of that and not
+   * of a second step anyone can forget.
+   */
+  test("booking queues the confirmation IN THE SAME MUTATION", async () => {
+    const h = harness();
+    const s = await seed(h);
+
+    expect(s.booking.confirmation.queued).toBe(true);
+
+    const rows = await messagesIn(h, "booking_confirmation");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.idempotencyKey).toContain(s.bookingId);
+  });
+
+  test("A BOOKING ESTABLISHES A CONTRACT BASIS, NOT A CONSENT ONE", async () => {
+    /*
+     * Before this existed, every confirmation was suppressed for want of
+     * consent — a pipeline that ran end to end and reached nobody. What the
+     * customer actually did was ask for an appointment, so that is what the
+     * row says: lawful basis `contract`, source "made a booking". Recording it
+     * as `consent` would put a word in their mouth.
+     */
+    const h = harness();
+    const s = await seed(h);
+
+    const rows = await h.run((ctx) => ctx.db.query("consents").collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.lawfulBasis).toBe("contract");
+    expect(rows[0]!.state).toBe("granted");
+    expect(rows[0]!.source).toBe("made a booking");
+  });
+
+  test("BOOKING AGAIN NEVER UNDOES A WITHDRAWAL", async () => {
+    /*
+     * The one thing that would make writing a consent row on somebody's behalf
+     * indefensible. A customer who asked us to stop, and who later books,
+     * still gets no message — and the refusal is a row in the outbox saying
+     * so, not silence.
+     */
+    const h = harness();
+    const s = await seed(h, {
+      consents: [{ state: "withdrawn", at: AT(2) }],
+    });
+
+    expect(s.booking.confirmation.queued).toBe(false);
+    expect(s.booking.confirmation.notice).toMatch(/asked us to stop|has not agreed/);
+
+    const consents = await h.run((ctx) => ctx.db.query("consents").collect());
+    expect(consents).toHaveLength(1);
+    expect(consents[0]!.state).toBe("withdrawn");
+
+    const rows = await messagesIn(h, "booking_confirmation");
+    expect(rows[0]!.status).toBe("suppressed_consent");
+  });
+
+  test("a customer with an email is reached on the channel that can deliver", async () => {
+    // Email is the only live driver, so an address is what makes a customer
+    // reachable today. Without one it falls to WhatsApp, which has no provider.
+    const h = harness();
+    const withEmail = await seed(h, { email: "thabo@example.com" });
+    const rows = await messagesIn(h, "booking_confirmation");
+    expect(rows[0]!.channel).toBe("email");
+    expect(rows[0]!.to).toBe("thabo@example.com");
+    expect(withEmail.booking.confirmation.queued).toBe(true);
+  });
+});
+
 describe("the choke point", () => {
   test("queues a message when consent is granted and it is daytime", async () => {
     const h = harness();
@@ -192,7 +303,7 @@ describe("the choke point", () => {
     const result = await send(s);
     expect(result.outcome).toBe("queued");
 
-    const rows = await h.run((ctx) => ctx.db.query("messages").collect());
+    const rows = await reminders(h);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.status).toBe("scheduled");
     expect(rows[0]!.quietHoursTimezone).toBe(JHB);
@@ -207,21 +318,25 @@ describe("the choke point", () => {
     const second = await send(s);
     expect(second.outcome).toBe("duplicate");
 
-    const rows = await h.run((ctx) => ctx.db.query("messages").collect());
-    expect(rows).toHaveLength(1);
+    expect(await reminders(h)).toHaveLength(1);
     expect(first.outcome).toBe("queued");
   });
 
   test("NEVER WITHOUT CONSENT — absent is not granted", async () => {
-    // A customer who has never been asked has not agreed.
+    /*
+     * A customer who has never been asked has not agreed. Tested on SMS: the
+     * booking establishes a basis for the ONE channel its confirmation uses
+     * and touches no other, which is exactly the property being relied on
+     * here.
+     */
     const h = harness();
     const s = await seed(h);
 
-    const result = await send(s);
+    const result = await send(s, { channel: "sms" });
     expect(result.outcome).toBe("suppressed_consent");
 
     // A row is still written: an invisible drop is indistinguishable from a bug.
-    const rows = await h.run((ctx) => ctx.db.query("messages").collect());
+    const rows = await reminders(h);
     expect(rows[0]!.status).toBe("suppressed_consent");
   });
 
@@ -238,13 +353,36 @@ describe("the choke point", () => {
     expect(result.outcome).toBe("suppressed_consent");
   });
 
-  test("consent is per CHANNEL — WhatsApp does not grant email", async () => {
+  test("consent is per CHANNEL — a booking does not grant SMS", async () => {
     const h = harness();
     const s = await seed(h);
     await grantWhatsapp(s);
 
-    const result = await send(s, { channel: "email" });
+    const result = await send(s, { channel: "sms" });
     expect(result.outcome).toBe("suppressed_consent");
+  });
+
+  test("NOWHERE TO SEND IT is a stated reason, not a queued row", async () => {
+    /*
+     * `to` used to be the phone number whatever the channel was, so an email
+     * message would have been handed a phone number to send mail to. Nothing
+     * caught it because no driver existed to try.
+     */
+    const h = harness();
+    const s = await seed(h);
+    await s.owner.mutation(api.customers.recordConsent, {
+      clientSlug: "alpha", customerId: s.customerId, channel: "email",
+      state: "granted", lawfulBasis: "consent", source: "booking form",
+    });
+
+    const result = await send(s, { channel: "email" });
+    expect(result.outcome).toBe("no_destination");
+
+    const rows = await reminders(h);
+    expect(rows[0]!.status).toBe("failed");
+    expect(rows[0]!.error).toMatch(/no email address/i);
+    // No provider was asked, so no attempt is claimed.
+    expect(rows[0]!.attempts).toBe(0);
   });
 
   test("held over quiet hours rather than dropped", async () => {
@@ -258,7 +396,7 @@ describe("the choke point", () => {
     expect(result.held).toBe(true);
     expect(result.scheduledFor).toBeGreaterThan(AT(1));
 
-    const rows = await h.run((ctx) => ctx.db.query("messages").collect());
+    const rows = await reminders(h);
     expect(rows[0]!.status).toBe("holding_quiet_hours");
   });
 });
@@ -277,7 +415,7 @@ describe("demo and seed data can never be reached", () => {
     const result = await send(s);
     expect(result.outcome).toBe("suppressed_demo");
 
-    const rows = await h.run((ctx) => ctx.db.query("messages").collect());
+    const rows = await reminders(h);
     expect(rows[0]!.status).toBe("suppressed_demo");
     expect(rows[0]!.sentAt).toBeUndefined();
   });
@@ -300,19 +438,11 @@ describe("demo and seed data can never be reached", () => {
     expect(result.outcome).toBe("suppressed_demo");
   });
 
-  test("no message row anywhere reaches 'sent' — there is no provider", async () => {
-    /*
-     * Nothing in this codebase can mark a message sent, because no driver
-     * exists. Asserted so that a future driver has to face this test rather
-     * than quietly making the pipeline look complete.
-     */
+  test("and the booking itself says so, at the moment it is taken", async () => {
     const h = harness();
-    const s = await seed(h);
-    await grantWhatsapp(s);
-    await send(s);
-
-    const rows = await h.run((ctx) => ctx.db.query("messages").collect());
-    expect(rows.every((r) => r.status !== "sent" && r.status !== "delivered")).toBe(true);
+    const s = await seed(h, { isDemo: true });
+    expect(s.booking.confirmation.queued).toBe(false);
+    expect(s.booking.confirmation.notice).toMatch(/Demo data/);
   });
 });
 
@@ -327,18 +457,17 @@ describe("consent when two rows tie", () => {
      * default. "Prefer sending twice over suppressing" is right when the cost
      * is a duplicate. It is wrong here: guessing "granted" messages someone
      * who asked us to stop. Ambiguous consent is not consent.
+     *
+     * Written BEFORE the booking, so the booking finds a row and leaves it
+     * alone — which is also the only ordering in which the tie is the newest
+     * thing the customer did.
      */
     const h = harness();
-    const s = await seed(h);
-
-    const sameInstant = AT(8);
-    await h.run(async (ctx) => {
-      for (const state of ["granted", "withdrawn"] as const) {
-        await ctx.db.insert("consents", {
-          clientId: s.clientId, customerId: s.customerId, channel: "whatsapp",
-          state, lawfulBasis: "consent", source: "same millisecond", at: sameInstant,
-        });
-      }
+    const s = await seed(h, {
+      consents: [
+        { state: "granted", at: AT(8) },
+        { state: "withdrawn", at: AT(8) },
+      ],
     });
 
     const state = await s.owner.query(api.customers.consentState, {
@@ -353,16 +482,11 @@ describe("consent when two rows tie", () => {
   test("reversing the insert order does not change the answer", async () => {
     // The bug was order-dependence. This is the same scenario, inverted.
     const h = harness();
-    const s = await seed(h);
-
-    const sameInstant = AT(8);
-    await h.run(async (ctx) => {
-      for (const state of ["withdrawn", "granted"] as const) {
-        await ctx.db.insert("consents", {
-          clientId: s.clientId, customerId: s.customerId, channel: "whatsapp",
-          state, lawfulBasis: "consent", source: "same millisecond", at: sameInstant,
-        });
-      }
+    const s = await seed(h, {
+      consents: [
+        { state: "withdrawn", at: AT(8) },
+        { state: "granted", at: AT(8) },
+      ],
     });
 
     const state = await s.owner.query(api.customers.consentState, {
@@ -374,17 +498,11 @@ describe("consent when two rows tie", () => {
   test("a later grant still wins when the times differ", async () => {
     // The tie-break must not become "withdrawn always wins".
     const h = harness();
-    const s = await seed(h);
-
-    await h.run(async (ctx) => {
-      await ctx.db.insert("consents", {
-        clientId: s.clientId, customerId: s.customerId, channel: "whatsapp",
-        state: "withdrawn", lawfulBasis: "consent", source: "older", at: AT(6),
-      });
-      await ctx.db.insert("consents", {
-        clientId: s.clientId, customerId: s.customerId, channel: "whatsapp",
-        state: "granted", lawfulBasis: "consent", source: "newer", at: AT(7),
-      });
+    const s = await seed(h, {
+      consents: [
+        { state: "withdrawn", at: AT(6) },
+        { state: "granted", at: AT(7) },
+      ],
     });
 
     const state = await s.owner.query(api.customers.consentState, {

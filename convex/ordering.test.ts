@@ -305,13 +305,25 @@ describe("the outbox", () => {
       bookingIds.push(bookingId);
     }
 
-    // 22:00 SAST. Inside quiet hours, so all three hold to the same 08:00.
+    /*
+     * 22:00 SAST. Inside quiet hours, so all three hold to the same 08:00.
+     *
+     * The REMINDER rather than the confirmation, because booking now queues a
+     * confirmation in the same transaction as the booking itself — three of
+     * them, at three different real instants, which is the opposite of the tie
+     * this test needs. The reminder is the message with no other writer.
+     */
     const night = Date.UTC(2026, 0, 5, 20);
     for (const bookingId of bookingIds) {
-      await owner.mutation(internal.messages.queueBookingConfirmation, { bookingId, now: night });
+      await owner.mutation(internal.messages.queueBookingReminder, {
+        bookingId,
+        hoursBefore: 24,
+        now: night,
+      });
     }
 
-    return owner.query(api.messages.outbox, { clientSlug: "alpha" });
+    const rows = await owner.query(api.messages.outbox, { clientSlug: "alpha" });
+    return rows.filter((row) => row.templateKey === "reminder_24h");
   }
 
   test("messages held to the same instant have a decided order, either way", async () => {

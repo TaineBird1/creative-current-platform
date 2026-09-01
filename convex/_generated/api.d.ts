@@ -66,6 +66,7 @@ import type * as tables_sites from "../tables/sites.js";
 import type * as tables_sourcing from "../tables/sourcing.js";
 import type * as tables_tenants from "../tables/tenants.js";
 import type * as tables_webhooks from "../tables/webhooks.js";
+import type * as tasks from "../tasks.js";
 import type * as ventures from "../ventures.js";
 import type * as webhooks from "../webhooks.js";
 
@@ -134,6 +135,7 @@ declare const fullApi: ApiFromModules<{
   "tables/sourcing": typeof tables_sourcing;
   "tables/tenants": typeof tables_tenants;
   "tables/webhooks": typeof tables_webhooks;
+  tasks: typeof tasks;
   ventures: typeof ventures;
   webhooks: typeof webhooks;
 }>;

@@ -1,9 +1,9 @@
 import { fetchQuery } from "convex/nextjs";
 import type { FunctionReturnType } from "convex/server";
 import { convexAuthNextjsToken } from "@convex-dev/auth/nextjs/server";
-import Link from "next/link";
 import { api } from "@cc/convex/api";
 import { SignOut } from "@/components/SignOut";
+import { AdminNav } from "@/components/AdminNav";
 import { ClientPicker } from "./ClientPicker";
 import s from "./domains.module.css";
 
@@ -53,12 +53,16 @@ export default async function DomainsPage() {
           * the scan order. Identity lives in the top bar on /admin; this
           * screen inherits the same rule.
           */}
+        {/*
+          * The nav replaces the single "Console" back link this screen used
+          * to carry. A back link answers "how do I leave"; the nav answers
+          * "where else is there", which is the question that was actually
+          * being asked — /admin/queue had no link from anywhere at all.
+          */}
         <header className={s.pageHead}>
           <div>
+            <AdminNav />
             <h1 className={s.pageHeading}>Domains</h1>
-            <p className={s.backLink}>
-              <Link href="/admin">Console</Link>
-            </p>
           </div>
           <SignOut />
         </header>

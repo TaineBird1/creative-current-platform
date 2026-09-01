@@ -3,16 +3,41 @@ import { v } from "convex/values";
 import { currency } from "./tenants";
 
 export const opsTables = {
-  /** Part 5.5 — one inbox. Venture-filterable, client-optional. */
+  /**
+   * Part 5.5 — one inbox. Venture-filterable, client-optional.
+   *
+   * WHY `status` IS STORED HERE when invoice settlement is derived: doneness
+   * is a DECISION somebody makes, not a fact computable from other rows. An
+   * invoice is paid because money arrived and the ledger says so; a task is
+   * done because a person judged it done. Storing the first was a bug and
+   * storing this one is the only option.
+   */
   tasks: defineTable({
     ventureId: v.id("ventures"),
     clientId: v.optional(v.id("clients")),
+    /**
+     * The lead it came out of, when it came out of a call. During cold
+     * outreach there is no client yet — only a lead — so without this the
+     * commonest task of all ("send them the quote on Thursday") has nothing
+     * to point back at.
+     */
+    leadId: v.optional(v.id("leads")),
     propertyUnitId: v.optional(v.id("propertyUnits")),
     title: v.string(),
     body: v.optional(v.string()),
     assigneeUserId: v.optional(v.id("users")),
     dueAt: v.optional(v.number()),
     status: v.union(v.literal("open"), v.literal("doing"), v.literal("done"), v.literal("cancelled")),
+    /**
+     * WHEN it was finished, written in the same mutation that sets the
+     * status. Two fields that must agree are two fields that can disagree, so
+     * neither is ever written alone — `complete` and `reopen` are the only
+     * writers and a guard test holds them to it.
+     *
+     * "Done" without "when" loses the thing you actually want on a Friday:
+     * whether it was cleared this morning or three weeks ago.
+     */
+    completedAt: v.optional(v.number()),
     /** Set when a trigger created it, so automation-made tasks are auditable. */
     triggerKey: v.optional(v.string()),
   })

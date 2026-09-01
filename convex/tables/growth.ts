@@ -141,7 +141,17 @@ export const growthTables = {
   })
     .index("by_placeId", ["placeId"])
     .index("by_status", ["status"])
-    .index("by_geo_status", ["geoAreaId", "status"]),
+    .index("by_geo_status", ["geoAreaId", "status"])
+    /**
+     * NOT for finding leads to call — `lib/leadAccess.ts` is the only thing
+     * that lists those, and it lists them by status.
+     *
+     * This is the reverse lookup: given a number we are ABOUT TO MESSAGE, is
+     * it a lead's? A prospect is not a customer, and the transactional
+     * pipeline is not an outreach channel. Exact, indexed and cheap, because
+     * it runs before every single message.
+     */
+    .index("by_phone", ["phone"]),
 
   /** Retroactive + learning. A match here removes a lead from every future pull. */
   suppressions: defineTable({

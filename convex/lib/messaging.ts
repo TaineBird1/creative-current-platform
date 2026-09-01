@@ -1,5 +1,6 @@
 import { ConvexError } from "convex/values";
 import { contactDecision } from "./suppression";
+import { recipientIsLead } from "./leadAccess";
 import type { SendResult } from "./providers";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
@@ -10,19 +11,27 @@ import { hasConsent } from "./consent";
  *
  * Every message in this system goes through `dispatch` below. Not "should" —
  * there is no other way to write the messages table, and guards.test.ts is
- * where that becomes enforceable. The reason is that the four rules a message
+ * where that becomes enforceable. The reason is that the five rules a message
  * must obey are only safe if they are applied in ONE place:
  *
  *   1. never twice          — idempotency key, checked before insert
  *   2. never to demo/seed   — blocked here, not filtered at each caller
- *   3. never without consent — checked here against the consents table
- *   4. never at night       — held, not dropped, until the window opens
+ *   3. never to a LEAD      — a prospect is not a customer; see leadAccess
+ *   4. never without consent — checked here against the consents table
+ *   5. never at night       — held, not dropped, until the window opens
  *
  * Rule 2 is the one that most obviously belongs here rather than at each
  * caller. A reminder cron, a review request and a quote follow-up are three
  * separate paths; "remember to check isSeed" in three places is two places to
  * forget, and the failure is a real WhatsApp to a real phone number that
  * belongs to a business who never signed up.
+ *
+ * Rule 3 is rule 2's blind spot, and it was found by asking what the demo
+ * flags actually mean. They are DESIGNATIONS applied to data we invented. A
+ * lead carries neither and is not covered by either, because a lead is real —
+ * the dev deployment holds 39 actual solar installers with actual numbers —
+ * and that is exactly what makes messaging one the expensive mistake rather
+ * than the harmless one.
  *
  * WHAT THIS DOES NOT DO: talk to a provider. `dispatch` queues a row and
  * stops; the drain in outbox.ts picks it up, and lib/providers.ts is what
@@ -142,6 +151,7 @@ export type DispatchResult =
   | { outcome: "duplicate"; messageId: Id<"messages"> }
   | { outcome: "suppressed_demo" }
   | { outcome: "suppressed_consent" }
+  | { outcome: "suppressed_lead"; reason: string }
   | { outcome: "no_destination"; messageId: Id<"messages"> };
 
 /**
@@ -226,6 +236,58 @@ export async function dispatch(ctx: MutationCtx, input: DispatchInput): Promise<
       isSeed,
     });
     return { outcome: "suppressed_demo" };
+  }
+
+  /*
+   * NEVER A LEAD.
+   *
+   * The demo/seed block above catches data we MADE UP. This catches data that
+   * is entirely real and still must never be messaged: a business we are
+   * prospecting. `isDemo` and `isSeed` are designations, and no honest one
+   * exists for a lead — a lead is a real company with a real number, which is
+   * why the mistake is expensive rather than embarrassing.
+   *
+   * Outreach in this business is drafted and sent by hand, on purpose. A
+   * transactional pipeline that can reach a prospect is an outreach channel
+   * whether or not anyone meant to build one, and it is one that sends on a
+   * cron.
+   *
+   * Checked HERE, at queue time, rather than at the driver: a queued row is
+   * already a decision, and a person reading the outbox should see the
+   * refusal rather than a message waiting its turn.
+   *
+   * `recipientIsLead` fails closed — see lib/leadAccess.ts — so an error or
+   * an address it cannot canonicalise both refuse.
+   */
+  /*
+   * The CUSTOMER's own identifiers, both of them, whichever address this
+   * particular message happens to use. A customer record carrying a lead's
+   * phone number IS that lead, and emailing them instead does not make it
+   * somebody else.
+   */
+  const leadCheck = await recipientIsLead(ctx, {
+    phone: customer.phone,
+    email: customer.email ?? null,
+  });
+  if (leadCheck.verdict !== "clear") {
+    await ctx.db.insert("messages", {
+      ventureId: input.ventureId,
+      clientId: input.clientId,
+      customerId: input.customerId,
+      channel: input.channel,
+      to: destination ?? customer.phone,
+      templateKey: input.templateKey,
+      payload: input.payload,
+      idempotencyKey,
+      status: "suppressed_lead",
+      error: leadCheck.reason,
+      quietHoursTimezone: input.quietHoursTimezone,
+      scheduledFor: now,
+      attempts: 0,
+      isDemo,
+      isSeed,
+    });
+    return { outcome: "suppressed_lead", reason: leadCheck.reason };
   }
 
   /*

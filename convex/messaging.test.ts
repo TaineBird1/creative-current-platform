@@ -8,10 +8,10 @@ import { idempotencyKeyFor, isQuiet, nextSendableAt } from "./lib/messaging";
 /**
  * THE MESSAGING PIPELINE.
  *
- * Four rules, one choke point: never twice, never to demo or seed, never
- * without consent, never at night. Every test here is about a failure that is
- * silent — a message that should have gone and did not, or one that went to
- * someone who never signed up.
+ * Five rules, one choke point: never twice, never to demo or seed, never to a
+ * LEAD, never without consent, never at night. Every test here is about a
+ * failure that is silent — a message that should have gone and did not, or one
+ * that went to someone who never signed up.
  */
 
 const modules = import.meta.glob("./**/*.ts");
@@ -443,6 +443,139 @@ describe("demo and seed data can never be reached", () => {
     const s = await seed(h, { isDemo: true });
     expect(s.booking.confirmation.queued).toBe(false);
     expect(s.booking.confirmation.notice).toMatch(/Demo data/);
+  });
+});
+
+describe("a prospect is not a customer", () => {
+  /**
+   * THE HOLE THE DEMO FLAGS DO NOT COVER.
+   *
+   * `isDemo` and `isSeed` are designations applied to data we invented. A lead
+   * carries neither, and a lead is REAL — the dev deployment holds 39 actual
+   * KZN solar installers with actual numbers off trade directories. That is
+   * exactly what makes messaging one the expensive version of this mistake.
+   *
+   * Outreach in this business is drafted and sent by hand, deliberately. A
+   * transactional pipeline that can reach a prospect is an outreach channel
+   * whether or not anyone meant to build one — and one that sends on a cron.
+   */
+  /**
+   * A real one, off the real import. Inserted BEFORE `seed` in most of these,
+   * because `book` queues its confirmation in the booking transaction — so a
+   * lead added afterwards is a different test.
+   */
+  const installer = async (
+    h: Harness,
+    over: { phone?: string; website?: string } = {},
+  ) => {
+    await h.run(async (ctx) => {
+      const ventureId =
+        (await ctx.db.query("ventures").first())?._id ??
+        (await ctx.db.insert("ventures", {
+          name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+        }));
+      await ctx.db.insert("leads", {
+        ventureId,
+        businessName: "KZN IEETR",
+        niche: "solar",
+        phone: over.phone ?? "+27825551234",
+        phoneDisplay: "0825551234",
+        website: over.website,
+        area: "Durban",
+        auditFaults: [],
+        status: "new",
+        provenance: {
+          source: "campaign_list",
+          capturedAt: AT(0),
+          lawfulBasis: "legitimate_interest",
+          detail: "ENF Solar directory listing (KZN)",
+        },
+      });
+    });
+  };
+
+  test("A CUSTOMER CARRYING A LEAD'S NUMBER IS NEVER MESSAGED", async () => {
+    const h = harness();
+    const s = await seed(h);
+    // The seeded customer's phone normalises to +27825551234 — the same number.
+    await installer(h);
+    await grantWhatsapp(s);
+
+    const result = await send(s);
+    expect(result.outcome).toBe("suppressed_lead");
+
+    const rows = await reminders(h);
+    expect(rows[0]!.status).toBe("suppressed_lead");
+    // It names the business, because whoever reads this is the only person who
+    // can say whether it was a mistake or a coincidence of numbers.
+    expect(rows[0]!.error).toContain("KZN IEETR");
+  });
+
+  test("it beats consent — a granted consent does not make a prospect a customer", async () => {
+    const h = harness();
+    const s = await seed(h);
+    await installer(h);
+    await grantWhatsapp(s);
+
+    // Even with an explicit grant on the channel, the answer is the same.
+    await expect(send(s)).resolves.toMatchObject({ outcome: "suppressed_lead" });
+  });
+
+  test("AN EMAIL ON A LEAD'S DOMAIN IS REFUSED TOO", async () => {
+    const h = harness();
+    // A different phone, so only the domain can catch this one — and the
+    // website as a directory actually printed it, scheme and www and all.
+    await installer(h, { phone: "+27313735360", website: "https://www.kznieetr.co.za/" });
+    const s = await seed(h, { email: "info@kznieetr.co.za" });
+
+    const rows = await messagesIn(h, "booking_confirmation");
+    expect(rows[0]!.status).toBe("suppressed_lead");
+    expect(s.booking.confirmation.queued).toBe(false);
+    expect(s.booking.confirmation.notice).toContain("KZN IEETR");
+  });
+
+  test("a subdomain of a lead's site is the same business", async () => {
+    const h = harness();
+    await installer(h, { phone: "+27313735360", website: "kznieetr.co.za" });
+    await seed(h, { email: "info@mail.kznieetr.co.za" });
+
+    const rows = await messagesIn(h, "booking_confirmation");
+    expect(rows[0]!.status).toBe("suppressed_lead");
+  });
+
+  test("AN ORDINARY CUSTOMER IS UNAFFECTED", async () => {
+    // The check has to be narrow enough to be worth keeping. A real customer
+    // with a real number that belongs to no lead goes through untouched.
+    const h = harness();
+    await installer(h, { phone: "+27313735360", website: "kznieetr.co.za" });
+    const s = await seed(h, { email: "thabo@example.com" });
+
+    expect(s.booking.confirmation.queued).toBe(true);
+    const rows = await messagesIn(h, "booking_confirmation");
+    expect(rows[0]!.status).toBe("scheduled");
+  });
+
+  test("a lookalike domain is not a match", async () => {
+    const h = harness();
+    await installer(h, { phone: "+27313735360", website: "kznieetr.co.za" });
+    const s = await seed(h, { email: "info@notkznieetr.co.za" });
+
+    expect(s.booking.confirmation.queued).toBe(true);
+  });
+
+  test("the booking itself is still TAKEN — a refusal to message is not a refusal to book", async () => {
+    /*
+     * Same judgement as an unreachable phone number on a quote: refusing the
+     * booking would turn a messaging limitation into lost business. The
+     * booking stands, and the person who took it is told.
+     */
+    const h = harness();
+    await installer(h);
+    const s = await seed(h);
+
+    const booking = await h.run((ctx) => ctx.db.get(s.bookingId));
+    expect(booking).not.toBeNull();
+    expect(s.booking.confirmation.queued).toBe(false);
   });
 });
 

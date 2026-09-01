@@ -278,23 +278,37 @@ describe("a working week", () => {
       source: "booking form",
     });
 
-    const { bookingId } = await owner.mutation(api.bookings.book, {
+    const booked = await owner.mutation(api.bookings.book, {
       clientSlug: "hillcrest-solar",
       locationId,
       serviceId,
       customerId,
       startsAt: MON + day(7),
     });
+    const bookingId = booked.bookingId;
     say("  bookings.book     → booked, no overlap");
+    say(
+      `  …confirmation     → queued: ${booked.confirmation.queued}  ` +
+        "(in the SAME transaction as the booking)",
+    );
 
-    const queued = await owner.mutation(internal.messages.queueBookingConfirmation, {
+    const reminder = await owner.mutation(internal.messages.queueBookingReminder, {
       bookingId,
+      hoursBefore: 24,
       now: MON + day(4) + 12 * 60 * 60 * 1000,
     });
-    say(`  messages.queue…   → ${queued.outcome}  (consent checked, quiet hours applied)`);
+    say(`  …24h reminder     → ${reminder.outcome}  (consent checked, quiet hours applied)`);
 
     const outbox = await owner.query(api.messages.outbox, { clientSlug: "hillcrest-solar" });
-    say(`  messages.outbox   → ${outbox.length} row, status "${outbox[0]?.status}" — NOTHING SENDS, there is no driver`);
+    say(
+      `  messages.outbox   → ${outbox.length} rows, waiting for the drain. ` +
+        "WhatsApp has no provider, so it will record why rather than claim it sent",
+    );
+    /*
+     * Still true, and for a sharper reason than before: a driver now exists,
+     * and this customer is on WhatsApp, which has none. Nothing anywhere marks
+     * a message sent that was not.
+     */
     expect(outbox.every((m) => m.status !== "sent")).toBe(true);
 
     // -------------------------------------------------------------- a quote

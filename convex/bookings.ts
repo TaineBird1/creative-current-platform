@@ -103,6 +103,18 @@ function describe(result: DispatchResult): { queued: boolean; notice: string | n
           "No confirmation was sent — this customer has not agreed to be contacted " +
           "on this channel, or has asked us to stop.",
       };
+    case "suppressed_lead":
+      /*
+       * Loud, and it names the business. This one is not a normal state of
+       * affairs like a missing consent — it means a customer record was
+       * created against a business we are PROSPECTING, and whoever is looking
+       * at this screen is the only person who can say whether that was a
+       * mistake or a genuine coincidence of numbers.
+       */
+      return {
+        queued: false,
+        notice: `No confirmation was sent — ${result.reason}`,
+      };
     case "suppressed_demo":
       return { queued: false, notice: "Demo data: nothing is sent to real people." };
   }

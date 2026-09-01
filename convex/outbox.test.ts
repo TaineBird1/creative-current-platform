@@ -85,9 +85,17 @@ const only = async (h: Harness): Promise<Doc<"messages">> => {
   return rows[0]!;
 };
 
-/** A Resend that answers however the test says. */
-function stubResend(reply: { status: number; body?: unknown }) {
+/**
+ * A Resend that answers however the test says.
+ *
+ * The allowlist is opened unless a test says otherwise. It defaults to sending
+ * NOBODY, so leaving it out of this helper would make every send test a test
+ * of the allowlist — which is a real test, and it has its own describe block
+ * below rather than being smeared across all of them.
+ */
+function stubResend(reply: { status: number; body?: unknown }, allowlist = "*") {
   const calls: { url: string; init: RequestInit }[] = [];
+  vi.stubEnv("MESSAGING_ALLOWLIST", allowlist);
   vi.stubEnv("MESSAGING_RESEND_KEY", "re_test_key");
   vi.stubEnv("MESSAGING_EMAIL_FROM", "The Creative Current <hello@example.test>");
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
@@ -233,6 +241,7 @@ describe("email goes out for real", () => {
     // Same reasoning as a missing webhook secret: an unconfigured deployment
     // must fail visibly and keep asking, never decide the message was handled.
     const h = harness();
+    vi.stubEnv("MESSAGING_ALLOWLIST", "*");
     vi.stubEnv("MESSAGING_RESEND_KEY", "");
     vi.stubEnv("MESSAGING_EMAIL_FROM", "");
     vi.stubEnv("AUTH_RESEND_KEY", "");
@@ -245,6 +254,106 @@ describe("email goes out for real", () => {
     const row = await only(h);
     expect(row.status).toBe("scheduled"); // retrying, not silently dropped
     expect(row.error).toMatch(/No email provider configured/);
+  });
+});
+
+describe("the send allowlist", () => {
+  /**
+   * A live driver plus a database of real people is something that can reach
+   * them before anybody has read one message it produced. The allowlist is the
+   * dial between wired-up and loose.
+   *
+   * It gates at the DRIVER, not at dispatch, so a held message is still
+   * queued, still claimed, still counted and still in the outbox with the
+   * reason. Refusing at queue time would hide the very rows it was turned on
+   * to look at.
+   */
+  test("NOTHING SENDS WHEN THE ALLOWLIST IS UNSET", async () => {
+    /*
+     * The deliberate inversion of "prefer sending twice over suppressing".
+     * The deployment this protects is the one nobody configures — dev, which
+     * holds real leads and real numbers and never gets a go-live checklist.
+     * Defaulting open would protect the deployment already being watched and
+     * leave the dangerous one open.
+     */
+    const h = harness();
+    const calls = stubResend({ status: 200 }, "");
+    const s = await seed(h, { email: "thabo@example.com" });
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+
+    expect(calls).toHaveLength(0);
+    const row = await only(h);
+    expect(row.status).toBe("failed");
+    // Loud, not silent: the row names the variable and the value that opens it.
+    expect(row.error).toMatch(/MESSAGING_ALLOWLIST is not set/);
+    expect(row.error).toContain('"*"');
+  });
+
+  test("an address on the list sends; one beside it does not", async () => {
+    const h = harness();
+    const calls = stubResend({ status: 200 }, "taine@thecreativecurrent.co.za");
+
+    const mine = await seed(h, { email: "taine@thecreativecurrent.co.za" });
+    await bookAt(mine, AT(9, 1));
+    await h.action(internal.outbox.drain, { now: AT(8) });
+    expect(calls).toHaveLength(1);
+
+    const rows = await messages(h);
+    expect(rows[0]!.status).toBe("sent");
+  });
+
+  test("A REAL CUSTOMER IS HELD, VISIBLY, WITH THE PROVIDER NAMED", async () => {
+    const h = harness();
+    const calls = stubResend({ status: 200 }, "taine@thecreativecurrent.co.za");
+    const s = await seed(h, { email: "someone.else@example.com" });
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+
+    expect(calls).toHaveLength(0);
+    const row = await only(h);
+    expect(row.status).toBe("failed");
+    expect(row.error).toMatch(/not on this deployment's MESSAGING_ALLOWLIST/);
+    // The provider that WOULD have handled it, so the outbox still reads right.
+    expect(row.providerName).toBe("resend");
+    // One attempt, not five: waiting does not put an address on a list.
+    expect(row.attempts).toBe(1);
+  });
+
+  test("a leading @ allows a whole domain", async () => {
+    const h = harness();
+    const calls = stubResend({ status: 200 }, "@thecreativecurrent.co.za");
+    const s = await seed(h, { email: "Taine@TheCreativeCurrent.co.za" });
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+    expect(calls).toHaveLength(1);
+    expect((await only(h)).status).toBe("sent");
+  });
+
+  test("a domain entry does not allow a lookalike", async () => {
+    // @thecreativecurrent.co.za must not match evil-thecreativecurrent.co.za.
+    const h = harness();
+    const calls = stubResend({ status: 200 }, "@thecreativecurrent.co.za");
+    const s = await seed(h, { email: "taine@evil-thecreativecurrent.co.za" });
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("the allowlist does not turn a no-op channel into a mystery", async () => {
+    // "Not on the allowlist" would be true and unhelpful for WhatsApp: the
+    // reason nothing sends there is that no provider exists.
+    const h = harness();
+    stubResend({ status: 200 }, "");
+    const s = await seed(h); // no email — falls to WhatsApp
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+    expect((await only(h)).error).toMatch(/No WhatsApp provider is configured/);
   });
 });
 

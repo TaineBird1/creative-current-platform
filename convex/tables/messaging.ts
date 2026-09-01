@@ -30,6 +30,18 @@ export const messagingTables = {
       v.literal("scheduled"), v.literal("holding_quiet_hours"), v.literal("sending"),
       v.literal("sent"), v.literal("delivered"), v.literal("failed"),
       v.literal("suppressed_consent"), v.literal("suppressed_demo"),
+      /**
+       * The recipient resolved to a LEAD — a business we are prospecting,
+       * not a client's customer.
+       *
+       * Its own status rather than `failed`, because those are different
+       * things to the person reading the outbox: `failed` is a bug to fix,
+       * this is a guardrail firing correctly and the row it is attached to
+       * should never have existed. `isDemo`/`isSeed` do not cover it — a
+       * lead is REAL data about a real business, which is exactly why
+       * messaging one by accident is the expensive mistake.
+       */
+      v.literal("suppressed_lead"),
     ),
     /**
      * The SITE's timezone, not the recipient's — named for what it actually

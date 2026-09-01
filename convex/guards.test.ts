@@ -250,6 +250,76 @@ describe("the send choke point", () => {
   });
 
   /**
+   * NEVER A LEAD.
+   *
+   * The demo/seed block catches data we made up. This catches data that is
+   * entirely real and must still never be messaged: a business we are
+   * prospecting. `isDemo` and `isSeed` are DESIGNATIONS, and no honest one
+   * exists for a lead — which is precisely why the gap was there.
+   *
+   * A test rather than a comment because the failure is silent and arrives as
+   * an automated email to a stranger, on a cron.
+   */
+  test("dispatch checks the recipient against the lead list", () => {
+    const messaging = sourceFiles.find((f) => f.path === DISPATCH);
+    expect(
+      /recipientIsLead\(/.test(messaging?.code ?? ""),
+      [
+        "convex/lib/messaging.ts must call recipientIsLead before queueing.",
+        "Outreach in this business is drafted and sent by hand. A transactional",
+        "pipeline that can reach a prospect is an outreach channel whether or",
+        "not anyone meant to build one — and this one sends on a cron.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
+   * `recipientIsLead` SKIPS a phone it cannot canonicalise rather than
+   * blocking on it, because lead phones are stored as E.164 and an unreadable
+   * number cannot match one. That is only safe while `contactDecision` — which
+   * fails closed on exactly that input — still runs on every dispatch.
+   *
+   * Two checks that lean on each other, so removing either has to fail here
+   * rather than in production.
+   */
+  test("and still runs the suppression check, which the lead check leans on", () => {
+    const messaging = sourceFiles.find((f) => f.path === DISPATCH);
+    expect(
+      /contactDecision\(/.test(messaging?.code ?? ""),
+      [
+        "convex/lib/messaging.ts must still call contactDecision.",
+        "recipientIsLead skips a phone it cannot normalise, on the grounds that",
+        "contactDecision refuses it a few lines later. Remove that and an",
+        "unreadable number is checked by nothing at all.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
+   * THE SEND ALLOWLIST IS APPLIED IN ONE PLACE.
+   *
+   * `driverFor` wraps every driver that can actually send, rather than each
+   * driver checking for itself. A WhatsApp driver added later is then gated on
+   * the day it is written, not the day somebody remembers — which is the whole
+   * reason the wrapper is at the factory and not inside `resendEmail`.
+   */
+  test("every live driver is wrapped in the send allowlist", () => {
+    const providers = sourceFiles.find((f) => f.path === "lib/providers.ts");
+    const factory = providers!.code.slice(providers!.code.indexOf("export function driverFor"));
+    const body = factory.split("\n}")[0]!;
+
+    expect(
+      /gated\(/.test(body),
+      [
+        "driverFor in convex/lib/providers.ts must wrap live drivers in gated().",
+        "A driver that gates itself is a driver the next one will forget to",
+        "copy, and the thing being guarded is a live provider pointed at a",
+        "database of real people.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
    * The other half of the choke point, added the day a real driver arrived.
    *
    * CREATING a message is guarded above. RESOLVING one — claiming it was sent,

@@ -175,6 +175,131 @@ function loggingNoop(channel: MessageChannel, why: string): MessageDriver {
   };
 }
 
+/* -------------------------------------------------------- the send allowlist */
+
+/**
+ * WHO MAY ACTUALLY BE SENT TO, on this deployment, right now.
+ *
+ * A live driver plus a database of real people is a thing that can reach them
+ * before anybody has read a single message it produced. The allowlist is the
+ * dial between "wired up" and "loose", and it is the driver's business rather
+ * than dispatch's: a blocked address should still be QUEUED, still claimed,
+ * still counted, and still visible in the outbox with the reason. Refusing at
+ * queue time would hide the very rows you turned it on to look at.
+ *
+ * `MESSAGING_ALLOWLIST` is a comma- or space-separated list. Entries are
+ * matched case-insensitively and may be:
+ *   - a full address or E.164 number  — taine@example.com, +27825551234
+ *   - a domain, written with a leading @   — @thecreativecurrent.co.za
+ *   - the single token `*`            — everybody, the steady state
+ *
+ * UNSET MEANS NOBODY, and that is the deliberate half.
+ *
+ * The rule elsewhere in this codebase is prefer sending twice over
+ * suppressing, and this inverts it — so it needs its reason stated rather than
+ * assumed. The deployment this protects is the one nobody configures. Dev
+ * holds real leads and real numbers and will never have a go-live checklist
+ * run against it; production gets one, deliberately, on the day it goes live.
+ * Defaulting open protects the deployment that is already being watched and
+ * leaves the dangerous one open.
+ *
+ * The cost is real and it is the one this codebase normally refuses: an
+ * unconfigured production sends nothing. Three things pay for it — every
+ * blocked row is in the outbox with this sentence attached, the refusal names
+ * the variable and the value that opens it, and `health:messagingConfig`
+ * answers it in one command. It is a loud silence, not a quiet one.
+ */
+const ALLOWLIST_VAR = "MESSAGING_ALLOWLIST";
+
+export type AllowlistState =
+  | { mode: "unset" }
+  | { mode: "open" }
+  | { mode: "restricted"; entries: string[] };
+
+export function sendAllowlist(): AllowlistState {
+  const raw = process.env[ALLOWLIST_VAR]?.trim();
+  if (!raw) return { mode: "unset" };
+
+  const entries = raw
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (entries.includes("*")) return { mode: "open" };
+  if (entries.length === 0) return { mode: "unset" };
+  return { mode: "restricted", entries };
+}
+
+/** Whether one destination clears the allowlist, and the sentence if it does not. */
+export function allowedToSend(to: string): { allowed: boolean; reason: string } {
+  const state = sendAllowlist();
+  if (state.mode === "open") return { allowed: true, reason: "" };
+
+  if (state.mode === "unset") {
+    return {
+      allowed: false,
+      reason:
+        `Nothing sends: ${ALLOWLIST_VAR} is not set on this deployment. Set it to the ` +
+        `addresses that may receive mail, or to "*" for everybody. The message is ` +
+        "queued and recorded, not lost.",
+    };
+  }
+
+  const target = to.trim().toLowerCase();
+  const at = target.lastIndexOf("@");
+  const domain = at > 0 ? target.slice(at + 1) : null;
+
+  const allowed = state.entries.some((entry) => {
+    // A leading @ means "anybody at this domain".
+    if (entry.startsWith("@")) return domain !== null && domain === entry.slice(1);
+    return entry === target;
+  });
+
+  return {
+    allowed,
+    reason: allowed
+      ? ""
+      : `${to} is not on this deployment's ${ALLOWLIST_VAR}. The message is queued and ` +
+        "recorded, not sent — add the address to widen it.",
+  };
+}
+
+/**
+ * Wrap a driver so it cannot reach anybody the allowlist has not named.
+ *
+ * The wrapper keeps the driver's own NAME, so the outbox still says which
+ * provider would have handled it and `LIVE_CHANNELS` below still recognises a
+ * real driver from a no-op.
+ */
+function gated(driver: MessageDriver): MessageDriver {
+  return {
+    name: driver.name,
+    async send(message) {
+      const verdict = allowedToSend(message.to);
+      if (!verdict.allowed) {
+        console.log(
+          `[outbox:${message.channel}] HELD BY ALLOWLIST — ${message.to} — ` +
+            `${message.templateKey}\n` +
+            message.body
+              .split("\n")
+              .map((line) => `  | ${line}`)
+              .join("\n"),
+        );
+        // Non-retryable: waiting does not put an address on a list.
+        return {
+          delivered: false,
+          providerName: driver.name,
+          retryable: false,
+          error: verdict.reason,
+        };
+      }
+      return driver.send(message);
+    },
+  };
+}
+
+const isNoop = (driver: MessageDriver) => driver.name.endsWith("-noop");
+
 /**
  * The one place that says which channels can actually reach a person.
  *
@@ -182,8 +307,19 @@ function loggingNoop(channel: MessageChannel, why: string): MessageDriver {
  * phone — and what they have consented to. This says what the PLATFORM has. A
  * channel with no driver still queues a row and still records a refusal, so
  * the gap reads as a stated reason in the outbox rather than as silence.
+ *
+ * Every driver that can actually send is wrapped in the allowlist, HERE rather
+ * than inside each driver, so a WhatsApp driver added later is gated the day
+ * it is written and not the day somebody remembers. The no-ops are left
+ * unwrapped: "no WhatsApp provider is configured" is the truer sentence, and
+ * putting an address on a list would not change it.
  */
 export function driverFor(channel: MessageChannel): MessageDriver {
+  const driver = pickDriver(channel);
+  return isNoop(driver) ? driver : gated(driver);
+}
+
+function pickDriver(channel: MessageChannel): MessageDriver {
   switch (channel) {
     case "email":
       return resendEmail;

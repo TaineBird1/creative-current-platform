@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@cc/convex/api";
+import { quickPresets, dayGrid } from "@/lib/callback-presets";
 import s from "./queue.module.css";
 
 /*
@@ -38,7 +39,8 @@ export function CallQueue({ initial }: { initial: Queue }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [callbackFor, setCallbackFor] = useState<string | null>(null);
-  const [callbackAt, setCallbackAt] = useState("");
+  /** Open the full day grid. Closed by default: four buttons cover most calls. */
+  const [pickingDay, setPickingDay] = useState(false);
 
   const lead = rows[index];
   const done = initial.rows.length - rows.length;
@@ -65,21 +67,20 @@ export function CallQueue({ initial }: { initial: Queue }) {
     }
   }
 
-  async function saveCallback() {
-    if (!lead || !callbackAt) return;
+  async function saveCallback(at: number) {
+    if (!lead) return;
     setBusy(true);
     setError(null);
     try {
-      await record({
-        leadId: lead.leadId,
-        outcome: "callback",
-        // datetime-local is wall-clock in the caller's own timezone, which is
-        // the timezone they agreed the callback in.
-        callbackAt: new Date(callbackAt).getTime(),
-      });
+      /*
+       * Local wall-clock, which is the timezone the callback was agreed in.
+       * Caller and business are both in KZN — see lib/callback-presets.ts for
+       * why this is NOT the site-timezone rule messaging uses.
+       */
+      await record({ leadId: lead.leadId, outcome: "callback", callbackAt: at });
       setRows((prev) => prev.filter((row) => row.leadId !== lead.leadId));
       setCallbackFor(null);
-      setCallbackAt("");
+      setPickingDay(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That did not save. Try again.");
     } finally {
@@ -207,35 +208,80 @@ export function CallQueue({ initial }: { initial: Queue }) {
       ) : null}
 
       {callbackFor === lead.leadId ? (
+        /*
+         * PRESETS, NOT A PICKER.
+         *
+         * The picker asked for a date and a time on a scroll wheel, one-handed,
+         * while the prospect was still on the line — four taps for a thing they
+         * expressed in three words. These are the words: one tap, and the panel
+         * closes because choosing IS confirming. There is no Save button,
+         * because a two-step commit for a single choice is the friction all
+         * over again.
+         *
+         * No free-text time entry at all. A callback is agreed in half-days on
+         * a phone call, and capturing 11:15 would record a precision the
+         * conversation did not have.
+         */
         <div className={s.callback}>
-          <label className={s.callbackLabel} htmlFor="callbackAt">
-            When did they say?
-          </label>
-          <input
-            id="callbackAt"
-            className={s.callbackInput}
-            type="datetime-local"
-            value={callbackAt}
-            onChange={(event) => setCallbackAt(event.target.value)}
-          />
+          <p className={s.callbackLabel}>When did they say?</p>
+
+          <div className={s.presets}>
+            {quickPresets(new Date()).map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                className={s.preset}
+                disabled={busy || preset.at === null}
+                onClick={() => preset.at !== null && saveCallback(preset.at)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          {pickingDay ? (
+            <div className={s.dayGrid}>
+              {dayGrid(new Date()).map((day) => (
+                <div key={day.label} className={s.dayRow}>
+                  <span className={s.dayLabel}>{day.label}</span>
+                  <button
+                    type="button"
+                    className={s.dayTime}
+                    disabled={busy}
+                    onClick={() => saveCallback(day.morning)}
+                  >
+                    09:00
+                  </button>
+                  <button
+                    type="button"
+                    className={s.dayTime}
+                    disabled={busy}
+                    onClick={() => saveCallback(day.afternoon)}
+                  >
+                    14:00
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <div className={s.callbackActions}>
             <button
               type="button"
               className={s.secondary}
               onClick={() => {
                 setCallbackFor(null);
-                setCallbackAt("");
+                setPickingDay(false);
               }}
             >
               Cancel
             </button>
             <button
               type="button"
-              className={s.primary}
-              disabled={!callbackAt || busy}
-              onClick={saveCallback}
+              className={s.secondary}
+              onClick={() => setPickingDay((open) => !open)}
             >
-              Save callback
+              {pickingDay ? "Fewer options" : "Another day"}
             </button>
           </div>
         </div>

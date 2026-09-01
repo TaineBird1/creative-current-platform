@@ -27,8 +27,27 @@ export const growthTables = {
     niche: v.string(),
     phone: v.optional(v.string()),
     website: v.optional(v.string()),
-    rating: v.optional(v.number()),
-    reviewCount: v.optional(v.number()),
+    /*
+     * NO rating OR reviewCount HERE, and the omission is deliberate.
+     *
+     * They lived on this row with no expiry, which is a permanent copy of
+     * content Google licenses to us for 30 days. They live in `placesCache`
+     * now, where the clock is enforced on read — join through `placeId`,
+     * which is the one field the terms exempt and the reason it is stored
+     * here at all.
+     *
+     * The line drawn between those two and the fields above is not
+     * convenience. A rating and a review count exist ONLY because Google
+     * computed them; they are Google Maps Content in the plainest sense. A
+     * business's name, phone and website are facts about the business that
+     * exist whether or not Google ever recorded them, and are routinely
+     * obtained from the business's own site. `provenance` records which
+     * applies, so a field sourced from Places can be told apart from one a
+     * human typed off a shopfront — and only the former expires.
+     */
+    provenance: v.optional(
+      v.union(v.literal("places"), v.literal("manual"), v.literal("website")),
+    ),
     /** Free website audit score + the two specific faults the call note uses. */
     auditScore: v.optional(v.number()),
     auditFaults: v.array(v.string()),

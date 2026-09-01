@@ -26,7 +26,9 @@ export function QuoteForm({
 }: {
   section: QuoteSection;
   slug: string;
-  onSubmit?: (payload: Record<string, unknown>) => Promise<void>;
+  onSubmit?: (
+    payload: Record<string, unknown>,
+  ) => Promise<{ recorded: boolean; notice: { title: string; body: string } | null }>;
   /** Variant preview: nothing is recorded, and the page must say so. */
   preview?: boolean;
 }) {
@@ -37,6 +39,17 @@ export function QuoteForm({
   const [consent, setConsent] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
+  /*
+   * What the SERVER said happened. This component does not work out whether
+   * the submission reached anybody — it displays the answer it was given.
+   *
+   * That split is the point. A demo submission is recorded as engagement and
+   * reaches nobody, and a form that answers for itself says "Thanks — that is
+   * with us", which leaves a real customer who found the demo waiting in for
+   * a tradesman nobody sent. Deciding here would make every template a place
+   * that could get it wrong.
+   */
+  const [notice, setNotice] = useState<{ title: string; body: string } | null>(null);
 
   const clear = (key: string) =>
     setErrors((prev) => {
@@ -77,7 +90,10 @@ export function QuoteForm({
     }
     setState("sending");
     try {
-      await onSubmit?.({ slug, sectionId: section.id, name, phone, answers: values, consentAccepted: consent });
+      const outcome = await onSubmit?.({
+        slug, sectionId: section.id, name, phone, answers: values, consentAccepted: consent,
+      });
+      setNotice(outcome?.notice ?? null);
       setState("sent");
     } catch (error) {
       setState("idle");
@@ -92,6 +108,24 @@ export function QuoteForm({
   }
 
   if (state === "sent") {
+    /*
+     * A server notice OUTRANKS the configured success message. The config
+     * belongs to the site; the notice is the backend saying nothing was
+     * booked, and a reassuring line from the template underneath it would
+     * undo the whole point of sending one.
+     */
+    if (notice) {
+      return (
+        <Band id={section.id} tone="accent" label={section.heading}>
+          <h2 className={s.narrativeHeading}>{notice.title}</h2>
+          {/* alert, not status: it corrects a belief the reader already has. */}
+          <p className={s.success} role="alert">
+            {notice.body}
+          </p>
+        </Band>
+      );
+    }
+
     return (
       <Band id={section.id} tone="accent" label={section.heading}>
         <h2 className={s.narrativeHeading}>

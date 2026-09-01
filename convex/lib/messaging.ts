@@ -1,4 +1,5 @@
 import { ConvexError } from "convex/values";
+import { contactDecision } from "./suppression";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { hasConsent } from "./consent";
@@ -213,6 +214,42 @@ export async function dispatch(ctx: MutationCtx, input: DispatchInput): Promise<
   // Same tie-break as customers.consentState, from one helper so the two can
   // never disagree about whether someone consented.
   if (!hasConsent(consents)) {
+    await ctx.db.insert("messages", {
+      ventureId: input.ventureId,
+      clientId: input.clientId,
+      customerId: input.customerId,
+      channel: input.channel,
+      to: customer.phone,
+      templateKey: input.templateKey,
+      payload: input.payload,
+      idempotencyKey,
+      status: "suppressed_consent",
+      quietHoursTimezone: input.quietHoursTimezone,
+      scheduledFor: now,
+      attempts: 0,
+      isDemo,
+      isSeed,
+    });
+    return { outcome: "suppressed_consent" };
+  }
+
+  /*
+   * NEVER SOMEBODY WHO ASKED US TO STOP, wherever they asked.
+   *
+   * The suppression list is written against LEADS, and this is a message to a
+   * CUSTOMER — so at first glance it does not apply. It does, and that gap is
+   * exactly the one worth closing: a business that told us to leave them
+   * alone during prospecting, and later appears here because somebody typed
+   * their number into a booking, has not changed their mind. Matching on the
+   * phone means one refusal covers both populations.
+   *
+   * `contactDecision` fails CLOSED — an error or an ambiguity comes back
+   * blocked — so a lookup that goes wrong holds the message instead of
+   * sending it. See lib/suppression.ts for why that direction is the
+   * recoverable one.
+   */
+  const verdict = await contactDecision(ctx, { phone: customer.phone });
+  if (verdict.blocked) {
     await ctx.db.insert("messages", {
       ventureId: input.ventureId,
       clientId: input.clientId,

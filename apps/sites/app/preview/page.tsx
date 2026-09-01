@@ -39,5 +39,6 @@ export default async function PreviewPage({
     }),
   );
 
-  return <SiteRenderer config={config} slug="renu-solar" preview />;
+  // A variant preview of our OWN template, not a demo of anyone's business.
+  return <SiteRenderer config={config} slug="renu-solar" preview isDemo={false} demo={null} />;
 }

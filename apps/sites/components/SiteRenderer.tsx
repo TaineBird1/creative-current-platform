@@ -13,6 +13,7 @@ import {
   StickyBar,
 } from "./sections/Blocks";
 import { QuoteForm } from "./sections/QuoteForm";
+import { DemoDisclosure } from "./DemoDisclosure";
 
 /**
  * THE RENDERER. One of these serves every tenant.
@@ -24,19 +25,55 @@ import { QuoteForm } from "./sections/QuoteForm";
  *
  * An unknown section type renders NOTHING rather than throwing. A config
  * written by a newer deploy must degrade, never blank the page.
+ *
+ * DEMOS ARE ENFORCED HERE AND ONLY HERE.
+ *
+ * A demo carries a real business's name, their suburb and their real Google
+ * rating. Every guarantee that keeps it from being a live impersonation —
+ * the disclosure line, the noindex, the expiry — is applied at this one
+ * point, because a per-template rule is one template away from missing and
+ * the template that forgets is a fake of somebody's business ranking in
+ * their own name.
+ *
+ * `demo` is a REQUIRED prop, not an optional one. Optional would let a new
+ * caller omit it and get a bare demo site with no disclosure and no error;
+ * required means the compiler asks the question, and passing `null` is a
+ * claim that this is not a demo. `isDemo` is passed separately so the two can
+ * be cross-checked: a site that says it is a demo and hands over no demo
+ * context is a bug, and it throws rather than rendering.
  */
 export function SiteRenderer({
   config,
   slug,
   onQuoteSubmit,
   preview = false,
+  isDemo,
+  demo,
 }: {
   config: SiteConfig;
   slug: string;
   onQuoteSubmit?: (payload: Record<string, unknown>) => Promise<void>;
   /** Variant preview: the quote form says nothing was recorded. */
   preview?: boolean;
+  /** What the backend says this site is. */
+  isDemo: boolean;
+  /** Required. `null` is an explicit claim that this is not a demo. */
+  demo: { subjectName: string; expiresAt: number } | null;
 }) {
+  /*
+   * FAIL CLOSED. A demo with no context cannot be rendered without its
+   * disclosure, so it is not rendered at all. Throwing here surfaces as the
+   * error boundary rather than as a page that looks exactly like the
+   * business's own site — which is the failure worth refusing to ship.
+   */
+  if (isDemo && !demo) {
+    throw new Error(
+      "refusing to render a demo without its disclosure context — a demo carries a real business's name",
+    );
+  }
+  if (isDemo && demo && demo.expiresAt <= Date.now()) {
+    throw new Error("refusing to render an expired demo");
+  }
   const ramp = config.brand.accent ?? buildAccentRamp(config.brand.colour);
   const visible = config.sections.filter((section) => !section.hidden);
   const sticky = visible.find((section) => section.type === "stickyBar");
@@ -57,6 +94,9 @@ export function SiteRenderer({
       <a className="sr-only" href="#main">
         Skip to content
       </a>
+      {demo ? (
+        <DemoDisclosure subjectName={demo.subjectName} expiresAt={demo.expiresAt} />
+      ) : null}
       <main id="main">
         {visible.map((section) => {
           switch (section.type) {

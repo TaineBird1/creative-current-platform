@@ -475,6 +475,152 @@ describe("webhooks", () => {
   });
 });
 
+describe("the sourcing spend cap", () => {
+  /**
+   * A sourcing run is a loop over a paid API. A bug in the loop is not a
+   * crash, it is an invoice — and it is spent before anyone notices. So the
+   * cap is a ledger the run writes to and checks, never a constant somebody
+   * remembered to compare against.
+   */
+  const SPEND_WRITER = "lib/placesBudget.ts";
+
+  test("only lib/placesBudget.ts writes the apiSpend ledger", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === SPEND_WRITER) continue;
+      if (/db\.insert\(\s*"apiSpend"/.test(file.code)) {
+        offenders.push(`${file.path}: inserts into apiSpend`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Spend is recorded by reserveSpend() in convex/lib/placesBudget.ts and",
+        "nowhere else. It is the single place that reads the period's total and",
+        "refuses above the cap. A direct insert records the money without",
+        "checking it, which is the same as having no cap.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the cap is data, never a number compiled into a run", () => {
+    /*
+     * The shape being banned: `if (calls > 500) stop`. It looks like a cap and
+     * is not one — it lives in one loop, it is invisible to whoever pays the
+     * bill, and the next loop somebody writes does not have it.
+     */
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === SPEND_WRITER) continue;
+      for (const m of file.code.matchAll(/(MAX_(?:CALLS|REQUESTS|SPEND)|CALL_LIMIT|SPEND_LIMIT)\s*=/g)) {
+        offenders.push(`${file.path}: hard-codes ${m[1]}`);
+      }
+    }
+    expect(
+      offenders,
+      "The cap lives in the spendCaps table so the person paying can see and change it. Call reserveSpend() instead.",
+    ).toEqual([]);
+  });
+});
+
+describe("Places content we are licensed to keep", () => {
+  /**
+   * Google's terms: `place_id` is exempt and may be stored indefinitely.
+   * Everything else the Places API returns is Google Maps Content under a
+   * temporary caching allowance of 30 consecutive calendar days, and carries
+   * attribution requirements when displayed.
+   *
+   * So the expiry is a column and the reader refuses past it. These guards
+   * stop that becoming a comment nobody enforces.
+   */
+  const PLACES_CACHE_WRITER = "lib/places.ts";
+
+  test("only lib/places.ts writes the Places cache", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === PLACES_CACHE_WRITER) continue;
+      if (/db\.(insert|replace|patch)\(\s*"placesCache"/.test(file.code)) {
+        offenders.push(`${file.path}: writes placesCache`);
+      }
+    }
+    expect(
+      offenders,
+      "writePlace() computes expiresAt. A caller that writes directly can choose its own expiry, and one of them will choose never.",
+    ).toEqual([]);
+  });
+
+  test("the cache window is the terms' 30 days, not a tuning knob", () => {
+    const places = sourceFiles.find((f) => f.path === PLACES_CACHE_WRITER);
+    expect(places?.code).toMatch(/30\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/);
+  });
+
+  test("no other table stores a Google rating or review count", () => {
+    /*
+     * `leads` used to hold `rating` and `reviewCount` with no expiry at all,
+     * which is a permanent copy of content we hold under a 30-day allowance.
+     * They live in placesCache now, where the clock is enforced on read.
+     */
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (!file.path.startsWith("tables/")) continue;
+      if (file.path === "tables/sourcing.ts") continue;
+      for (const m of file.code.matchAll(/\b(rating|reviewCount):\s*v\./g)) {
+        offenders.push(`${file.path}: stores ${m[1]}`);
+      }
+    }
+    expect(
+      offenders,
+      "Google Maps Content lives in placesCache, which expires. Only place_id may be stored indefinitely.",
+    ).toEqual([]);
+  });
+});
+
+describe("suppression fails closed", () => {
+  /**
+   * The consent problem again, and it resolves the same way. A missed check
+   * means phoning somebody who asked us not to — not recoverable. Being
+   * wrongly suppressed is recoverable: a lead sits idle and someone notices.
+   */
+  const SUPPRESSION_READER = "lib/suppression.ts";
+
+  test("only lib/suppression.ts reads the suppressions table", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === SUPPRESSION_READER) continue;
+      if (/query\(\s*"suppressions"/.test(file.code)) {
+        offenders.push(`${file.path}: queries suppressions directly`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Call contactDecision() from convex/lib/suppression.ts. It is the one",
+        "place that fails CLOSED — a lookup error, an unparseable phone or an",
+        "ambiguous name fragment all resolve to blocked.",
+        "",
+        "A direct query returns rows and leaves the decision to the caller, and",
+        "a caller that gets an empty array from a failed read will place the",
+        "call. That failure is silent: nothing errors, and the only person who",
+        "finds out is the one who asked not to be contacted.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the decision defaults to blocked, never to allowed", () => {
+    // Guards the inversion: a refactor that made the catch return
+    // `{ blocked: false }` would pass every other test in this suite.
+    const file = sourceFiles.find((f) => f.path === SUPPRESSION_READER);
+    expect(file, "convex/lib/suppression.ts is missing").toBeTruthy();
+
+    const catchBlock = file!.code.slice(file!.code.lastIndexOf("} catch"));
+    expect(
+      /blocked\(/.test(catchBlock),
+      "The catch in contactDecision must resolve to blocked. An error means we do not know whether they said no, and not knowing is not permission.",
+    ).toBe(true);
+    expect(/blocked:\s*false/.test(catchBlock)).toBe(false);
+  });
+});
+
 describe("single writers", () => {
   test("only siteConfigs.ts writes the sites table", () => {
     // The config column is v.any(), so the database will store anything. This

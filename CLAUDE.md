@@ -154,6 +154,60 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   aborts the mutation that records the event, so the anomaly would exist only
   in the provider's failed-delivery dashboard. The ledger post happens BEFORE
   the `payments` row, so a refusal cannot leave an orphan payment.
+- **THE PLACES SPEND CAP IS A LEDGER, NOT A CONSTANT.** A sourcing run is a
+  loop over a paid API, so a bug in the loop is an invoice rather than a
+  crash - and it is spent before anyone notices. `lib/placesBudget.ts` is the
+  only writer of `apiSpend`: the run records what it is about to spend, reads
+  the period's total, and is refused above the cap. The cap lives in the
+  `spendCaps` table because a constant is invisible to whoever pays the bill.
+  A guard test bans `MAX_CALLS`-shaped constants elsewhere.
+  **Charged BEFORE the call and never refunded.** Over-counting refuses a
+  call we could have afforded (recoverable - raise the cap). Under-counting
+  spends past it (not recoverable). A refund path is how a retry loop turns a
+  cap into a suggestion. **No cap configured refuses everything** - there is
+  no unlimited mode, same reasoning as a missing webhook secret.
+- **WHAT GOOGLE LETS US KEEP, CHECKED NOT REMEMBERED.** Per the Places
+  policies and Maps Platform Service Specific Terms: `place_id` is EXEMPT and
+  may be stored indefinitely; everything else the API returns is Google Maps
+  Content under a temporary caching allowance of **30 consecutive calendar
+  days**; anything displayed carries attribution (the "Google Maps" name, not
+  a bare "Powered by Google", plus the third-party attributions returned and
+  a link to the source). So `placesCache.expiresAt` is a column and
+  `readPlace` returns **null** past it - not stale data with a warning,
+  because a caller holding the data will use it. Enforcement is on READ, not
+  a cleanup job: a job-based expiry lapses the night the job fails.
+  `leads.rating` and `leads.reviewCount` were removed - they were a permanent
+  copy of 30-day content - and a guard test keeps them out of every table but
+  `placesCache`. A name/phone/website is a fact about a business that exists
+  without Google; a rating exists only because Google computed it. That line
+  is why `leads.provenance` exists.
+- **SUPPRESSION FAILS CLOSED.** The consent problem again, resolved the same
+  way: a missed check means phoning someone who asked us not to, which is not
+  recoverable; being wrongly suppressed is. `lib/suppression.ts`'s
+  `contactDecision` is the one choke point for every call and message path,
+  and **every uncertain answer is blocked** - a lookup error, an unparseable
+  phone, no identifier at all, or a partial name-fragment match. It returns a
+  verdict and never throws, because a thrown error is a decision some caller
+  will eventually catch and proceed past. A guard test bans reading
+  `suppressions` directly and asserts the catch resolves to blocked.
+  It is wired into `dispatch` too: a business that refused us during
+  prospecting has not changed their mind because someone later typed their
+  number into a booking.
+- **A DEMO CARRIES A REAL BUSINESS'S NAME. ENFORCE AT THE RENDERER.** Not per
+  template - one template missing a meta tag is a live, indexable
+  impersonation of a business trading in its own name, which is a legal
+  problem rather than a bug. `SiteRenderer` is the single point: it renders
+  `DemoDisclosure` for every demo and **throws** rather than drawing a demo
+  without its context or past its expiry. A guard test fails if any section
+  or template component so much as reads `isDemo`.
+  The gate is also in the BACKEND (`public/site.ts`), so no renderer can
+  bypass it - an expired demo never gets its config. Two fail-OPEN holes were
+  closed there: the check keyed on `status === "demo"` (so a demo moved to
+  "live" escaped the expiry entirely) and read `&& site.demoExpiresAt` (so a
+  demo created without one served forever). It now keys on `isDemo`, and **a
+  missing expiry is a refusal**. Expired serves a notice, never the site.
+  Stock and AI imagery is already refused as work by `workImage` in the
+  config schema; the disclosure says so in words as well.
 - **THE LEDGER STOPS AT THE DOCUMENT.** The ledger records money that
   actually moved and needs no registered entity to be true — payments,
   refunds, adjustments, reversals, per-client and per-venture totals, all
@@ -193,7 +247,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 332 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 374 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -468,7 +522,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 332 tests
+pnpm test                        # 374 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

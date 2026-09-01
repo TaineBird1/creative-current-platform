@@ -6,6 +6,7 @@ import { isConvexConfigured } from "@/lib/convex";
 import { resolveSite, redirectFor, type ResolvedSite } from "@/lib/site-cache";
 import { SiteRenderer } from "@/components/SiteRenderer";
 import { HoldingPage } from "@/components/HoldingPage";
+import { DemoExpired } from "@/components/DemoDisclosure";
 import { NotConnected } from "@/components/NotConnected";
 import { submitQuoteAction } from "../actions";
 
@@ -71,6 +72,8 @@ export async function generateMetadata({ params, searchParams }: Params): Promis
   const parsed = safeParseSiteConfig(resolved.result.config);
   if (!parsed.success) return { title: "Not available", robots: { index: false } };
 
+  // An expired demo never reaches here — resolve returns a holding — but the
+  // noindex below is unconditional for demos regardless of what seo says.
   const { seo, brand } = parsed.data;
   return {
     title: seo.title,
@@ -98,6 +101,13 @@ export default async function SitePage({ params, searchParams }: Params) {
   }
 
   if (result.kind === "holding") {
+    /*
+     * An expired demo serves a NOTICE, never the site. The backend has
+     * already refused to hand over the config, so there is nothing here to
+     * accidentally render — which is the point of putting the gate there
+     * rather than in this file.
+     */
+    if (result.reason === "demo_expired") return <DemoExpired />;
     return <HoldingPage reason={result.reason} />;
   }
 
@@ -117,6 +127,8 @@ export default async function SitePage({ params, searchParams }: Params) {
     <SiteRenderer
       config={parsed.data}
       slug={result.slug}
+      isDemo={result.isDemo}
+      demo={result.demo}
       onQuoteSubmit={async (payload) => {
         "use server";
         const outcome = await submitQuoteAction({

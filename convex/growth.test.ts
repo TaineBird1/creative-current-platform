@@ -1,10 +1,11 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import schema from "./schema";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { solarTradesTemplate, buildAccentRamp, safeParseSiteConfig } from "@cc/site-config";
 import { reserveSpend, periodFor } from "./lib/placesBudget";
-import { contactDecision } from "./lib/suppression";
+import { contactDecision, filterContactable } from "./lib/suppression";
 import { readPlace, writePlace, PLACES_CACHE_MS } from "./lib/places";
 
 /**
@@ -19,6 +20,9 @@ import { readPlace, writePlace, PLACES_CACHE_MS } from "./lib/places";
 const modules = import.meta.glob("./**/*.ts");
 const harness = () => convexTest(schema, modules);
 type Harness = ReturnType<typeof harness>;
+
+const asUser = (h: Harness, userId: Id<"users">) =>
+  h.withIdentity({ subject: `${userId}|test-session` });
 
 const AUG = Date.UTC(2026, 7, 15);
 const SEP = Date.UTC(2026, 8, 15);
@@ -165,7 +169,12 @@ describe("Places content expires because Google says so", () => {
         niche: "solar",
         auditFaults: [],
         status: "new",
-        provenance: "places",
+        provenance: {
+          source: "places",
+          capturedAt: AUG,
+          lawfulBasis: "legitimate_interest",
+          detail: "Places textSearch: solar installers Hillcrest",
+        },
       });
       return ctx.db.get(id);
     });
@@ -472,5 +481,215 @@ describe("a demo form tells the customer nothing was booked", () => {
     // those two apart, and it is asserted here from the demo's own side.
     const { h } = await submitTo(true);
     expect(await h.run((ctx) => ctx.db.query("messages").collect())).toEqual([]);
+  });
+});
+
+describe("Todays Queue never draws a suppressed business", () => {
+  /**
+   * The constraint: suppression filters the QUEUE, not the dial. Blocking at
+   * the moment of dialling is one step too late — the name and number are
+   * already on the screen, and a person who can see a number will phone it
+   * from their own handset, where nothing records it and nothing stops it.
+   */
+  async function seedQueue() {
+    const h = harness();
+    const { userId } = await h.mutation(internal.bootstrap.claimPlatformOwner, {
+      email: "owner@thecreativecurrent.co.za",
+    });
+    const owner = asUser(h, userId);
+    const ventureId = await h.run((ctx) =>
+      ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      }),
+    );
+
+    const lead = (name: string, phone: string, placeId: string) =>
+      h.run((ctx) =>
+        ctx.db.insert("leads", {
+          ventureId,
+          placeId,
+          businessName: name,
+          niche: "solar",
+          phone,
+          auditFaults: ["no https", "no phone above the fold"],
+          status: "new",
+          provenance: {
+            source: "places",
+            capturedAt: AUG,
+            lawfulBasis: "legitimate_interest",
+            detail: "Places textSearch: solar installers Hillcrest",
+          },
+        }),
+      );
+
+    const keep = await lead("Hillcrest Solar", "+27825550001", "ChIJ_keep");
+    const refused = await lead("Coastal Plumbing", "+27825550002", "ChIJ_refused");
+    return { h, owner, ventureId, keep, refused };
+  }
+
+  test("a suppressed lead is absent from the queue entirely", async () => {
+    const s = await seedQueue();
+    await s.h.run((ctx) =>
+      ctx.db.insert("suppressions", {
+        kind: "phone", value: "0825550002",
+        reason: "asked not to be contacted", createdAt: AUG,
+      }),
+    );
+
+    const result = await s.owner.query(api.queue.today, {});
+    const names = result.rows.map((row) => row.businessName);
+
+    expect(names).toContain("Hillcrest Solar");
+    // Not "present but flagged". Absent. A flagged row is still a name and a
+    // number on a screen someone can dial from.
+    expect(names).not.toContain("Coastal Plumbing");
+    expect(result.rows.some((row) => row.phone === "+27825550002")).toBe(false);
+  });
+
+  test("the queue says HOW MANY it withheld, so it is never a mystery", async () => {
+    const s = await seedQueue();
+    await s.h.run((ctx) =>
+      ctx.db.insert("suppressions", {
+        kind: "placeId", value: "ChIJ_refused",
+        reason: "asked not to be contacted", createdAt: AUG,
+      }),
+    );
+    const result = await s.owner.query(api.queue.today, {});
+    expect(result.suppressedCount).toBe(1);
+  });
+
+  test("saying NOT INTERESTED removes them from the NEXT queue immediately", async () => {
+    /*
+     * The gap between "they said no" and "they stop appearing" is the window
+     * in which somebody phones them again — and the person on the other end
+     * cannot tell an administrative delay from contempt.
+     */
+    const s = await seedQueue();
+    expect((await s.owner.query(api.queue.today, {})).rows).toHaveLength(2);
+
+    await s.owner.mutation(api.queue.disposition, {
+      leadId: s.refused,
+      outcome: "not_interested",
+      note: "Told me to take them off the list",
+    });
+
+    const after = await s.owner.query(api.queue.today, {});
+    expect(after.rows.map((row) => row.businessName)).toEqual(["Hillcrest Solar"]);
+  });
+
+  test("a refusal suppresses the placeId AND the phone, closing both routes back", async () => {
+    // The placeId stops them reappearing from a future Places pull under a
+    // slightly different name; the phone stops the same number arriving
+    // through another source entirely.
+    const s = await seedQueue();
+    await s.owner.mutation(api.queue.disposition, {
+      leadId: s.refused, outcome: "not_interested",
+    });
+    const kinds = (await s.h.run((ctx) => ctx.db.query("suppressions").collect()))
+      .map((row) => row.kind)
+      .sort();
+    expect(kinds).toEqual(["phone", "placeId"]);
+  });
+
+  test("when the suppression list cannot be read the queue is EMPTY, not unfiltered", async () => {
+    /*
+     * The failure that decides the design. An empty queue is visibly wrong
+     * and someone investigates. A full queue that skipped the check looks
+     * exactly like a normal working day, and the people on it get phoned.
+     */
+    const broken = { db: { query: () => { throw new Error("unavailable"); } } } as never;
+    const result = await filterContactable(broken, [1, 2, 3], () => ({ phone: "0825550001" }));
+    expect(result.allowed).toEqual([]);
+    expect(result.blockedCount).toBe(3);
+    // And the caller is told WHY, so the UI can say so rather than showing an
+    // empty list that reads as "you are done for the day".
+    expect(result.listUnavailable).toBe(true);
+  });
+
+  test("a callback the prospect asked for outranks everything else", async () => {
+    const s = await seedQueue();
+    await s.owner.mutation(api.queue.disposition, {
+      leadId: s.keep,
+      outcome: "callback",
+      callbackAt: AUG,
+      now: AUG - 1000,
+    });
+    const result = await s.owner.query(api.queue.today, {});
+    expect(result.rows[0]?.businessName).toBe("Hillcrest Solar");
+    expect(result.rows[0]?.rank).toBe("callback");
+  });
+
+  test("a callback with no time is refused — it is a promise nobody can keep", async () => {
+    const s = await seedQueue();
+    await expect(
+      s.owner.mutation(api.queue.disposition, { leadId: s.keep, outcome: "callback" }),
+    ).rejects.toThrow(/CALLBACK_NEEDS_A_TIME/);
+  });
+
+  test("the detail view SHOWS a suppressed lead, with the reason", async () => {
+    /*
+     * Deliberately not hidden. Somebody chasing "why has nobody contacted
+     * Coastal Plumbing" needs to find the answer — a row that has vanished
+     * sends them to re-source the same business and start again.
+     */
+    const s = await seedQueue();
+    await s.owner.mutation(api.queue.disposition, {
+      leadId: s.refused, outcome: "not_interested",
+    });
+    const detail = await s.owner.query(api.queue.lead, { leadId: s.refused });
+    expect(detail.blocked).toBe(true);
+    expect(detail.blockedReason).toMatch(/asked not to be contacted/);
+  });
+});
+
+describe("provenance answers where did you get my number", () => {
+  test("the row carries the source, when it was captured and the basis", async () => {
+    const h = harness();
+    const { userId } = await h.mutation(internal.bootstrap.claimPlatformOwner, {
+      email: "owner@thecreativecurrent.co.za",
+    });
+    const owner = asUser(h, userId);
+    const ventureId = await h.run((ctx) =>
+      ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      }),
+    );
+    const leadId = await h.run((ctx) =>
+      ctx.db.insert("leads", {
+        ventureId, placeId: "ChIJ_x", businessName: "Hillcrest Solar", niche: "solar",
+        phone: "+27825550001", auditFaults: [], status: "new",
+        provenance: {
+          source: "places",
+          capturedAt: AUG,
+          lawfulBasis: "legitimate_interest",
+          detail: "Places textSearch: solar installers Hillcrest",
+        },
+      }),
+    );
+
+    const detail = await owner.query(api.queue.lead, { leadId });
+    expect(detail.provenance.source).toBe("places");
+    expect(detail.provenance.capturedAt).toBe(AUG);
+    expect(detail.provenance.lawfulBasis).toBe("legitimate_interest");
+    // The source alone answers "from Google Places", and the follow-up is
+    // always "yes, but how did I end up on your list".
+    expect(detail.provenance.detail).toMatch(/textSearch/);
+  });
+
+  test("a lead cannot be created without it", async () => {
+    const h = harness();
+    const ventureId = await h.run((ctx) =>
+      ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      }),
+    );
+    await expect(
+      h.run((ctx) =>
+        ctx.db.insert("leads", {
+          ventureId, placeId: "ChIJ_y", businessName: "No Origin Co", niche: "solar",
+          auditFaults: [], status: "new",
+        } as never),
+      ),
+    ).rejects.toThrow();
   });
 });

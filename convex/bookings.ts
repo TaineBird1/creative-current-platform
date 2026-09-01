@@ -3,6 +3,12 @@ import { byAsc } from "./lib/ordering";
 import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, assertLocationAllowed, auditWrite } from "./lib/tenancy";
+import {
+  establishTransactionalConsent,
+  queueBookingConfirmationFor,
+  transactionalChannelFor,
+} from "./messages";
+import type { DispatchResult } from "./lib/messaging";
 
 /**
  * BOOKINGS — overlap-safe by construction.
@@ -66,6 +72,53 @@ export type BookingRow = {
 /** A cancelled or no-show booking releases its slot. Nothing else does. */
 const HOLDS_A_SLOT = ["pending", "confirmed", "in_progress", "completed"] as const;
 const holdsSlot = (status: string) => (HOLDS_A_SLOT as readonly string[]).includes(status);
+
+/**
+ * What the person who just took the booking needs to know about the
+ * confirmation, in a sentence they can act on.
+ *
+ * `queued` is the ordinary case and says nothing more than that. Every other
+ * outcome is a customer who will not hear from us, and the moment to say so is
+ * now — while whoever is on the phone to them can still ask for an email
+ * address or record consent. Discovered in the outbox three days later, it is
+ * only a record of a missed opportunity.
+ */
+function describe(result: DispatchResult): { queued: boolean; notice: string | null } {
+  switch (result.outcome) {
+    case "queued":
+      return { queued: true, notice: null };
+    case "duplicate":
+      return { queued: true, notice: null };
+    case "no_destination":
+      return {
+        queued: false,
+        notice:
+          "No confirmation was sent — we have no email address for this customer. " +
+          "Add one and they will get their reminders too.",
+      };
+    case "suppressed_consent":
+      return {
+        queued: false,
+        notice:
+          "No confirmation was sent — this customer has not agreed to be contacted " +
+          "on this channel, or has asked us to stop.",
+      };
+    case "suppressed_lead":
+      /*
+       * Loud, and it names the business. This one is not a normal state of
+       * affairs like a missing consent — it means a customer record was
+       * created against a business we are PROSPECTING, and whoever is looking
+       * at this screen is the only person who can say whether that was a
+       * mistake or a genuine coincidence of numbers.
+       */
+      return {
+        queued: false,
+        notice: `No confirmation was sent — ${result.reason}`,
+      };
+    case "suppressed_demo":
+      return { queued: false, notice: "Demo data: nothing is sent to real people." };
+  }
+}
 
 export const list = tenantQuery("staff")({
   args: {
@@ -140,7 +193,13 @@ export const book = tenantMutation("staff")({
   handler: async (
     ctx,
     args,
-  ): Promise<{ bookingId: Id<"bookings">; startsAt: number; endsAt: number }> => {
+  ): Promise<{
+    bookingId: Id<"bookings">;
+    startsAt: number;
+    endsAt: number;
+    /** Whether the customer will hear about it, and if not, why not. */
+    confirmation: { queued: boolean; notice: string | null };
+  }> => {
     const location = assertOwned(ctx.tenant, await ctx.db.get(args.locationId));
     assertLocationAllowed(ctx.tenant, location._id);
 
@@ -285,7 +344,34 @@ export const book = tenantMutation("staff")({
       after: { startsAt, endsAt, serviceId: args.serviceId, customerId: args.customerId },
     });
 
-    return { bookingId, startsAt, endsAt };
+    /*
+     * THE CONFIRMATION, IN THIS TRANSACTION.
+     *
+     * Not scheduled after the fact, and not left to a cron to notice. A
+     * booking that committed while its confirmation did not is the exact
+     * failure this whole pipeline is built against: the calendar says the
+     * customer was told and the customer was not. One transaction makes it
+     * both or neither.
+     *
+     * `dispatch` still decides whether it may go — consent, suppression, demo
+     * and quiet hours are all applied there and none of them are re-stated
+     * here. What comes back is the outcome, returned to the caller so the
+     * person who just took the booking learns NOW that nothing will reach this
+     * customer, while they can still ask for an email address. The same
+     * reasoning as `reachable` on customers.upsertByPhone: the back end is the
+     * only party that knows, so the back end says so.
+     */
+    await establishTransactionalConsent(ctx, {
+      clientId: ctx.tenant.clientId,
+      customerId: customer._id,
+      channel: transactionalChannelFor(customer),
+      source: "made a booking",
+      at: Date.now(),
+    });
+
+    const confirmation = await queueBookingConfirmationFor(ctx, { bookingId });
+
+    return { bookingId, startsAt, endsAt, confirmation: describe(confirmation) };
   },
 });
 

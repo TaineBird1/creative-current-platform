@@ -99,7 +99,16 @@ export const operationsTables = {
     .index("by_location_start", ["locationId", "startsAt"])
     .index("by_client_start", ["clientId", "startsAt"])
     .index("by_staff_start", ["staffUserId", "startsAt"])
-    .index("by_customer", ["customerId", "startsAt"]),
+    .index("by_customer", ["customerId", "startsAt"])
+    /**
+     * ACROSS EVERY CLIENT, by time. The reminder sweep is a platform cron: it
+     * asks "what starts in about 24 hours" without knowing whose booking it
+     * is, so a client-scoped index cannot answer it without reading every
+     * client in turn. Nothing tenant-scoped may use this one — a query that
+     * does not restate its own clientId is exactly the shape tenancy exists to
+     * prevent.
+     */
+    .index("by_start", ["startsAt"]),
 
   /** Block-outs and leave occupy the same calendar space as bookings. */
   blockouts: defineTable({

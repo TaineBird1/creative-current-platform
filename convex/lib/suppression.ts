@@ -70,7 +70,13 @@ const blocked = (reason: string, matched?: ContactVerdict["matched"]): ContactVe
  * with every test still green.
  */
 
-function normaliseDomain(raw: string): string | null {
+/**
+ * ONE DOMAIN NORMALISER, exported for the same reason there is one phone
+ * normaliser: two opinions about a canonical host are two opinions about who
+ * may be contacted. lib/leadAccess.ts checks a message recipient against a
+ * lead website with this, so the two cannot drift.
+ */
+export function normaliseDomain(raw: string): string | null {
   const trimmed = raw.trim().toLowerCase();
   if (!trimmed) return null;
   const withoutScheme = trimmed.replace(/^[a-z]+:\/\//, "");

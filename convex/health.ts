@@ -1,4 +1,5 @@
 import { internalQuery } from "./_generated/server";
+import { LIVE_CHANNELS, sendAllowlist } from "./lib/providers";
 
 /**
  * Is this deployment's auth actually configured?
@@ -50,6 +51,59 @@ export const authConfig = internalQuery({
         : "MISSING",
       AUTH_EMAIL_FROM: process.env.AUTH_EMAIL_FROM ?? "MISSING (falls back to a default)",
       CONVEX_SITE_URL: process.env.CONVEX_SITE_URL ?? "MISSING",
+    };
+  },
+});
+
+/**
+ * Will this deployment actually send a message, and to whom?
+ *
+ * The allowlist defaults to sending NOBODY, which is the right default for the
+ * deployment nobody configures and the wrong one to discover from a customer.
+ * So it is answerable in one command rather than by reading two files:
+ *
+ *   npx convex run health:messagingConfig
+ *
+ * `sendsTo` is the line that matters. Anything other than "everybody" or a
+ * list you recognise means messages are being queued and held.
+ */
+export const messagingConfig = internalQuery({
+  args: {},
+  handler: async () => {
+    const allowlist = sendAllowlist();
+    const key = process.env.MESSAGING_RESEND_KEY ?? process.env.AUTH_RESEND_KEY;
+    const from = process.env.MESSAGING_EMAIL_FROM ?? process.env.AUTH_EMAIL_FROM;
+
+    return {
+      sendsTo:
+        allowlist.mode === "open"
+          ? "everybody"
+          : allowlist.mode === "unset"
+            ? "NOBODY — MESSAGING_ALLOWLIST is unset. Set it to a list, or to * for everybody."
+            : `only: ${allowlist.entries.join(", ")}`,
+      liveChannels: LIVE_CHANNELS.join(", ") || "none",
+      emailProvider: key
+        ? process.env.MESSAGING_RESEND_KEY
+          ? "ok — its own key"
+          : "ok — FALLING BACK to AUTH_RESEND_KEY; set MESSAGING_RESEND_KEY"
+        : "MISSING — every email will retry five times and then fail visibly",
+      emailFrom: from ?? "MISSING",
+      /*
+       * The From domain is a SENDING domain and may have no MX record, in
+       * which case every reply to it is swallowed in silence. A booking
+       * confirmation is the most replied-to message this system sends, so
+       * this line is worth reading before the first real send.
+       *
+       * Per-client `primaryContactEmail` beats this and is not visible here;
+       * this is the fallback and the answer for clients that have none.
+       */
+      replyToFallback:
+        process.env.MESSAGING_REPLY_TO ??
+        "unset — clients with no primaryContactEmail get NO reply-to, and their " +
+          "messages drop the 'reply to this message' line rather than inviting one",
+      note:
+        "WhatsApp and SMS have no provider. Those messages are queued, logged " +
+        "and recorded as not sent, never marked delivered.",
     };
   },
 });

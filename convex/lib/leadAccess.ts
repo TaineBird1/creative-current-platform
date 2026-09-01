@@ -1,6 +1,13 @@
 import type { QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
-import { filterContactable, decideAgainst, loadSuppressions, type ContactVerdict } from "./suppression";
+import {
+  filterContactable,
+  decideAgainst,
+  loadSuppressions,
+  normaliseDomain,
+  type ContactVerdict,
+} from "./suppression";
+import { toE164 } from "./phone";
 
 /**
  * THE ONLY WAY LEAD ROWS LEAVE THE BACKEND.
@@ -89,4 +96,156 @@ export async function getWithVerdict(
   }
 
   return { lead, verdict };
+}
+
+/**
+ * IS THIS ADDRESS A LEAD'S?
+ *
+ * The reverse of everything above. The rest of this module keeps leads from
+ * being CALLED without a check; this keeps them from being MESSAGED at all.
+ *
+ * The hole it closes: dispatch blocks demo and seed data, and a lead is
+ * neither. `isDemo` and `isSeed` are DESIGNATIONS we apply to data we made up.
+ * A lead is real data about a real business — the dev deployment holds 39
+ * actual KZN solar installers with actual phone numbers off trade directories
+ * — which is precisely why messaging one by accident is the expensive version
+ * of this mistake rather than the harmless one.
+ *
+ * A recipient is a client's CUSTOMER. A lead is a business WE are prospecting.
+ * Outreach is drafted and sent by hand, deliberately, and a transactional
+ * pipeline that can reach a prospect is an outreach channel whether or not
+ * anybody meant to build one. POPIA s69 treats electronic direct marketing
+ * more strictly than a phone call to a listed business number, and an
+ * automated booking-style email to a stranger is the worst of both: unasked
+ * for, and machine-sent at whatever rate the cron runs.
+ *
+ * BOTH OF THE RECIPIENT'S IDENTIFIERS ARE CHECKED, not just the address this
+ * particular message uses. A customer record carrying a lead's phone number IS
+ * that lead, and emailing them instead does not make them somebody else — so
+ * the phone goes against lead phones and the email's domain against lead
+ * websites, every time, whichever channel is in play.
+ *
+ * FAILS CLOSED, like every other check of this shape here: an error, an
+ * unreadable phone, or a domain that will not normalise all come back as
+ * "cannot clear this", and dispatch refuses. Being wrongly held is a row in
+ * the outbox saying why. Messaging a prospect is not undoable.
+ */
+export type LeadRecipientVerdict =
+  | { verdict: "clear" }
+  | { verdict: "lead"; reason: string }
+  | { verdict: "unknown"; reason: string };
+
+export async function recipientIsLead(
+  ctx: QueryCtx,
+  args: { phone?: string | null; email?: string | null },
+): Promise<LeadRecipientVerdict> {
+  try {
+    /*
+     * Whether any check actually ran. An identifier we cannot canonicalise is
+     * not a lead cleared, it is a lead unchecked, and the two must not read
+     * the same — so if NOTHING could be checked, this refuses.
+     */
+    let checked = false;
+
+    const phone = args.phone?.trim();
+    if (phone) {
+      const mine = toE164(phone);
+      if (!mine.ok) {
+        /*
+         * Skipped rather than blocked here, and this is the one place that
+         * needs justifying.
+         *
+         * Lead phones are stored as E.164, so a number that will not
+         * canonicalise cannot match one — there is no lead reachable through
+         * this path to protect. And dispatch refuses such a number a few lines
+         * later anyway, through `contactDecision`, which fails closed on
+         * exactly this and says so in better words: a foreign customer's
+         * number is a messaging limitation, not an accusation that they are a
+         * prospect.
+         *
+         * That makes this correct ONLY while contactDecision still runs on
+         * every dispatch. If it ever stops, this must go back to blocking.
+         */
+      } else {
+        checked = true;
+        const hit = await ctx.db
+          .query("leads")
+          .withIndex("by_phone", (q) => q.eq("phone", mine.e164))
+          .first();
+        if (hit) {
+          return {
+            verdict: "lead",
+            reason:
+              `that number belongs to ${hit.businessName}, a lead we are prospecting. ` +
+              "Outreach is drafted and sent by hand, never through this pipeline.",
+          };
+        }
+      }
+    }
+
+    const email = args.email?.trim();
+    const at = email ? email.lastIndexOf("@") : -1;
+    const domain = email && at > 0 ? normaliseDomain(email.slice(at + 1)) : null;
+    /*
+     * An address whose domain will not parse is skipped for the same reason as
+     * an unreadable phone: it cannot match a lead website, and it is not an
+     * address anything can deliver to either. `checked` is what stops that
+     * from quietly becoming a pass.
+     */
+    if (domain) {
+      checked = true;
+
+      /*
+       * A SCAN, not an index read, and that is a deliberate limit rather than
+       * an oversight.
+       *
+       * `leads.website` holds what the directory printed — "https://www.x.co.za",
+       * "x.co.za/contact" — so an exact index lookup would match some of them
+       * and quietly miss the rest, which is the worst outcome available here.
+       * Normalising at read time is correct and costs a collect. At 39 leads
+       * that is nothing. If lead volume ever makes it matter, the fix is a
+       * normalised `websiteDomain` column with its own index, written where
+       * `website` is written — not a cap on this loop, which would fail open.
+       */
+      const leads = await ctx.db.query("leads").collect();
+      const hit = leads.find((lead) => {
+        if (!lead.website) return false;
+        const theirs = normaliseDomain(lead.website);
+        if (!theirs) return false;
+        // A subdomain of a lead's domain is the same business, same rule as
+        // the suppression list uses.
+        return domain === theirs || domain.endsWith(`.${theirs}`);
+      });
+      if (hit) {
+        return {
+          verdict: "lead",
+          reason:
+            `${domain} is the website of ${hit.businessName}, a lead we are prospecting. ` +
+            "Outreach is drafted and sent by hand, never through this pipeline.",
+        };
+      }
+    }
+
+    if (!checked) {
+      /*
+       * Nothing to check is not the same as nothing to find — the same
+       * sentence as `decideAgainst`, and the same answer. A recipient we
+       * cannot identify at all is one we cannot clear.
+       */
+      return {
+        verdict: "unknown",
+        reason:
+          "no readable phone or email on this recipient, so nothing could be checked " +
+          "against the lead list",
+      };
+    }
+
+    return { verdict: "clear" };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
+    return {
+      verdict: "unknown",
+      reason: `could not check the recipient against the lead list (${detail})`,
+    };
+  }
 }

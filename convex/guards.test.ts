@@ -248,6 +248,246 @@ describe("the send choke point", () => {
       ].join("\n"),
     ).toEqual([]);
   });
+
+  /**
+   * NEVER A LEAD.
+   *
+   * The demo/seed block catches data we made up. This catches data that is
+   * entirely real and must still never be messaged: a business we are
+   * prospecting. `isDemo` and `isSeed` are DESIGNATIONS, and no honest one
+   * exists for a lead — which is precisely why the gap was there.
+   *
+   * A test rather than a comment because the failure is silent and arrives as
+   * an automated email to a stranger, on a cron.
+   */
+  test("dispatch checks the recipient against the lead list", () => {
+    const messaging = sourceFiles.find((f) => f.path === DISPATCH);
+    expect(
+      /recipientIsLead\(/.test(messaging?.code ?? ""),
+      [
+        "convex/lib/messaging.ts must call recipientIsLead before queueing.",
+        "Outreach in this business is drafted and sent by hand. A transactional",
+        "pipeline that can reach a prospect is an outreach channel whether or",
+        "not anyone meant to build one — and this one sends on a cron.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
+   * A TRIPWIRE, in the same shape as the messageRevision one above, and for
+   * the same reason: it guards something that does not exist yet, so a note
+   * would be read by nobody at the moment it mattered.
+   *
+   * `contacts` holds a named person at a company, and a company hangs off a
+   * LEAD. Nothing writes it today, so `recipientIsLead` does not read it and
+   * is complete as it stands. The day something does write it, a lead's
+   * contact details exist in a second table that the lead check has never
+   * heard of — and the check would go on passing, quietly, for every one of
+   * them.
+   *
+   * So: whoever adds the writer has to extend the check in the same change.
+   * The failure this prevents is an automated email to a named person at a
+   * business we are prospecting, which is the worst message this system could
+   * possibly send.
+   */
+  test("nothing writes the contacts table until the lead check reads it too", () => {
+    const writers = sourceFiles
+      .filter((f) => /db\.(insert|patch|replace)\(\s*"contacts"/.test(f.code))
+      .map((f) => f.path);
+
+    const leadAccess = sourceFiles.find((f) => f.path === "lib/leadAccess.ts");
+    const checkReadsContacts = /query\(\s*"contacts"/.test(leadAccess?.code ?? "");
+
+    expect(
+      writers.length === 0 || checkReadsContacts,
+      [
+        `contacts is now written by: ${writers.join(", ")}`,
+        "",
+        "A `contacts` row is a named person at a company, and a company hangs",
+        "off a LEAD. recipientIsLead in convex/lib/leadAccess.ts checks lead",
+        "phones and lead websites and knows nothing about this table — so every",
+        "contact in it is reachable by the transactional pipeline, silently.",
+        "",
+        "Extend recipientIsLead to read contacts in this same change, then this",
+        "passes. An automated booking email to a named person at a business we",
+        "are prospecting is the worst message this system can send.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
+   * `recipientIsLead` SKIPS a phone it cannot canonicalise rather than
+   * blocking on it, because lead phones are stored as E.164 and an unreadable
+   * number cannot match one. That is only safe while `contactDecision` — which
+   * fails closed on exactly that input — still runs on every dispatch.
+   *
+   * Two checks that lean on each other, so removing either has to fail here
+   * rather than in production.
+   */
+  test("and still runs the suppression check, which the lead check leans on", () => {
+    const messaging = sourceFiles.find((f) => f.path === DISPATCH);
+    expect(
+      /contactDecision\(/.test(messaging?.code ?? ""),
+      [
+        "convex/lib/messaging.ts must still call contactDecision.",
+        "recipientIsLead skips a phone it cannot normalise, on the grounds that",
+        "contactDecision refuses it a few lines later. Remove that and an",
+        "unreadable number is checked by nothing at all.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
+   * THE SEND ALLOWLIST IS APPLIED IN ONE PLACE.
+   *
+   * `driverFor` wraps every driver that can actually send, rather than each
+   * driver checking for itself. A WhatsApp driver added later is then gated on
+   * the day it is written, not the day somebody remembers — which is the whole
+   * reason the wrapper is at the factory and not inside `resendEmail`.
+   */
+  test("every live driver is wrapped in the send allowlist", () => {
+    const providers = sourceFiles.find((f) => f.path === "lib/providers.ts");
+    const factory = providers!.code.slice(providers!.code.indexOf("export function driverFor"));
+    const body = factory.split("\n}")[0]!;
+
+    expect(
+      /gated\(/.test(body),
+      [
+        "driverFor in convex/lib/providers.ts must wrap live drivers in gated().",
+        "A driver that gates itself is a driver the next one will forget to",
+        "copy, and the thing being guarded is a live provider pointed at a",
+        "database of real people.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
+   * The other half of the choke point, added the day a real driver arrived.
+   *
+   * CREATING a message is guarded above. RESOLVING one — claiming it was sent,
+   * or that it failed — is the write that makes the outbox lie if anything
+   * else can do it. The outbox is the only screen that answers "did they hear
+   * from us", and it answers out of these four statuses.
+   */
+  test("only lib/messaging.ts marks a message sent, failed or in flight", () => {
+    const SEND_STATES = /status:\s*"(sending|sent|delivered|failed)"/g;
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      if (file.path === DISPATCH) continue;
+      /*
+       * Only files that handle messages at all. `sent` is not a word this
+       * codebase reserves — a QUOTE is sent too, and quotes.ts writing
+       * `status: "sent"` on a quote is not this rule's business. Narrowing on
+       * the table keeps the guard aimed at the thing it is about rather than
+       * at a word.
+       */
+      if (!/"messages"|Id<"messages">/.test(file.code)) continue;
+      for (const m of file.code.matchAll(SEND_STATES)) {
+        offenders.push(`${file.path}: writes status "${m[1]}"`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "Only convex/lib/messaging.ts may move a message towards sent or",
+        "failed. That is where the claim is serializable, where a stalled send",
+        "is requeued rather than abandoned, and where attempts are counted.",
+        "A second writer can mark a message sent that nobody received, and the",
+        "outbox would agree with it.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  /**
+   * THE ONE THAT MATTERS MOST HERE.
+   *
+   * WhatsApp has no provider yet, so it has a no-op driver. The tempting shape
+   * for a no-op is one that returns success: it keeps the pipeline green and
+   * every screen reads as working. It would also stamp `sent` on rows nobody
+   * received, which is the invisible failure this codebase spends most of its
+   * rules avoiding. The no-op logs, and refuses.
+   *
+   * Whoever wires WhatsApp deletes the no-op rather than making it agreeable.
+   */
+  test("the no-op driver never claims a message was delivered", () => {
+    const providers = sourceFiles.find((f) => f.path === "lib/providers.ts");
+    expect(providers, "convex/lib/providers.ts has moved or been removed").toBeDefined();
+
+    const from = providers!.code.indexOf("function loggingNoop");
+    expect(from, "loggingNoop has been renamed — update this guard").toBeGreaterThan(-1);
+    const body = providers!.code.slice(from).split("\n}")[0]!;
+
+    expect(
+      /delivered:\s*false/.test(body),
+      [
+        "The no-op driver in convex/lib/providers.ts must report a refusal, not",
+        "a delivery. A no-op that returns delivered:true marks messages sent",
+        "that nobody received — and the outbox, the only place anyone can",
+        "check, would say the customer was told.",
+      ].join("\n"),
+    ).toBe(true);
+    expect(/delivered:\s*true/.test(body)).toBe(false);
+  });
+
+  /**
+   * Consent rows are evidence. Two writers is two opinions about what a
+   * customer agreed to, and the one that decides is whichever ran last.
+   *
+   *   - customers.ts : a staff member recording one by hand
+   *   - messages.ts  : a booking establishing a CONTRACT basis where no row
+   *                    exists at all, which by construction cannot overturn a
+   *                    withdrawal
+   */
+  test("only two modules write a consent row", () => {
+    const CONSENT_WRITERS = new Set(["customers.ts", "messages.ts"]);
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      if (CONSENT_WRITERS.has(file.path)) continue;
+      if (/db\.insert\(\s*"consents"/.test(file.code)) {
+        offenders.push(`${file.path}: inserts a consent row`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "A consent row is evidence of what a customer agreed to. It is written",
+        "by customers.recordConsent (a person recording one) and by",
+        "messages.establishTransactionalConsent (a booking establishing a",
+        "contract basis where NO row exists). Anything else is a third opinion",
+        "about who may be contacted.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  /**
+   * `bookings.by_start` spans every client, because the reminder sweep is a
+   * platform cron asking "what starts in about 24 hours" without knowing whose
+   * booking it is. That is exactly the shape tenancy exists to prevent
+   * everywhere else: a query that does not restate its own clientId.
+   */
+  test("the cross-tenant bookings index is not reachable from tenant code", () => {
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      if (!/withIndex\(\s*"by_start"/.test(file.code)) continue;
+      if (/tenant(Query|Mutation)\s*\(/.test(file.code)) {
+        offenders.push(`${file.path}: uses by_start beside tenant-scoped functions`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "bookings.by_start reads across every client. It exists for the",
+        "reminder cron, which has no tenant. A tenant-scoped function must use",
+        "by_client_start, or it can read another client's calendar.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
 });
 
 describe("the ledger", () => {

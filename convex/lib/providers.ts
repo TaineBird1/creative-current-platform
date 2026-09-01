@@ -39,6 +39,20 @@ export type OutboundMessage = {
   body: string;
   /** The business the message comes from, not the platform. */
   clientName: string;
+  /**
+   * WHERE A REPLY ACTUALLY GOES, or null if nowhere.
+   *
+   * The From address is on OUR domain, which is a sending domain: it may have
+   * no MX record at all, and a domain with no MX swallows every reply in
+   * silence. A booking confirmation is the most replied-to message this system
+   * will ever send — somebody wanting to move an appointment hits reply,
+   * because that is what people do — so a confirmation whose reply goes
+   * nowhere is a customer who believes they have rescheduled and has not.
+   *
+   * Resolved by `resolveReplyTo` and passed to the RENDERER as well as the
+   * driver, so the copy cannot invite a reply the envelope will not deliver.
+   */
+  replyTo: string | null;
 };
 
 /**
@@ -117,6 +131,11 @@ const resendEmail: MessageDriver = {
           to: [message.to],
           subject: message.subject,
           text: message.body,
+          // Omitted entirely when there is nowhere to send a reply, rather
+          // than defaulted to the From address — which is on a sending domain
+          // and may have no MX at all. The copy has already been rendered to
+          // match: see resolveReplyTo.
+          ...(message.replyTo ? { reply_to: message.replyTo } : {}),
         }),
       });
     } catch (error) {
@@ -195,19 +214,27 @@ function loggingNoop(channel: MessageChannel, why: string): MessageDriver {
  *
  * UNSET MEANS NOBODY, and that is the deliberate half.
  *
- * The rule elsewhere in this codebase is prefer sending twice over
- * suppressing, and this inverts it — so it needs its reason stated rather than
- * assumed. The deployment this protects is the one nobody configures. Dev
- * holds real leads and real numbers and will never have a go-live checklist
- * run against it; production gets one, deliberately, on the day it goes live.
- * Defaulting open protects the deployment that is already being watched and
- * leaves the dangerous one open.
+ * THIS IS NOT AN INVERSION OF "PREFER SENDING TWICE OVER SUPPRESSING", and
+ * the distinction is written down here because it is the kind of apparent
+ * inconsistency somebody eventually tidies away.
  *
- * The cost is real and it is the one this codebase normally refuses: an
- * unconfigured production sends nothing. Three things pay for it — every
- * blocked row is in the outbox with this sentence attached, the refusal names
- * the variable and the value that opens it, and `health:messagingConfig`
- * answers it in one command. It is a loud silence, not a quiet one.
+ * That rule is about which message a RUNNING system sends: given a pipeline
+ * that is switched on and a judgement call about one message, send it, because
+ * a duplicate is visible and a suppression is not. An unconfigured deployment
+ * is not making that judgement. It is not suppressing a message — it has not
+ * been switched on. Those are different questions, and answering the second
+ * one with the first is how a live provider ends up pointed at a database of
+ * real people because nobody had got round to saying who it may reach.
+ *
+ * Which leaves only the ordinary question of which error is recoverable. An
+ * unconfigured deployment that sends nothing is a config change away from
+ * correct, and every held message is still sitting in the outbox waiting.
+ * An unconfigured deployment that sends everything has already sent it.
+ *
+ * The cost is real: a production nobody configured sends nothing. Three
+ * things pay for it — every held row is in the outbox with this sentence
+ * attached, the refusal names the variable AND the value that opens it, and
+ * `health:messagingConfig` answers it in one command. It is a loud silence.
  */
 const ALLOWLIST_VAR = "MESSAGING_ALLOWLIST";
 
@@ -348,6 +375,29 @@ export const LIVE_CHANNELS: readonly MessageChannel[] = (
   ["email", "whatsapp", "sms"] as MessageChannel[]
 ).filter((channel) => !driverFor(channel).name.endsWith("-noop"));
 
+/* --------------------------------------------------------------- reply-to */
+
+/**
+ * WHERE A REPLY GOES. Resolved ONCE, for the renderer and the driver together.
+ *
+ * The customer is replying to the BUSINESS, not to the platform, so the
+ * client's own `primaryContactEmail` is the right answer and almost always a
+ * mailbox that demonstrably works — it is the address they gave us. The env
+ * fallback is for a deployment that wants every reply in one place, and for
+ * the case where a client record has no contact address yet.
+ *
+ * NULL IS A REAL ANSWER and the copy respects it. Defaulting to the From
+ * address would look like it worked: replies would leave the customer's outbox
+ * cheerfully and land nowhere, because the sending domain has no MX. There is
+ * no way for this code to check MX from the Convex runtime, so it does not
+ * guess — it only ever names an address somebody actually chose.
+ */
+export function resolveReplyTo(clientContactEmail: string | null | undefined): string | null {
+  const client = clientContactEmail?.trim();
+  if (client) return client;
+  return process.env.MESSAGING_REPLY_TO?.trim() || null;
+}
+
 /* ----------------------------------------------------------------- content */
 
 /**
@@ -368,7 +418,41 @@ export type RenderInput = {
   clientName: string;
   /** The SITE timezone — the same one quiet hours use, for the same reason. */
   timezone: string;
+  /**
+   * The resolved reply-to, or null. The COPY changes on this: a message only
+   * invites a reply when a reply has somewhere to land.
+   */
+  replyTo: string | null;
 };
+
+/**
+ * "How to reach us", written from what is actually true.
+ *
+ * The first version of this copy said "reply to this message or phone us" on
+ * every message, unconditionally. Both halves could be false at once: the
+ * From address is on a sending domain that may have no MX, and "phone us" with
+ * no number is not an instruction. A confirmation is the most replied-to
+ * message this system sends, so the sentence that tells somebody how to change
+ * their appointment is the one that can least afford to be decorative.
+ *
+ * `contactPhone` comes from the booking's own branch, put in the payload by
+ * the producer — which is the only place that knows which branch it was.
+ */
+function howToReach(input: RenderInput, prefix: string): string {
+  const phone = input.payload.contactPhone?.trim();
+  const canReply = Boolean(input.replyTo);
+
+  if (canReply && phone) return `${prefix}, reply to this message or phone us on ${phone}.`;
+  if (canReply) return `${prefix}, just reply to this message.`;
+  if (phone) return `${prefix}, phone us on ${phone}.`;
+  /*
+   * Neither. Deliberately vague rather than inviting a reply into a black
+   * hole — and deliberately still present, because a customer has to know the
+   * appointment can be changed at all. It reads as thin, which is the point:
+   * it is the visible symptom of a client record with no contact details.
+   */
+  return `${prefix}, please get in touch with ${input.clientName}.`;
+}
 
 /**
  * Null for an unknown key, rather than a guess or a throw. An unknown template
@@ -391,7 +475,7 @@ export function renderMessage(input: RenderInput): { subject: string; body: stri
           "",
           `  ${when.long}`,
           "",
-          "If you need to change or cancel it, reply to this message or phone us.",
+          howToReach(input, "If you need to change or cancel it"),
           "",
           client,
         ].join("\n"),
@@ -406,8 +490,7 @@ export function renderMessage(input: RenderInput): { subject: string; body: stri
           "",
           `  ${when.long}`,
           "",
-          "If tomorrow no longer suits, tell us as early as you can and we will",
-          "move it.",
+          howToReach(input, "If tomorrow no longer suits, tell us as early as you can"),
           "",
           client,
         ].join("\n"),

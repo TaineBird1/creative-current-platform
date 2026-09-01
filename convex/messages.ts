@@ -104,6 +104,28 @@ export async function establishTransactionalConsent(
 const notFound = (what: string) =>
   new ConvexError({ code: "NOT_FOUND", message: `No such ${what}.` });
 
+/**
+ * The number a customer should phone about THIS booking.
+ *
+ * The booking's own branch first, because a two-branch business has two
+ * numbers and sending somebody the wrong one is worse than sending none — they
+ * phone Hillcrest about a Ballito job and get told nothing is booked. The
+ * client-level contact is the fallback, and absent is a real answer: the copy
+ * drops the "phone us" half rather than printing a blank.
+ *
+ * This is in the PAYLOAD rather than read at send time because the producer is
+ * the only thing that knows which branch the booking was at. By the drain it
+ * is one row among twenty-five and the location is long gone.
+ */
+async function contactPayload(
+  ctx: MutationCtx,
+  args: { locationId: Id<"locations">; client: Doc<"clients"> },
+): Promise<Record<string, string>> {
+  const location = await ctx.db.get(args.locationId);
+  const phone = location?.phone?.trim() || args.client.primaryContactPhone?.trim();
+  return phone ? { contactPhone: phone } : {};
+}
+
 export async function queueBookingConfirmationFor(
   ctx: MutationCtx,
   args: { bookingId: Id<"bookings">; channel?: MessageChannel; now?: number },
@@ -114,6 +136,8 @@ export async function queueBookingConfirmationFor(
   if (!client) throw notFound("client");
   const customer = await ctx.db.get(booking.customerId);
   if (!customer) throw notFound("customer");
+
+  const contact = await contactPayload(ctx, { locationId: booking.locationId, client });
 
   return dispatch(ctx, {
     message: {
@@ -129,7 +153,7 @@ export async function queueBookingConfirmationFor(
     customerId: booking.customerId,
     channel: args.channel ?? transactionalChannelFor(customer),
     templateKey: "booking_confirmation",
-    payload: { startsAt: String(booking.startsAt) },
+    payload: { startsAt: String(booking.startsAt), ...contact },
     /*
      * The SITE's timezone. Bookings collect a name and a phone and nothing
      * else, so there is no recipient timezone to use — see the field's own
@@ -156,6 +180,8 @@ export async function queueBookingReminderFor(
   const customer = await ctx.db.get(booking.customerId);
   if (!customer) throw notFound("customer");
 
+  const contact = await contactPayload(ctx, { locationId: booking.locationId, client });
+
   return dispatch(ctx, {
     message: {
       kind: args.hoursBefore === 24 ? "booking.reminder24" : "booking.reminder1",
@@ -168,7 +194,7 @@ export async function queueBookingReminderFor(
     customerId: booking.customerId,
     channel: args.channel ?? transactionalChannelFor(customer),
     templateKey: args.hoursBefore === 24 ? "reminder_24h" : "reminder_1h",
-    payload: { startsAt: String(booking.startsAt) },
+    payload: { startsAt: String(booking.startsAt), ...contact },
     quietHoursTimezone: client.timezone,
     now: args.now,
   });

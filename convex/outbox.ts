@@ -9,7 +9,7 @@ import {
   requeueStalled,
   type ClaimedMessage,
 } from "./lib/messaging";
-import { driverFor, renderMessage, type SendResult } from "./lib/providers";
+import { driverFor, renderMessage, resolveReplyTo, type SendResult } from "./lib/providers";
 import { queueBookingReminderFor } from "./messages";
 
 /**
@@ -170,12 +170,21 @@ export const drain = internalAction({
  * problems and get different sentences in the outbox.
  */
 async function send(claimed: ClaimedMessage): Promise<SendResult> {
+  /*
+   * Resolved ONCE and handed to both. The renderer decides whether the copy
+   * invites a reply and the driver decides whether the envelope carries one;
+   * two resolutions would eventually disagree, and the way that failure shows
+   * up is a customer replying to a message that told them to.
+   */
+  const replyTo = resolveReplyTo(claimed.clientContactEmail);
+
   const content = renderMessage({
     templateKey: claimed.templateKey,
     channel: claimed.channel,
     payload: claimed.payload,
     clientName: claimed.clientName,
     timezone: claimed.timezone,
+    replyTo,
   });
 
   if (!content) {
@@ -197,6 +206,7 @@ async function send(claimed: ClaimedMessage): Promise<SendResult> {
       subject: content.subject,
       body: content.body,
       clientName: claimed.clientName,
+      replyTo,
     });
   } catch (error) {
     /*

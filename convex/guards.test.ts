@@ -274,6 +274,48 @@ describe("the send choke point", () => {
   });
 
   /**
+   * A TRIPWIRE, in the same shape as the messageRevision one above, and for
+   * the same reason: it guards something that does not exist yet, so a note
+   * would be read by nobody at the moment it mattered.
+   *
+   * `contacts` holds a named person at a company, and a company hangs off a
+   * LEAD. Nothing writes it today, so `recipientIsLead` does not read it and
+   * is complete as it stands. The day something does write it, a lead's
+   * contact details exist in a second table that the lead check has never
+   * heard of — and the check would go on passing, quietly, for every one of
+   * them.
+   *
+   * So: whoever adds the writer has to extend the check in the same change.
+   * The failure this prevents is an automated email to a named person at a
+   * business we are prospecting, which is the worst message this system could
+   * possibly send.
+   */
+  test("nothing writes the contacts table until the lead check reads it too", () => {
+    const writers = sourceFiles
+      .filter((f) => /db\.(insert|patch|replace)\(\s*"contacts"/.test(f.code))
+      .map((f) => f.path);
+
+    const leadAccess = sourceFiles.find((f) => f.path === "lib/leadAccess.ts");
+    const checkReadsContacts = /query\(\s*"contacts"/.test(leadAccess?.code ?? "");
+
+    expect(
+      writers.length === 0 || checkReadsContacts,
+      [
+        `contacts is now written by: ${writers.join(", ")}`,
+        "",
+        "A `contacts` row is a named person at a company, and a company hangs",
+        "off a LEAD. recipientIsLead in convex/lib/leadAccess.ts checks lead",
+        "phones and lead websites and knows nothing about this table — so every",
+        "contact in it is reachable by the transactional pipeline, silently.",
+        "",
+        "Extend recipientIsLead to read contacts in this same change, then this",
+        "passes. An automated booking email to a named person at a business we",
+        "are prospecting is the worst message this system can send.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
    * `recipientIsLead` SKIPS a phone it cannot canonicalise rather than
    * blocking on it, because lead phones are stored as E.164 and an unreadable
    * number cannot match one. That is only safe while `contactDecision` — which

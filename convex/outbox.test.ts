@@ -257,6 +257,122 @@ describe("email goes out for real", () => {
   });
 });
 
+describe("a reply has somewhere to land, or the copy does not ask for one", () => {
+  /**
+   * The From address is on a SENDING domain, which may have no MX record at
+   * all — and a domain with no MX swallows every reply in silence. A booking
+   * confirmation is the most replied-to message this system will ever send:
+   * somebody wanting to move an appointment hits reply, because that is what
+   * people do. A confirmation whose reply goes nowhere is a customer who
+   * believes they have rescheduled and has not.
+   *
+   * So the reply-to is resolved ONCE and handed to the renderer and the driver
+   * together. The copy can never invite a reply the envelope will not carry.
+   */
+  const bodyOf = (calls: { init: RequestInit }[]) =>
+    JSON.parse(String(calls[0]!.init.body)) as {
+      text: string;
+      reply_to?: string;
+      subject: string;
+    };
+
+  const withContact = async (
+    h: Harness,
+    contact: { email?: string; phone?: string; locationPhone?: string },
+  ) => {
+    const s = await seed(h, { email: "thabo@example.com" });
+    await h.run(async (ctx) => {
+      await ctx.db.patch(s.clientId, {
+        primaryContactEmail: contact.email,
+        primaryContactPhone: contact.phone,
+      });
+      if (contact.locationPhone) {
+        await ctx.db.patch(s.locationId, { phone: contact.locationPhone });
+      }
+    });
+    return s;
+  };
+
+  test("THE CLIENT'S OWN ADDRESS IS THE REPLY-TO — the customer is replying to them", async () => {
+    const h = harness();
+    const calls = stubResend({ status: 200 });
+    const s = await withContact(h, { email: "bookings@renusolar.co.za" });
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+
+    const body = bodyOf(calls);
+    expect(body.reply_to).toBe("bookings@renusolar.co.za");
+    expect(body.text).toContain("reply to this message");
+  });
+
+  test("NO REPLY-TO MEANS NO INVITATION TO REPLY", async () => {
+    /*
+     * The defect this whole block exists for. Defaulting reply-to to the From
+     * address would look like it worked — the reply leaves the customer's
+     * outbox cheerfully and lands nowhere.
+     */
+    const h = harness();
+    const calls = stubResend({ status: 200 });
+    vi.stubEnv("MESSAGING_REPLY_TO", "");
+    const s = await withContact(h, {});
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+
+    const body = bodyOf(calls);
+    expect(body.reply_to).toBeUndefined();
+    expect(body.text).not.toContain("reply to this message");
+    // Still tells them the booking can be changed at all.
+    expect(body.text).toContain("get in touch with Renu Solar");
+  });
+
+  test("the deployment fallback covers a client with no contact address", async () => {
+    const h = harness();
+    const calls = stubResend({ status: 200 });
+    vi.stubEnv("MESSAGING_REPLY_TO", "hello@thecreativecurrent.co.za");
+    const s = await withContact(h, {});
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+    expect(bodyOf(calls).reply_to).toBe("hello@thecreativecurrent.co.za");
+  });
+
+  test("THE PHONE IS THE BOOKING'S OWN BRANCH, not the head office", async () => {
+    // A two-branch business has two numbers, and the wrong one is worse than
+    // none: they phone Hillcrest about a Ballito job and are told nothing is
+    // booked.
+    const h = harness();
+    const calls = stubResend({ status: 200 });
+    const s = await withContact(h, {
+      email: "bookings@renusolar.co.za",
+      phone: "031 000 0000",
+      locationPhone: "031 373 5360",
+    });
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+
+    const body = bodyOf(calls);
+    expect(body.text).toContain("031 373 5360");
+    expect(body.text).not.toContain("031 000 0000");
+  });
+
+  test("with neither a reply-to nor a number, it promises neither", async () => {
+    const h = harness();
+    const calls = stubResend({ status: 200 });
+    vi.stubEnv("MESSAGING_REPLY_TO", "");
+    const s = await withContact(h, {});
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+
+    const body = bodyOf(calls);
+    expect(body.text).not.toContain("reply to this message");
+    expect(body.text).not.toContain("phone us on");
+  });
+});
+
 describe("the send allowlist", () => {
   /**
    * A live driver plus a database of real people is something that can reach
@@ -270,11 +386,15 @@ describe("the send allowlist", () => {
    */
   test("NOTHING SENDS WHEN THE ALLOWLIST IS UNSET", async () => {
     /*
-     * The deliberate inversion of "prefer sending twice over suppressing".
-     * The deployment this protects is the one nobody configures — dev, which
-     * holds real leads and real numbers and never gets a go-live checklist.
-     * Defaulting open would protect the deployment already being watched and
-     * leave the dangerous one open.
+     * This is NOT the inversion of "prefer sending twice over suppressing" it
+     * looks like, and the distinction is the reason the default survives
+     * review. That rule is about which message a RUNNING system sends. An
+     * unconfigured deployment is not suppressing a message — it has not been
+     * switched on. Different question.
+     *
+     * Which leaves the ordinary one: a deployment that sends nothing is a
+     * config change away from correct, with every held message still in the
+     * outbox. One that sends everything has already sent it.
      */
     const h = harness();
     const calls = stubResend({ status: 200 }, "");

@@ -482,6 +482,13 @@ export type ClaimedMessage = {
   clientName: string;
   timezone: string;
   attempts: number;
+  /**
+   * The client own contact address, or null. Resolved into an actual reply-to
+   * by `resolveReplyTo` at send time, which also applies the deployment
+   * fallback — one resolution, shared by the renderer and the driver, so the
+   * copy cannot invite a reply the envelope will not deliver.
+   */
+  clientContactEmail: string | null;
 };
 
 /**
@@ -545,6 +552,7 @@ export async function claimForSend(
     clientName: client?.name ?? "Your booking",
     timezone: message.quietHoursTimezone,
     attempts: message.attempts + 1,
+    clientContactEmail: client?.primaryContactEmail ?? null,
   };
 }
 

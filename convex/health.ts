@@ -88,6 +88,19 @@ export const messagingConfig = internalQuery({
           : "ok — FALLING BACK to AUTH_RESEND_KEY; set MESSAGING_RESEND_KEY"
         : "MISSING — every email will retry five times and then fail visibly",
       emailFrom: from ?? "MISSING",
+      /*
+       * The From domain is a SENDING domain and may have no MX record, in
+       * which case every reply to it is swallowed in silence. A booking
+       * confirmation is the most replied-to message this system sends, so
+       * this line is worth reading before the first real send.
+       *
+       * Per-client `primaryContactEmail` beats this and is not visible here;
+       * this is the fallback and the answer for clients that have none.
+       */
+      replyToFallback:
+        process.env.MESSAGING_REPLY_TO ??
+        "unset — clients with no primaryContactEmail get NO reply-to, and their " +
+          "messages drop the 'reply to this message' line rather than inviting one",
       note:
         "WhatsApp and SMS have no provider. Those messages are queued, logged " +
         "and recorded as not sent, never marked delivered.",

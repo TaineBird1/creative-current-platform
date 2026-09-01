@@ -426,16 +426,23 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   lines later in better words (a foreign customer is a messaging limitation,
   not an accusation). That makes the two checks lean on each other, so
   `guards.test.ts` asserts BOTH are called.
-- **THE SEND ALLOWLIST DEFAULTS TO NOBODY, AND THAT INVERSION IS DELIBERATE.**
-  `MESSAGING_ALLOWLIST` is a comma- or space-separated list of addresses,
-  `@domains`, or the single token `*`. Unset means nothing sends. This is the
-  one place "prefer sending twice over suppressing" is knowingly overturned,
-  so the reason is stated rather than assumed: **the deployment this protects
-  is the one nobody configures.** Dev holds real leads and real numbers and
-  will never have a go-live checklist run against it; production gets one,
-  deliberately, on the day it goes live. Defaulting open would protect the
-  deployment already being watched and leave the dangerous one open.
-  The cost is real — an unconfigured production sends nothing — and three
+- **THE SEND ALLOWLIST DEFAULTS TO NOBODY, AND THAT IS NOT AN INVERSION OF THE
+  RULE ABOVE.** `MESSAGING_ALLOWLIST` is a comma- or space-separated list of
+  addresses, `@domains`, or the single token `*`. Unset means nothing sends.
+  It looks like it contradicts "prefer sending twice over suppressing" and it
+  does not, which is written here because that apparent inconsistency is
+  exactly the kind somebody eventually tidies away. **That rule is about which
+  message a RUNNING system sends** — given a pipeline that is switched on and a
+  judgement call about one message, send it. An unconfigured deployment is not
+  making that judgement. It is not suppressing a message; it has not been
+  switched on. Different question, and answering the second with the first is
+  how a live provider ends up pointed at a database of real people because
+  nobody had got round to saying who it may reach.
+  That leaves only the ordinary question of which error is recoverable. A
+  deployment that sends nothing is a config change away from correct, with
+  every held message still in the outbox waiting. One that sends everything
+  has already sent it.
+  The cost is real — a production nobody configured sends nothing — and three
   things pay for it: every held row is in the outbox with the reason, the
   refusal names the variable AND the value that opens it, and
   `npx convex run health:messagingConfig` answers it in one command.
@@ -445,6 +452,29 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   dropped. It gates at the DRIVER, not at dispatch, so a held message is still
   queued, claimed, counted and visible — refusing at queue time would hide the
   very rows you turned it on to look at.
+- **A REPLY HAS SOMEWHERE TO LAND, OR THE COPY DOES NOT ASK FOR ONE.** The
+  From address is on a SENDING domain, which may have no MX record — and a
+  domain with no MX swallows every reply in silence. A booking confirmation is
+  the most replied-to message this system will ever send: somebody wanting to
+  move an appointment hits reply, because that is what people do. A
+  confirmation whose reply goes nowhere is a customer who believes they have
+  rescheduled and has not.
+  So `resolveReplyTo` answers it ONCE and the answer goes to the renderer AND
+  the driver, which is what makes it impossible for the copy to invite a reply
+  the envelope will not carry. The client's own `primaryContactEmail` wins —
+  the customer is replying to the BUSINESS, not to the platform, and that
+  address is one they demonstrably read. `MESSAGING_REPLY_TO` is the
+  deployment fallback. **Null is a real answer**: no `reply_to` header at all,
+  and the copy drops the invitation rather than defaulting to the From address,
+  which would look like it worked.
+  The "phone us" half comes from the BOOKING'S OWN BRANCH (`locations.phone`,
+  falling back to the client contact), put in the payload by the producer
+  because the drain no longer knows which branch it was. A two-branch business
+  has two numbers and the wrong one is worse than none — they phone Hillcrest
+  about a Ballito job and are told nothing is booked. No number, no promise.
+  Nothing here can check MX from the Convex runtime, so nothing guesses:
+  `dig MX thecreativecurrent.co.za +short` is the check, and
+  `health:messagingConfig` reports the fallback.
 - **EMAIL SENDS. WHATSAPP DOES NOT, AND SAYS SO.** `lib/providers.ts` is the
   provider seam: one interface, one driver per channel, chosen by `driverFor`.
   Email is live over Resend. WhatsApp and SMS get a **logging no-op that
@@ -499,7 +529,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 593 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 599 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -547,7 +577,7 @@ not pure white — that distinction was a live bug.
 
 ## Deployment environment variables
 
-Seven on production, six on dev, plus three for messaging.
+Seven on production, six on dev, plus four for messaging.
 `npx convex env list` to check.
 
 **`SITES_REVALIDATE_URL` is production-only, and this is not an oversight.**
@@ -566,6 +596,7 @@ path locally you need a public tunnel to :3100, not a localhost URL.
 | `AUTH_EMAIL_FROM` | Must be on a Resend-verified domain. |
 | `MESSAGING_RESEND_KEY` | Resend, Sending access. **Optional but wanted.** Customer-facing mail — confirmations and reminders. Separate from the auth key for the same reason the auth key is separate: "last used" then answers a question. Unset, the outbox falls back to `AUTH_RESEND_KEY`; unset with no fallback either, every email retries five times and lands in the outbox saying so, which is deliberate — an unconfigured deployment must fail visibly rather than decide the message was handled. |
 | `MESSAGING_EMAIL_FROM` | Same shape as `AUTH_EMAIL_FROM`, on a verified domain. A bare address gets the CLIENT's name as its display name; the client's own domain is never the envelope sender, because it is not verified with Resend and would be rejected or filed as spam. |
+| `MESSAGING_REPLY_TO` | A mailbox that actually RECEIVES. Fallback for clients with no `primaryContactEmail`; the client's own address wins where it exists. Unset is survivable and honest — those messages carry no `reply_to` and drop the "reply to this message" line rather than pointing a customer at a domain with no MX. Not the same as `MESSAGING_EMAIL_FROM`, which is a sending address and need not receive anything. |
 | `MESSAGING_ALLOWLIST` | **Required for anything to send at all.** Comma- or space-separated: full addresses, `@domain` entries, or the single token `*` for everybody. **Unset means NOBODY** — see the rule above for why that inversion is deliberate. Check it with `npx convex run health:messagingConfig`, which answers "who does this deployment actually send to" in one line. |
 | `SITES_REVALIDATE_URL` | `https://<sites-origin>/api/revalidate`. Where a config write pushes cache invalidation. Unset is survivable — writes still succeed and sites self-heal within the hour — but every publish looks broken for that hour. |
 | `REVALIDATE_SECRET` | A shared secret, set on BOTH the Convex deployment and the sites Vercel project. The route fails closed if it is unset there, so an unset secret means no revalidation at all rather than an open endpoint. |
@@ -778,7 +809,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 593 tests
+pnpm test                        # 599 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

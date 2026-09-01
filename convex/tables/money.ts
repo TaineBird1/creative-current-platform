@@ -94,10 +94,20 @@ export const moneyTables = {
     issuerLegalName: v.string(),
     issuerRegistrationNumber: v.optional(v.string()),
     issuerVatNumber: v.optional(v.string()),
-    status: v.union(
-      v.literal("draft"), v.literal("issued"), v.literal("paid"),
-      v.literal("overdue"), v.literal("void"), v.literal("written_off"),
-    ),
+    /**
+     * LIFECYCLE ONLY. Whether it is PAID is not in here, on purpose.
+     *
+     * This union used to carry "paid" and "overdue", and `recordPayment`
+     * patched the row to "paid" once the money covered it. That is a hand-set
+     * flag for a fact the ledger already knows, and the two can disagree —
+     * a refund posted afterwards leaves an invoice still stamped paid, which
+     * throws nothing and reads as settled forever.
+     *
+     * Settlement and overdue are DERIVED from the ledger and from today. What
+     * remains here is only what a person decides: it went out, it was
+     * cancelled, or it was given up on.
+     */
+    status: v.union(v.literal("issued"), v.literal("void"), v.literal("written_off")),
     /**
      * SNAPSHOTTED, like the issuer. The document says "7 days" because that
      * is what was agreed on the day; changing the default next year must not
@@ -111,7 +121,6 @@ export const moneyTables = {
     paymentTermsDays: v.number(),
     issuedAt: v.optional(v.number()),
     dueAt: v.optional(v.number()),
-    paidAt: v.optional(v.number()),
     provider: v.optional(v.union(v.literal("paystack"), v.literal("paddle"), v.literal("eft"), v.literal("manual"))),
     providerRef: v.optional(v.string()),
     pdfStorageId: v.optional(v.id("_storage")),

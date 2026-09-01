@@ -450,6 +450,46 @@ describe("invoice numbering", () => {
     expect(invoices.code).toMatch(/paymentReference:\s*paymentReference\(/);
   });
 
+  test("settlement is derived, never patched onto the invoice", () => {
+    /*
+     * `recordPayment` used to patch the row to "paid" once the money covered
+     * it. A stamped flag for something the ledger already knows can come
+     * apart from it: post a refund afterwards and the invoice is still
+     * stamped paid, which throws nothing and reads as settled forever.
+     *
+     * The stored `status` now carries only what a PERSON decides — issued,
+     * void, written_off. Paid, part-paid, overpaid and overdue are all
+     * computed from money and from today.
+     */
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      for (const m of file.code.matchAll(/db\.patch\([^;]*status:\s*"(paid|overdue|draft)"/gs)) {
+        offenders.push(`${file.path}: patches an invoice to "${m[1]}"`);
+      }
+      if (/db\.patch\([^;]*paidAt:/s.test(file.code)) {
+        offenders.push(`${file.path}: writes paidAt`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Settlement comes from settlementOf() in invoices.ts, which reads the",
+        "ledger. A part payment must read as part paid — not as settled, which",
+        "stops anyone chasing the rest, and not as untouched, which chases a",
+        "client for money they have mostly already sent.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the balance nets refunds, not just payments", () => {
+    // Derived from the wrong set has the same effect as a stamped flag: a
+    // settled invoice that was refunded still reads settled.
+    const invoices = sourceFiles.find((f) => f.path === "invoices.ts");
+    if (!invoices) return;
+    const fn = invoices.code.slice(invoices.code.indexOf("async function paidAgainst"));
+    expect(fn.slice(0, 600)).toMatch(/"refund"/);
+  });
+
   test("no VAT is charged while there is no VAT number", () => {
     // Charging VAT you are not registered for is worse than not charging it:
     // the money is not yours and SARS wants it either way.

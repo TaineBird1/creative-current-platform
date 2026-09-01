@@ -231,7 +231,8 @@ describe("what is owed", () => {
     const result = await s.owner.mutation(api.invoices.recordPayment, {
       invoiceId, amountCents: 1_895_000, occurredAt: JAN,
     });
-    expect(result.settled).toBe(true);
+    expect(result.settlement).toBe("settled");
+    expect(result.owedCents).toBe(0);
 
     const owed = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
     expect(owed.totals[0]?.owedCents).toBe(0);
@@ -250,11 +251,8 @@ describe("what is owed", () => {
     const result = await s.owner.mutation(api.invoices.recordPayment, {
       invoiceId, amountCents: 50_000, occurredAt: JAN,
     });
-    expect(result.settled).toBe(false);
-    expect(result.outstandingCents).toBe(1_845_000);
-
-    const invoice = await s.owner.query(api.invoices.get, { invoiceId });
-    expect(invoice?.status).toBe("issued");
+    expect(result.settlement).toBe("part_paid");
+    expect(result.owedCents).toBe(1_845_000);
   });
 
   test("overdue is derived from today, never stored", async () => {
@@ -493,5 +491,190 @@ describe("the payment reference IS the invoice number", () => {
     });
     expect(await s.owner.query(api.invoices.byReference, { reference: "INV-0099" })).toBeNull();
     expect(await s.owner.query(api.invoices.byReference, { reference: "" })).toBeNull();
+  });
+});
+
+describe("settlement is derived from the balance, never stamped", () => {
+  /**
+   * The case that matters: R9,000 against R9,500.
+   *
+   * Read as SETTLED, nobody chases the R500. Read as UNTOUCHED, the client is
+   * chased for R9,500 they have mostly already paid — which is worse, because
+   * it is the phone call that ends a relationship. It has to be its own
+   * state, with the remainder visible.
+   */
+  const NINE_FIVE = [{ description: "Website build", quantity: 1, unitPriceCents: 950_000 }];
+
+  async function issued() {
+    const s = await setup();
+    const { invoiceId } = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: NINE_FIVE, now: JAN,
+    });
+    return { ...s, invoiceId };
+  }
+
+  const pay = (s: Awaited<ReturnType<typeof issued>>, amountCents: number) =>
+    s.owner.mutation(api.invoices.recordPayment, {
+      invoiceId: s.invoiceId, amountCents, occurredAt: JAN,
+    });
+
+  test("R9,000 against R9,500 is PART PAID, with the R500 visible", async () => {
+    const s = await issued();
+    const result = await pay(s, 900_000);
+
+    expect(result.settlement).toBe("part_paid");
+    expect(result.paidCents).toBe(900_000);
+    expect(result.owedCents).toBe(50_000);
+    // Not settled...
+    expect(result.settlement).not.toBe("settled");
+    // ...and not untouched.
+    expect(result.settlement).not.toBe("unpaid");
+  });
+
+  test("two part payments add up to settled", async () => {
+    const s = await issued();
+    await pay(s, 900_000);
+    const result = await pay(s, 50_000);
+    expect(result.settlement).toBe("settled");
+    expect(result.owedCents).toBe(0);
+    expect(result.creditCents).toBe(0);
+  });
+
+  test("an OVERPAYMENT leaves a credit rather than rounding away", async () => {
+    /*
+     * A client who pays R10,000 against R9,500 is owed R500 of work or
+     * money. Treating that as "settled, thanks" is keeping money that is not
+     * ours, and it is invisible in every report that only tracks debt.
+     */
+    const s = await issued();
+    const result = await pay(s, 1_000_000);
+
+    expect(result.settlement).toBe("overpaid");
+    expect(result.owedCents).toBe(0);
+    expect(result.creditCents).toBe(50_000);
+    // Signed, so a single figure can carry either direction.
+    expect(result.balanceCents).toBe(-50_000);
+  });
+
+  test("the credit is REPORTED, not netted off other debts", async () => {
+    // Silently paying one invoice with another's overpayment loses the
+    // conversation about what actually happened.
+    const s = await issued();
+    await pay(s, 1_000_000);
+    const owed = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
+    expect(owed.totals[0]?.creditCents).toBe(50_000);
+    expect(owed.totals[0]?.owedCents).toBe(0);
+  });
+
+  test("nothing is written to the invoice row when a payment lands", async () => {
+    /*
+     * The whole point. `status` stays "issued" because that is the lifecycle
+     * fact a person set; settlement lives in the ledger.
+     */
+    const s = await issued();
+    await pay(s, 950_000);
+    const row = await s.h.run((ctx) => ctx.db.get(s.invoiceId));
+    expect(row?.status).toBe("issued");
+    expect(row).not.toHaveProperty("paidAt");
+  });
+
+  test("a REFUND against the invoice moves it back to part paid, on its own", async () => {
+    /*
+     * The failure a stamped flag produces, and the one a badly-scoped
+     * derivation produces identically: settled, then refunded, and it still
+     * says settled. No error, no red test, and the money is gone.
+     *
+     * This test was written before the code supported it and asserted the
+     * WRONG thing — that the invoice stayed settled — because `paidAgainst`
+     * summed payments only and ignored refunds. The test name promised the
+     * behaviour; the body accepted its absence. The sum now nets refunds.
+     */
+    const s = await issued();
+    await pay(s, 950_000);
+    expect(
+      (await s.owner.query(api.invoices.outstanding, { clientId: s.clientId })).invoices[0]
+        ?.settlement,
+    ).toBe("settled");
+
+    await s.owner.mutation(api.ledger.refund, {
+      ventureId: s.ventureId,
+      clientId: s.clientId,
+      // Naming the invoice is what makes this move it.
+      invoiceId: s.invoiceId,
+      amountCents: 200_000,
+      currency: "ZAR",
+      occurredAt: JAN,
+      description: "Scope reduced after deposit",
+    });
+
+    const after = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
+    expect(after.invoices[0]?.settlement).toBe("part_paid");
+    expect(after.invoices[0]?.owedCents).toBe(200_000);
+  });
+
+  test("a refund NOT against the invoice leaves it settled, which is also correct", async () => {
+    // A goodwill refund unrelated to a document is a movement of money, not
+    // an edit to an invoice that was genuinely paid in full.
+    const s = await issued();
+    await pay(s, 950_000);
+    await s.owner.mutation(api.ledger.refund, {
+      ventureId: s.ventureId,
+      clientId: s.clientId,
+      amountCents: 200_000,
+      currency: "ZAR",
+      occurredAt: JAN,
+      description: "Goodwill, unrelated to any invoice",
+    });
+    const after = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
+    expect(after.invoices[0]?.settlement).toBe("settled");
+  });
+
+  test("an unpaid invoice reads as unpaid, not as part paid", async () => {
+    const s = await issued();
+    const owed = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
+    expect(owed.invoices[0]?.settlement).toBe("unpaid");
+    expect(owed.invoices[0]?.owedCents).toBe(950_000);
+  });
+
+  test("voiding is refused once ANY money has arrived, not only when settled", async () => {
+    /*
+     * Voiding a part-paid invoice orphans the payment: the money is real and
+     * in the bank, and the document it belonged to has just claimed it was
+     * never owed.
+     */
+    const s = await issued();
+    await pay(s, 100_000);
+    await expect(
+      s.owner.mutation(api.invoices.voidInvoice, { invoiceId: s.invoiceId, reason: "mistake" }),
+    ).rejects.toThrow(/ALREADY_PAID/);
+  });
+
+  test("a voided invoice owes nothing and holds no credit", async () => {
+    const s = await issued();
+    await s.owner.mutation(api.invoices.voidInvoice, {
+      invoiceId: s.invoiceId, reason: "Issued to the wrong client",
+    });
+    const owed = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
+    expect(owed.invoices[0]?.settlement).toBe("void");
+    expect(owed.invoices[0]?.owedCents).toBe(0);
+    expect(owed.invoices[0]?.creditCents).toBe(0);
+  });
+
+  test("overdue follows the OWED amount, so a part payment stays overdue", async () => {
+    // Paying something is not paying it. The remainder is still late.
+    const s = await setup();
+    const { invoiceId } = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId,
+      lineItems: NINE_FIVE,
+      paymentTermsDays: 0,
+      now: Date.now() - 60 * 60 * 1000,
+    });
+    await s.owner.mutation(api.invoices.recordPayment, {
+      invoiceId, amountCents: 900_000, occurredAt: Date.now(),
+    });
+    const owed = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
+    expect(owed.invoices[0]?.settlement).toBe("part_paid");
+    expect(owed.invoices[0]?.overdue).toBe(true);
+    expect(owed.totals[0]?.overdueCents).toBe(50_000);
   });
 });

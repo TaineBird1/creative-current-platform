@@ -101,6 +101,61 @@ async function takeNumber(
   return { number: `${INVOICE_SERIES}-${String(seq).padStart(4, "0")}`, seq };
 }
 
+/**
+ * WHAT IS SETTLED IS DERIVED, NEVER STAMPED.
+ *
+ * `recordPayment` used to patch the invoice to "paid" once the money covered
+ * it. That is a hand-set flag for something the ledger already knows, and the
+ * two can come apart: post a refund afterwards and the invoice is still
+ * stamped paid, which errors nowhere and reads as settled forever.
+ *
+ * So there is one function, here, and every read goes through it.
+ *
+ * A PART PAYMENT IS ITS OWN STATE. R9,000 against R9,500 is not settled and
+ * it is not untouched — both of those are wrong in a way that costs money.
+ * Read as settled, nobody chases the R500. Read as untouched, the client is
+ * chased for R9,500 they have mostly already paid, which is worse: it is the
+ * call that ends a relationship.
+ *
+ * AN OVERPAYMENT LEAVES A CREDIT rather than rounding away. A client who pays
+ * R10,000 against R9,500 is owed R500 of work or money, and quietly treating
+ * it as "settled, thanks" is keeping money that is not ours.
+ */
+export type Settlement = "unpaid" | "part_paid" | "settled" | "overpaid" | "void";
+
+export function settlementOf(
+  invoice: { totalCents: number; status: string; dueAt?: number },
+  paidCents: number,
+  now: number,
+) {
+  const balanceCents = invoice.totalCents - paidCents;
+
+  const settlement: Settlement =
+    invoice.status === "void"
+      ? "void"
+      : paidCents === 0
+        ? "unpaid"
+        : balanceCents > 0
+          ? "part_paid"
+          : balanceCents === 0
+            ? "settled"
+            : "overpaid";
+
+  const owedCents = settlement === "void" ? 0 : Math.max(0, balanceCents);
+
+  return {
+    settlement,
+    paidCents,
+    /** Signed. Negative means we are holding their money. */
+    balanceCents: settlement === "void" ? 0 : balanceCents,
+    owedCents,
+    /** What we owe THEM, when they have overpaid. */
+    creditCents: settlement === "void" ? 0 : Math.max(0, -balanceCents),
+    /** A fact about today, so it is derived every time and never written down. */
+    overdue: owedCents > 0 && invoice.dueAt !== undefined && invoice.dueAt < now,
+  };
+}
+
 const lineItem = v.object({
   description: v.string(),
   quantity: v.number(),
@@ -287,10 +342,17 @@ export const voidInvoice = ownerMutation({
     const invoice = await ctx.db.get(args.invoiceId);
     if (!invoice) throw bad("NOT_FOUND", "No such invoice.");
     if (invoice.status === "void") throw bad("ALREADY_VOID", "That invoice is already void.");
-    if (invoice.status === "paid") {
+
+    /*
+     * ANY money against it, not only a full settlement. Voiding a part-paid
+     * invoice orphans the payment: the money is real and in the bank, and the
+     * document it belonged to has just claimed it was never owed.
+     */
+    const paidCents = await paidAgainst(ctx, args.invoiceId, invoice.currency as Currency);
+    if (paidCents > 0) {
       throw bad(
         "ALREADY_PAID",
-        "That invoice has been paid. Refund it or issue a credit note — voiding a paid invoice loses the payment.",
+        `${invoice.number} has ${paidCents} cents paid against it. Refund it or issue a credit note — voiding it would orphan that payment.`,
       );
     }
 
@@ -355,16 +417,30 @@ export const recordPayment = ownerMutation({
       createdBy: ctx.platform.userId,
     });
 
-    const paid = await paidAgainst(ctx, args.invoiceId, invoice.currency as Currency);
-    const settled = paid >= invoice.totalCents;
-    if (settled) {
-      await ctx.db.patch(args.invoiceId, { status: "paid", paidAt: args.occurredAt });
-    }
-
-    return { settled, paidCents: paid, outstandingCents: Math.max(0, invoice.totalCents - paid) };
+    /*
+     * NOTHING IS PATCHED. The ledger entry above IS the record that money
+     * arrived, and the state of the invoice follows from it — so a refund
+     * posted next week moves this back to part_paid on its own, which a
+     * stamped flag would not.
+     */
+    const paidCents = await paidAgainst(ctx, args.invoiceId, invoice.currency as Currency);
+    return settlementOf(invoice, paidCents, args.occurredAt);
   },
 });
 
+/**
+ * NET money against this invoice: what came in, less what went back.
+ *
+ * Refunds are counted, and the first version did not count them. It summed
+ * `payment_received` alone, which meant a settled invoice that was then
+ * refunded still read as settled — derived from the wrong set, which has
+ * exactly the same effect as the stamped flag it replaced. No error, no red
+ * test, and the money is gone.
+ *
+ * Refunds are already stored negative (lib/ledger.ts refuses them any other
+ * way), so this is a plain sum rather than a subtraction with a sign to get
+ * wrong.
+ */
 async function paidAgainst(
   ctx: QueryCtx,
   invoiceId: Id<"invoices">,
@@ -374,8 +450,10 @@ async function paidAgainst(
     .query("ledgerEntries")
     .withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId))
     .collect();
-  const payments = entries.filter((entry) => entry.type === "payment_received");
-  return payments.length === 0 ? 0 : sumCents(payments, currency);
+  const movements = entries.filter(
+    (entry) => entry.type === "payment_received" || entry.type === "refund",
+  );
+  return movements.length === 0 ? 0 : sumCents(movements, currency);
 }
 
 /**
@@ -409,7 +487,6 @@ export const outstanding = platformQuery({
     const rows = await Promise.all(
       invoices.map(async (invoice) => {
         const paidCents = await paidAgainst(ctx, invoice._id, invoice.currency as Currency);
-        const owed = invoice.status === "void" ? 0 : Math.max(0, invoice.totalCents - paidCents);
         return {
           invoiceId: invoice._id,
           number: invoice.number,
@@ -420,12 +497,9 @@ export const outstanding = platformQuery({
           status: invoice.status,
           currency: invoice.currency,
           totalCents: invoice.totalCents,
-          paidCents,
-          owedCents: owed,
           issuedAt: invoice.issuedAt ?? null,
           dueAt: invoice.dueAt ?? null,
-          /** Overdue is a fact about today, so it is derived, never stored. */
-          overdue: owed > 0 && invoice.dueAt !== undefined && invoice.dueAt < now,
+          ...settlementOf(invoice, paidCents, now),
         };
       }),
     );
@@ -449,6 +523,8 @@ export const outstanding = platformQuery({
           overdueCents: forCurrency
             .filter((row) => row.overdue)
             .reduce((n, row) => n + row.owedCents, 0),
+          /** Money held that is not ours. Reported, not netted off the debt. */
+          creditCents: forCurrency.reduce((n, row) => n + row.creditCents, 0),
         };
       }),
     };

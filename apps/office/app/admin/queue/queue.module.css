@@ -222,8 +222,7 @@
 .outcome,
 .outcomeGood,
 .final,
-.secondary,
-.primary {
+.secondary {
   font: inherit;
   min-height: 2.875rem;
   border-radius: var(--radius-m);
@@ -243,7 +242,8 @@
 .outcome:disabled,
 .outcomeGood:disabled,
 .final:disabled,
-.primary:disabled {
+.preset:disabled,
+.dayTime:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -292,34 +292,94 @@
 }
 
 .callbackLabel {
+  /* A <p> now rather than a <label> — there is no input to label. */
+  margin: 0;
   font-size: 0.9375rem;
   font-weight: 600;
   color: var(--text);
 }
 
-.callbackInput {
-  min-height: 2.875rem;
-  padding: 0 var(--space-xs);
+/*
+ * One button per phrase, full width, stacked. A two-column grid would fit
+ * more on screen and put "Later today" beside "Monday morning" — two things
+ * that look alike at a glance and are three days apart. A stack is read
+ * rather than scanned, which is what you want for a choice you cannot undo
+ * without finding the lead again.
+ */
+.presets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+.preset {
+  font: inherit;
+  min-height: 3rem;
   border-radius: var(--radius-m);
   border: var(--border-hairline) solid var(--control-border);
-  font: inherit;
   background: var(--bg);
   color: var(--text);
   font-size: 1rem;
+  font-weight: 550;
+  text-align: start;
+  padding-inline: var(--space-s);
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.preset:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/*
+ * The two-tap case. Scrolls rather than growing the panel past the viewport —
+ * a panel taller than the screen puts Cancel somewhere a thumb cannot reach.
+ */
+.dayGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  max-height: 40dvh;
+  overflow-y: auto;
+  padding-top: var(--space-3xs);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.dayRow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.dayLabel {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.dayTime {
+  font: inherit;
+  min-height: 2.75rem;
+  min-width: 4.5rem;
+  border-radius: var(--radius-s);
+  border: var(--border-hairline) solid var(--control-border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.dayTime:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .callbackActions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-2xs);
-}
-
-.primary {
-  background: var(--text);
-  color: var(--bg);
-  border-color: var(--text);
-  font-weight: 650;
 }
 
 /* ---- terminal states -------------------------------------------------- */

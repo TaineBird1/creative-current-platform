@@ -353,7 +353,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 434 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 445 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -628,7 +628,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 434 tests
+pnpm test                        # 445 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

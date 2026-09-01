@@ -2,6 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { mutation } from "../_generated/server";
 import { safeParseSiteConfig } from "@cc/site-config";
 import { hashToken } from "../lib/invites";
+import { toE164 } from "../lib/phone";
 
 /**
  * PUBLIC, UNAUTHENTICATED. On the PUBLIC_ALLOWLIST in guards.test.ts.
@@ -106,20 +107,50 @@ export const submit = mutation({
      * wrong leaves somebody waiting in for an appointment nobody booked.
      */
     const recorded = !site.isDemo;
+
+    /*
+     * A NUMBER WE CANNOT MESSAGE IS SAID OUT LOUD, HERE, NOW.
+     *
+     * A number that does not reach E.164 cannot be checked against the
+     * do-not-call list, so `dispatch` suppresses every message to it — see
+     * lib/phone.ts. That is the right call and it is INVISIBLE to the person
+     * who just typed it: they submit, the confirmation is silently dropped,
+     * and they wait for a message that was never going to arrive.
+     *
+     * Exactly the failure the demo form has, and it gets the same answer: the
+     * backend knows, so the backend says so at the moment of submission. The
+     * outbox row explaining the suppression is visible to the BUSINESS; the
+     * customer sees nothing unless we tell them.
+     *
+     * The request is still recorded. Refusing the number would turn a
+     * messaging limitation into a lost enquiry, which is worse for everyone.
+     */
+    const reachable = toE164(args.phone).ok;
+
     return {
       ok: true as const,
       requestId,
       recorded,
-      notice: recorded
-        ? null
-        : {
+      reachable,
+      notice: !recorded
+        ? {
             title: "This is a preview — nothing was booked.",
             body:
               "This page is a proposal prepared by The Creative Current to show " +
               "what a website could look like. It is not this business's site, " +
               "no request has been sent to them, and nobody will call you. " +
               "Please contact the business directly.",
-          },
+          }
+        : !reachable
+          ? {
+              title: "We have your request — we will phone you.",
+              body:
+                "That number is not a South African mobile, so we cannot send " +
+                "you a WhatsApp or SMS confirmation. Your request has gone " +
+                "through and someone will call you on it. If you would rather " +
+                "have written confirmation, reply with a South African number.",
+            }
+          : null,
     };
   },
 });

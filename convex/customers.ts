@@ -1,4 +1,4 @@
-import { toStorageKey } from "./lib/phone";
+import { toStorageKey, toE164 } from "./lib/phone";
 import { v, ConvexError } from "convex/values";
 import { byName } from "./lib/ordering";
 import type { Id } from "./_generated/dataModel";
@@ -124,9 +124,30 @@ export const upsertByPhone = tenantMutation("staff")({
   handler: async (
     ctx,
     args,
-  ): Promise<{ customerId: Id<"customers">; created: boolean }> => {
+  ): Promise<{
+    customerId: Id<"customers">;
+    created: boolean;
+    /**
+     * False when the number cannot be normalised to E.164 — which means every
+     * message to this customer will be suppressed, because a number we cannot
+     * canonicalise is one we cannot check against the do-not-call list.
+     *
+     * Returned rather than left to be discovered in the outbox three days
+     * later: the person typing it is the only one who can still ask for a
+     * different number, and they can only do that if they are told now.
+     */
+    reachable: boolean;
+  }> => {
     const name = args.name.trim();
     const phone = normalisePhone(args.phone);
+    /*
+     * Whether we will ever be able to MESSAGE this person. A number that does
+     * not reach E.164 cannot be checked against the do-not-call list, so
+     * dispatch suppresses everything to it — see lib/phone.ts. The booking is
+     * still accepted; the caller is told so it can be said at the time rather
+     * than found in an outbox days later.
+     */
+    const reachable = toE164(args.phone).ok;
     if (!name) {
       throw new ConvexError({ code: "INVALID", message: "A customer needs a name." });
     }
@@ -167,7 +188,7 @@ export const upsertByPhone = tenantMutation("staff")({
       if (args.email && !target.email) patch.email = args.email.trim();
       if (Object.keys(patch).length > 0) await ctx.db.patch(target._id, patch);
 
-      return { customerId: target._id, created: false };
+      return { customerId: target._id, created: false, reachable };
     }
 
     const customerId = await ctx.db.insert("customers", {
@@ -193,7 +214,7 @@ export const upsertByPhone = tenantMutation("staff")({
       after: { name, phone },
     });
 
-    return { customerId, created: true };
+    return { customerId, created: true, reachable };
   },
 });
 

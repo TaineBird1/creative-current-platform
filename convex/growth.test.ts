@@ -885,3 +885,173 @@ describe("the queue holds only rows that can be dialled", () => {
     expect(result.rows[0]?.phoneDisplay).toBe("0825550001");
   });
 });
+
+describe("a customer we cannot message is told at the time", () => {
+  /**
+   * The silent failure: a number that does not reach E.164 cannot be checked
+   * against the do-not-call list, so dispatch suppresses everything to it.
+   * That is correct, and it is invisible to the person who typed it — the
+   * outbox row explaining it belongs to the BUSINESS. They submit, the
+   * confirmation is dropped, and they wait.
+   *
+   * Same shape as the demo form, same answer: the backend knows at submission
+   * time, so it says so then.
+   */
+  async function submitWithPhone(phone: string) {
+    const h = harness();
+    await h.run(async (ctx) => {
+      const ventureId = await ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      });
+      const clientId = await ctx.db.insert("clients", {
+        ventureId, kind: "platform", name: "Hillcrest Guest House", slug: "hgh",
+        status: "live", timezone: "Africa/Johannesburg", currency: "ZAR",
+        featureFlags: {}, isDemo: false, isSeed: false,
+      });
+      const config = solarTradesTemplate({
+        businessName: "Hillcrest Guest House", slug: "hgh", brandColour: "#1f6f43",
+        accent: buildAccentRamp("#1f6f43"), city: "Durban", region: "KwaZulu-Natal",
+        suburb: "Hillcrest", addressLine: "12 Old Main Road", phone: "+27315551234",
+      });
+      await ctx.db.insert("sites", {
+        clientId, slug: "hgh", status: "live", config, publishedConfig: config,
+        version: 1, configSchemaVersion: 1, isDemo: false,
+      });
+    });
+
+    const parsed = safeParseSiteConfig(
+      await h.run(async (ctx) => (await ctx.db.query("sites").collect())[0]!.publishedConfig),
+    );
+    if (!parsed.success) throw new Error("template did not parse");
+    const quote = parsed.data.sections.find((section) => section.type === "quote")!;
+
+    const answers: Record<string, string> = {};
+    if (quote.type === "quote") {
+      for (const field of quote.fields) {
+        if (field.required && field.kind !== "photos") answers[field.key] = "Yes";
+      }
+    }
+
+    const result = await h.mutation(api.public.quote.submit, {
+      slug: "hgh",
+      sectionId: quote.id,
+      name: "Visitor",
+      phone,
+      answers,
+      consentAccepted: true,
+    });
+    return { h, result };
+  }
+
+  test("a South African number is reachable and gets no notice", async () => {
+    const { result } = await submitWithPhone("0825551234");
+    expect(result.reachable).toBe(true);
+    expect(result.notice).toBeNull();
+  });
+
+  test("a foreign number is told we will PHONE rather than message", async () => {
+    const { result } = await submitWithPhone("+44 20 7946 0958");
+    expect(result.reachable).toBe(false);
+    expect(result.notice?.title).toMatch(/phone you/i);
+    // And what to do about it, if they would rather have it in writing.
+    expect(result.notice?.body).toMatch(/South African number/i);
+  });
+
+  test("the enquiry is still RECORDED — this is not a rejection", async () => {
+    /*
+     * Refusing the number would turn a messaging limitation into a lost
+     * booking. The business would rather have the enquiry and phone them.
+     */
+    const { h, result } = await submitWithPhone("+44 20 7946 0958");
+    expect(result.ok).toBe(true);
+    const rows = await h.run((ctx) => ctx.db.query("quoteRequests").collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.phone).toBe("+44 20 7946 0958");
+  });
+
+  test("the demo notice still outranks it — nothing was booked beats how we reply", async () => {
+    // Both can apply at once. "Nothing was booked at all" is the more
+    // important of the two things to say, so it wins.
+    const h = harness();
+    await h.run(async (ctx) => {
+      const ventureId = await ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      });
+      const clientId = await ctx.db.insert("clients", {
+        ventureId, kind: "platform", name: "Demo Solar", slug: "demo",
+        status: "live", timezone: "Africa/Johannesburg", currency: "ZAR",
+        featureFlags: {}, isDemo: true, isSeed: false,
+      });
+      const config = solarTradesTemplate({
+        businessName: "Demo Solar", slug: "demo", brandColour: "#1f6f43",
+        accent: buildAccentRamp("#1f6f43"), city: "Durban", region: "KwaZulu-Natal",
+        suburb: "Hillcrest", addressLine: "12 Old Main Road", phone: "+27315551234",
+      });
+      await ctx.db.insert("sites", {
+        clientId, slug: "demo", status: "demo", config, publishedConfig: config,
+        version: 1, configSchemaVersion: 1, isDemo: true,
+        demoExpiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      });
+    });
+    const parsed = safeParseSiteConfig(
+      await h.run(async (ctx) => (await ctx.db.query("sites").collect())[0]!.publishedConfig),
+    );
+    if (!parsed.success) throw new Error("template did not parse");
+    const quote = parsed.data.sections.find((section) => section.type === "quote")!;
+    const answers: Record<string, string> = {};
+    if (quote.type === "quote") {
+      for (const field of quote.fields) {
+        if (field.required && field.kind !== "photos") answers[field.key] = "Yes";
+      }
+    }
+    const result = await h.mutation(api.public.quote.submit, {
+      slug: "demo", sectionId: quote.id, name: "Visitor",
+      phone: "+44 20 7946 0958", answers, consentAccepted: true,
+    });
+    expect(result.notice?.title).toMatch(/nothing was booked/i);
+  });
+
+  test("staff creating a customer are told too", async () => {
+    /*
+     * The other capture point. The person typing it is the only one who can
+     * still ask for a different number, and only if they are told now rather
+     * than finding it in an outbox three days later.
+     */
+    const h = harness();
+    const ids = await h.run(async (ctx) => {
+      const ventureId = await ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      });
+      const clientId = await ctx.db.insert("clients", {
+        ventureId, kind: "platform", name: "Alpha", slug: "alpha", status: "live",
+        timezone: "Africa/Johannesburg", currency: "ZAR",
+        featureFlags: {}, isDemo: false, isSeed: false,
+      });
+      const user = await ctx.db.insert("users", { email: "owner@alpha.test" });
+      await ctx.db.insert("memberships", {
+        userId: user, clientId, role: "owner", active: true, acceptedAt: Date.now(),
+      });
+      return { user };
+    });
+    const owner = asUser(h, ids.user);
+
+    const local = await owner.mutation(api.customers.upsertByPhone, {
+      clientSlug: "alpha", name: "Thabo M", phone: "0825551234",
+    });
+    expect(local.reachable).toBe(true);
+
+    const foreign = await owner.mutation(api.customers.upsertByPhone, {
+      clientSlug: "alpha", name: "Anna V", phone: "+44 20 7946 0958",
+    });
+    expect(foreign.reachable).toBe(false);
+  });
+
+  test("and dispatch really does suppress that customer, which is why it is said", async () => {
+    // The two halves have to agree, or the notice is a lie in one direction
+    // or the other. This is the half that makes the warning true.
+    const h = harness();
+    const verdict = await h.run((ctx) => contactDecision(ctx, { phone: "442079460958" }));
+    expect(verdict.blocked).toBe(true);
+    expect(verdict.reason).toMatch(/cannot read the phone/);
+  });
+});

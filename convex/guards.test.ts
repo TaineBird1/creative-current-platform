@@ -825,6 +825,45 @@ describe("one phone normaliser", () => {
     ).toBe(false);
   });
 
+  test("a customer we cannot message is TOLD, at the moment they give it", () => {
+    /**
+     * The silent failure this closes. A number that does not reach E.164
+     * cannot be checked against the do-not-call list, so dispatch suppresses
+     * every message to it — correctly. But the outbox row explaining that is
+     * visible to the BUSINESS, and the customer sees nothing: they submit,
+     * the confirmation is dropped, and they wait for a message that was never
+     * going to arrive.
+     *
+     * Exactly the demo-form shape, and it gets the same answer. The backend
+     * knows at submission time, so the backend says so.
+     */
+    const quote = sourceFiles.find((f) => f.path === "public/quote.ts");
+    expect(quote, "convex/public/quote.ts is missing").toBeTruthy();
+    expect(
+      /toE164\(/.test(quote!.code),
+      "public/quote.ts must decide whether the number it just took can be messaged.",
+    ).toBe(true);
+    expect(
+      /reachable/.test(quote!.code),
+      "and it must return that, so the form can say it at the time.",
+    ).toBe(true);
+
+    // Staff-side capture too: the person typing it is the only one who can
+    // still ask for a different number, and only if they are told now.
+    const customers = sourceFiles.find((f) => f.path === "customers.ts");
+    expect(customers?.code).toMatch(/reachable/);
+  });
+
+  test("an unreachable number does not lose the enquiry", () => {
+    // Refusing the number would turn a messaging limitation into a lost
+    // booking, which is worse for everyone. It is recorded, and said.
+    const quote = sourceFiles.find((f) => f.path === "public/quote.ts")!;
+    expect(
+      /throw rejected\([^)]*reachab/i.test(quote.code),
+      "an unmessageable number must not be rejected — record it and say so",
+    ).toBe(false);
+  });
+
   test("an unparseable number is a refusal, not a pass", () => {
     const phone = sourceFiles.find((f) => f.path === PHONE);
     expect(phone, "convex/lib/phone.ts is missing").toBeTruthy();

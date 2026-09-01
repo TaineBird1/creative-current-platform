@@ -230,7 +230,15 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   reads as permission. `toStorageKey` falls back to digits for a non-SA
   number so a booking is not refused - with the stated cost that such a
   customer cannot be checked against the DNC list and will therefore be
-  suppressed, visibly, in the outbox.
+  suppressed. **The CUSTOMER is told at the moment they give the number** -
+  `public/quote.submit` returns `reachable` and a notice saying "we will
+  phone you rather than message you, or give us an SA number", and
+  `customers.upsertByPhone` returns `reachable` so staff hear it while they
+  can still ask. The outbox row explaining a suppression is visible to the
+  BUSINESS; the customer sees nothing unless we say it. Same shape as the
+  demo form, same answer: the backend knows, so the backend says so. The
+  enquiry is still RECORDED - refusing the number would turn a messaging
+  limitation into a lost booking.
 - **THE CALL QUEUE CONTAINS ONLY CALLABLE ROWS.** A lead with no dialable
   number is excluded, not greyed out: a dial button that does nothing teaches
   you it is sometimes a lie, and three of those in a morning is enough to
@@ -345,7 +353,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 426 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 434 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -620,7 +628,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 426 tests
+pnpm test                        # 434 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

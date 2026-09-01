@@ -40,6 +40,12 @@ export const refund = ownerMutation({
   args: {
     ventureId: v.id("ventures"),
     clientId: v.optional(v.id("clients")),
+    /**
+     * The invoice this reverses, when it reverses one. Naming it is what
+     * moves that invoice back off "settled" — a refund recorded against the
+     * client alone leaves the document still reading as paid in full.
+     */
+    invoiceId: v.optional(v.id("invoices")),
     /** Positive here, for the person typing it. Negated before it is stored. */
     amountCents: v.number(),
     currency,
@@ -59,6 +65,7 @@ export const refund = ownerMutation({
     const entryId = await postEntry(ctx, {
       ventureId: args.ventureId,
       clientId: args.clientId,
+      invoiceId: args.invoiceId,
       type: "refund",
       amountCents: -amountCents,
       currency: args.currency,

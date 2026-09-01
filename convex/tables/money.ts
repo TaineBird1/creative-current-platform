@@ -27,6 +27,49 @@ export const moneyTables = {
     next: v.number(),
   }).index("by_venture_series", ["ventureId", "series"]),
 
+  /**
+   * WHO IS ISSUING. Required before a venture can invoice anything.
+   *
+   * A South African SOLE PROPRIETOR invoices in their own name and has no
+   * registration number — there is nothing to register and nothing to wait
+   * for. `registrationNumber` is therefore optional, and its absence is the
+   * normal case rather than a gap: it appears when a Pty Ltd exists, and not
+   * before.
+   *
+   * `vatNumber` is likewise absent until VAT registration, which is
+   * compulsory only above R1m turnover. While it is absent no invoice renders
+   * a VAT line, because charging VAT without being registered for it is a
+   * different and much worse problem than not charging it.
+   *
+   * Per VENTURE, not per platform. One person can trade as a sole prop for
+   * consulting and form a company for the sites business, and on the day that
+   * happens only one venture's issuer changes.
+   */
+  issuers: defineTable({
+    ventureId: v.id("ventures"),
+    /** The legal person or company. For a sole prop, their own full name. */
+    legalName: v.string(),
+    /** The name on the letterhead, when it differs. */
+    tradingName: v.optional(v.string()),
+    /** Absent for a sole prop. Present once a Pty Ltd is registered. */
+    registrationNumber: v.optional(v.string()),
+    /** Absent until VAT registration. No VAT is charged while it is absent. */
+    vatNumber: v.optional(v.string()),
+    addressLine: v.string(),
+    suburb: v.optional(v.string()),
+    city: v.string(),
+    postalCode: v.optional(v.string()),
+    countryCode: v.string(),
+    email: v.string(),
+    phone: v.optional(v.string()),
+    /** Their OWN account, printed so a client can pay by EFT. */
+    bankName: v.optional(v.string()),
+    bankAccountName: v.optional(v.string()),
+    bankAccountNumber: v.optional(v.string()),
+    bankBranchCode: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_venture", ["ventureId"]),
+
   invoices: defineTable({
     ventureId: v.id("ventures"),
     clientId: v.id("clients"),
@@ -51,13 +94,33 @@ export const moneyTables = {
     issuerLegalName: v.string(),
     issuerRegistrationNumber: v.optional(v.string()),
     issuerVatNumber: v.optional(v.string()),
-    status: v.union(
-      v.literal("draft"), v.literal("issued"), v.literal("paid"),
-      v.literal("overdue"), v.literal("void"), v.literal("written_off"),
-    ),
+    /**
+     * LIFECYCLE ONLY. Whether it is PAID is not in here, on purpose.
+     *
+     * This union used to carry "paid" and "overdue", and `recordPayment`
+     * patched the row to "paid" once the money covered it. That is a hand-set
+     * flag for a fact the ledger already knows, and the two can disagree —
+     * a refund posted afterwards leaves an invoice still stamped paid, which
+     * throws nothing and reads as settled forever.
+     *
+     * Settlement and overdue are DERIVED from the ledger and from today. What
+     * remains here is only what a person decides: it went out, it was
+     * cancelled, or it was given up on.
+     */
+    status: v.union(v.literal("issued"), v.literal("void"), v.literal("written_off")),
+    /**
+     * SNAPSHOTTED, like the issuer. The document says "7 days" because that
+     * is what was agreed on the day; changing the default next year must not
+     * silently re-term an invoice a client is already holding.
+     *
+     * There is deliberately NO paymentReference column. The reference IS the
+     * invoice number, and a second field could be set to something else —
+     * which is not an error anywhere, just a deposit that reconciles to
+     * nothing. See `paymentReference` in invoices.ts.
+     */
+    paymentTermsDays: v.number(),
     issuedAt: v.optional(v.number()),
     dueAt: v.optional(v.number()),
-    paidAt: v.optional(v.number()),
     provider: v.optional(v.union(v.literal("paystack"), v.literal("paddle"), v.literal("eft"), v.literal("manual"))),
     providerRef: v.optional(v.string()),
     pdfStorageId: v.optional(v.id("_storage")),

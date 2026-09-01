@@ -299,45 +299,19 @@ describe("the ledger", () => {
   });
 });
 
-describe("the invoice boundary", () => {
+describe("invoice numbering", () => {
   /**
-   * WHERE THIS BACKEND STOPS, AND WHY IT IS A TEST.
+   * THE BOUNDARY THAT USED TO BE HERE IS GONE, AND WHY MATTERS.
    *
-   * The ledger needs no registered entity: it records money that actually
-   * moved, and that is true with or without letterhead. An INVOICE is the
-   * other thing. It carries a legal name, a registration number and a
-   * sequential number, it is the document a customer receives, and in South
-   * Africa it is the document SARS reads. Issuing one before there is an
-   * entity to issue it means sending a customer a number that belongs to
-   * nobody.
+   * This block previously asserted that NOTHING writes the invoices table,
+   * on the reasoning that an invoice needs a registered entity and none
+   * existed. That was half wrong. It is true of a Pty Ltd, which takes weeks
+   * at CIPC — and false of a SOLE PROPRIETOR, who invoices in their own name
+   * and has nothing to register. The schema had it right all along:
+   * `issuerRegistrationNumber` was already optional. The guard did not.
    *
-   * So `invoices` has no writer, and this is a test rather than a note,
-   * because a note does not survive a session boundary. Whoever registers the
-   * entity will find this failing and will have to state what the issuer is
-   * before the first invoice can exist — which is the order those two things
-   * have to happen in anyway.
+   * What survives is the rule that actually governs numbering, below.
    */
-  test("nothing writes the invoices table yet", () => {
-    const offenders: string[] = [];
-    for (const file of sourceFiles) {
-      if (/db\.insert\(\s*"invoices"/.test(file.text)) {
-        offenders.push(`${file.path}: inserts into invoices`);
-      }
-    }
-    expect(
-      offenders,
-      [
-        "An invoice is a legal document, not a ledger row. It needs an issuer",
-        "legal name and a registration number, and there is no registered",
-        "entity behind this platform yet.",
-        "",
-        "If you are adding invoicing: record the entity first, snapshot it onto",
-        "each invoice at issue (never join to it — a company that renames must",
-        "not silently rewrite documents already sent), then delete this test",
-        "and say in the PR what the issuer is.",
-      ].join("\n"),
-    ).toEqual([]);
-  });
 
   test("a number is never allocated apart from the invoice it belongs to", () => {
     /**
@@ -359,28 +333,39 @@ describe("the invoice boundary", () => {
      * survivable, and then a standing temptation to "tidy it up" by reusing
      * the number, which is the duplicate this rule exists to prevent.
      *
-     * Nothing writes either table today, so this guard is aimed forward: it
-     * fires on whoever builds invoicing, at the moment they get it wrong.
+     * WHAT THIS USED TO MISS, found while building invoicing. It scanned only
+     * the chunks AFTER the first `export const`, so a counter helper defined
+     * above the exports was invisible — which is exactly where such a helper
+     * lives. `quotes.ts` has had one since it was written and this passed
+     * anyway. It now follows the CALLS, because the call site is where the
+     * transaction boundary actually is.
      */
     const offenders: string[] = [];
+    /** Tables whose rows consume a number from `invoiceCounters`. */
+    const NUMBERED = ["quotes", "invoices"];
+    /** Helpers that take a number. Calling one counts as touching the counter. */
+    const TAKERS = /\b(takeNumber|nextNumber)\s*\(/;
 
     for (const file of sourceFiles) {
+      if (!/invoiceCounters/.test(file.code) && !TAKERS.test(file.code)) continue;
+
       // Per exported function, so "same file" is not mistaken for "same
       // transaction" — two mutations in one file are still two transactions.
-      for (const chunk of file.text.split(/export const /).slice(1)) {
+      for (const chunk of file.code.split(/export const /).slice(1)) {
         const body = chunk.split(/\nexport /)[0]!;
         const name = chunk.match(/^(\w+)/)?.[1] ?? "unknown";
 
-        const touchesCounter =
+        const takesNumber =
           /db\.(patch|replace|insert)\([^;]*invoiceCounter/s.test(body) ||
-          /query\(\s*"invoiceCounters"/.test(body);
-        const createsInvoice = /db\.insert\(\s*"invoices"/.test(body);
+          /query\(\s*"invoiceCounters"/.test(body) ||
+          TAKERS.test(body);
+        if (!takesNumber) continue;
 
-        if (touchesCounter && !createsInvoice) {
-          offenders.push(`${file.path}: ${name} allocates a number without inserting the invoice`);
-        }
-        if (createsInvoice && !touchesCounter) {
-          offenders.push(`${file.path}: ${name} inserts an invoice without allocating its number`);
+        const insertsNumbered = NUMBERED.some((table) =>
+          new RegExp(`db\\.insert\\(\\s*"${table}"`).test(body),
+        );
+        if (!insertsNumbered) {
+          offenders.push(`${file.path}: ${name} takes a number without inserting the row for it`);
         }
       }
     }
@@ -401,20 +386,116 @@ describe("the invoice boundary", () => {
     ).toEqual([]);
   });
 
-  test("and no reader claims a receivables figure", () => {
-    // A receivables total of R0 is a claim that nothing is owed, which is a
-    // different statement from "we do not track this". Same reasoning that put
-    // "not tracked" in the P&L instead of a zero.
+  test("an issued invoice is never deleted, only voided", () => {
+    /*
+     * Deleting leaves a gap that looks like a MISSING invoice rather than a
+     * cancelled one, and an accountant cannot tell those apart from outside.
+     * Voiding keeps the number used and the document visible, with a
+     * reversing ledger entry beside it.
+     */
     const offenders: string[] = [];
     for (const file of sourceFiles) {
-      for (const m of file.text.matchAll(/(outstandingCents|receivableCents|agingBuckets)/g)) {
-        offenders.push(`${file.path}: reports ${m[1]}`);
+      if (/db\.delete\([^)]*invoice/i.test(file.code)) {
+        offenders.push(`${file.path}: deletes an invoice`);
+      }
+    }
+    expect(offenders, "Void it instead — the record has to stay.").toEqual([]);
+  });
+
+  test("the issuer is snapshotted onto the invoice, never joined at read time", () => {
+    /*
+     * A person who converts to a Pty Ltd, or corrects their trading name,
+     * must not silently rewrite documents already in clients' inboxes. What
+     * was true on the day is what the invoice says forever.
+     */
+    const invoices = sourceFiles.find((f) => f.path === "invoices.ts");
+    if (!invoices) return;
+    expect(invoices.code).toMatch(/issuerLegalName:\s*issuer\.legalName/);
+
+    const get = invoices.code.slice(invoices.code.indexOf("export const get"));
+    expect(
+      /query\(\s*"issuers"/.test(get),
+      "invoices.get must not look the issuer up — the invoice already carries it",
+    ).toBe(false);
+  });
+
+  test("the payment reference is DERIVED from the number, never stored beside it", () => {
+    /*
+     * South African clients pay by EFT and the reference is how a deposit
+     * finds its invoice. A stored `paymentReference` column could be set to
+     * something other than the number — which throws nothing, fails no test,
+     * and produces a deposit that reconciles to nothing while both fields
+     * look perfectly reasonable in the database.
+     *
+     * Two fields that are supposed to agree are two fields that will not.
+     */
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (!file.path.startsWith("tables/")) continue;
+      if (/paymentReference:\s*v\./.test(file.code)) {
+        offenders.push(`${file.path}: stores a payment reference`);
       }
     }
     expect(
       offenders,
-      "Nothing is owed until something has been issued. Do not report a zero for it.",
+      "The reference IS the invoice number. Derive it — see paymentReference() in invoices.ts.",
     ).toEqual([]);
+  });
+
+  test("and every invoice read hands it over rather than leaving it to be worked out", () => {
+    // A template that has to derive the reference is a template that can
+    // print something else next to the bank details.
+    const invoices = sourceFiles.find((f) => f.path === "invoices.ts");
+    if (!invoices) return;
+    expect(invoices.code).toMatch(/paymentReference:\s*paymentReference\(/);
+  });
+
+  test("settlement is derived, never patched onto the invoice", () => {
+    /*
+     * `recordPayment` used to patch the row to "paid" once the money covered
+     * it. A stamped flag for something the ledger already knows can come
+     * apart from it: post a refund afterwards and the invoice is still
+     * stamped paid, which throws nothing and reads as settled forever.
+     *
+     * The stored `status` now carries only what a PERSON decides — issued,
+     * void, written_off. Paid, part-paid, overpaid and overdue are all
+     * computed from money and from today.
+     */
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      for (const m of file.code.matchAll(/db\.patch\([^;]*status:\s*"(paid|overdue|draft)"/gs)) {
+        offenders.push(`${file.path}: patches an invoice to "${m[1]}"`);
+      }
+      if (/db\.patch\([^;]*paidAt:/s.test(file.code)) {
+        offenders.push(`${file.path}: writes paidAt`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Settlement comes from settlementOf() in invoices.ts, which reads the",
+        "ledger. A part payment must read as part paid — not as settled, which",
+        "stops anyone chasing the rest, and not as untouched, which chases a",
+        "client for money they have mostly already sent.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the balance nets refunds, not just payments", () => {
+    // Derived from the wrong set has the same effect as a stamped flag: a
+    // settled invoice that was refunded still reads settled.
+    const invoices = sourceFiles.find((f) => f.path === "invoices.ts");
+    if (!invoices) return;
+    const fn = invoices.code.slice(invoices.code.indexOf("async function paidAgainst"));
+    expect(fn.slice(0, 600)).toMatch(/"refund"/);
+  });
+
+  test("no VAT is charged while there is no VAT number", () => {
+    // Charging VAT you are not registered for is worse than not charging it:
+    // the money is not yours and SARS wants it either way.
+    const invoices = sourceFiles.find((f) => f.path === "invoices.ts");
+    if (!invoices) return;
+    expect(invoices.code).toMatch(/taxFlag\s*=\s*Boolean\(issuer\.vatNumber\)/);
   });
 });
 

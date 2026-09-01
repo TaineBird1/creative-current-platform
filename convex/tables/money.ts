@@ -98,6 +98,17 @@ export const moneyTables = {
       v.literal("draft"), v.literal("issued"), v.literal("paid"),
       v.literal("overdue"), v.literal("void"), v.literal("written_off"),
     ),
+    /**
+     * SNAPSHOTTED, like the issuer. The document says "7 days" because that
+     * is what was agreed on the day; changing the default next year must not
+     * silently re-term an invoice a client is already holding.
+     *
+     * There is deliberately NO paymentReference column. The reference IS the
+     * invoice number, and a second field could be set to something else —
+     * which is not an error anywhere, just a deposit that reconciles to
+     * nothing. See `paymentReference` in invoices.ts.
+     */
+    paymentTermsDays: v.number(),
     issuedAt: v.optional(v.number()),
     dueAt: v.optional(v.number()),
     paidAt: v.optional(v.number()),

@@ -38,6 +38,33 @@ import { postEntry, reverseEntry } from "./lib/ledger";
  */
 
 const INVOICE_SERIES = "INV";
+
+/**
+ * Seven days, not thirty.
+ *
+ * Thirty is the corporate default and it is wrong for this business: a
+ * one-person agency invoicing small trades does not extend a month of credit,
+ * and asking for it teaches a client that late is normal.
+ */
+const DEFAULT_TERMS_DAYS = 7;
+
+/**
+ * THE PAYMENT REFERENCE IS THE INVOICE NUMBER. Not a copy of it.
+ *
+ * South African clients pay by EFT, and an unreferenced deposit is the
+ * reconciliation problem — a payment lands in the bank with "PAYMENT" or the
+ * payer's own surname on it and nobody can say which invoice it settled.
+ * Every document has to print the reference, plainly, next to the bank
+ * details.
+ *
+ * Derived rather than stored, and that is the whole point. A stored
+ * `paymentReference` column could be set to something other than the number,
+ * which throws nothing, breaks no test, and produces exactly the deposit that
+ * reconciles to nothing. Derived, the two cannot disagree.
+ */
+export function paymentReference(invoiceNumber: string): string {
+  return invoiceNumber;
+}
 const bad = (code: string, message: string) => new ConvexError({ code, message });
 
 /**
@@ -91,8 +118,8 @@ export const issue = ownerMutation({
   args: {
     clientId: v.id("clients"),
     lineItems: v.array(lineItem),
-    /** Days until due. South African norm is 30; 0 means on receipt. */
-    dueInDays: v.optional(v.number()),
+    /** Payment terms in days. Defaults to 7; 0 means on receipt. */
+    paymentTermsDays: v.optional(v.number()),
     notes: v.optional(v.string()),
     now: v.optional(v.number()),
   },
@@ -167,6 +194,11 @@ export const issue = ownerMutation({
     const taxCents = 0;
     const totalCents = subtotalCents + taxCents;
 
+    const termsDays = args.paymentTermsDays ?? DEFAULT_TERMS_DAYS;
+    if (!Number.isInteger(termsDays) || termsDays < 0 || termsDays > 180) {
+      throw bad("INVALID_TERMS", "Payment terms are a whole number of days, 0 to 180.");
+    }
+
     const { number, seq } = await takeNumber(ctx, client.ventureId);
 
     const invoiceId = await ctx.db.insert("invoices", {
@@ -191,8 +223,9 @@ export const issue = ownerMutation({
       issuerRegistrationNumber: issuer.registrationNumber,
       issuerVatNumber: issuer.vatNumber,
       status: "issued",
+      paymentTermsDays: termsDays,
       issuedAt: now,
-      dueAt: now + (args.dueInDays ?? 30) * 24 * 60 * 60 * 1000,
+      dueAt: now + termsDays * 24 * 60 * 60 * 1000,
       isDemo: false,
     });
 
@@ -224,7 +257,19 @@ export const issue = ownerMutation({
       at: now,
     });
 
-    return { invoiceId, number, totalCents, currency, taxFlag };
+    return {
+      invoiceId,
+      number,
+      totalCents,
+      currency,
+      taxFlag,
+      termsDays,
+      /*
+       * Returned so a caller sending the invoice cannot forget it. It is the
+       * number — that is not a coincidence to be preserved, it is the rule.
+       */
+      paymentReference: paymentReference(number),
+    };
   },
 });
 
@@ -368,6 +413,9 @@ export const outstanding = platformQuery({
         return {
           invoiceId: invoice._id,
           number: invoice.number,
+          /** Always the number. Carried so no screen has to remember. */
+          paymentReference: paymentReference(invoice.number),
+          paymentTermsDays: invoice.paymentTermsDays,
           clientId: invoice.clientId,
           status: invoice.status,
           currency: invoice.currency,
@@ -410,5 +458,56 @@ export const outstanding = platformQuery({
 /** One invoice, everything a rendered document needs. */
 export const get = platformQuery({
   args: { invoiceId: v.id("invoices") },
-  handler: async (ctx, { invoiceId }): Promise<Doc<"invoices"> | null> => ctx.db.get(invoiceId),
+  handler: async (ctx, { invoiceId }) => {
+    const invoice = await ctx.db.get(invoiceId);
+    if (!invoice) return null;
+    return {
+      ...invoice,
+      /*
+       * Handed to the renderer rather than left for it to work out. The
+       * document has to print "Payment reference: INV-0007" beside the bank
+       * details, and a template that had to derive it is a template that can
+       * print something else.
+       */
+      paymentReference: paymentReference(invoice.number),
+    };
+  },
+});
+
+/**
+ * Find the invoice a deposit belongs to.
+ *
+ * The other half of the reference existing at all. A bank statement line
+ * reads "EFT INV-0007" and this turns that back into the invoice, so
+ * reconciliation is a lookup rather than a scroll through a list.
+ *
+ * Matched case-insensitively and ignoring spaces, because a person typing a
+ * reference into their banking app types "inv 0007" as often as not — and a
+ * reference that only matches when typed perfectly is a reference that does
+ * not work on the day it is needed.
+ */
+export const byReference = platformQuery({
+  args: { reference: v.string() },
+  handler: async (ctx, { reference }) => {
+    const wanted = reference.replace(/[\s-]/g, "").toUpperCase();
+    if (!wanted) return null;
+
+    const all = await ctx.db.query("invoices").collect();
+    const match = all.find(
+      (invoice) => invoice.number.replace(/[\s-]/g, "").toUpperCase() === wanted,
+    );
+    if (!match) return null;
+
+    const client = await ctx.db.get(match.clientId);
+    return {
+      invoiceId: match._id,
+      number: match.number,
+      clientId: match.clientId,
+      clientName: client?.name ?? "Unknown client",
+      status: match.status,
+      totalCents: match.totalCents,
+      currency: match.currency,
+      dueAt: match.dueAt ?? null,
+    };
+  },
 });

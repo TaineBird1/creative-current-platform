@@ -262,7 +262,7 @@ describe("what is owed", () => {
     await s.owner.mutation(api.invoices.issue, {
       clientId: s.clientId,
       lineItems: LINES,
-      dueInDays: 0,
+      paymentTermsDays: 0,
       now: Date.now() - 60 * 60 * 1000,
     });
     const owed = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
@@ -360,5 +360,138 @@ describe("what cannot be invoiced", () => {
     const invoice = await s.owner.query(api.invoices.get, { invoiceId });
     expect(invoice?.issuerLegalName).toBe("Taine Bird");
     expect(invoice?.issuerRegistrationNumber).toBeUndefined();
+  });
+});
+
+describe("payment terms", () => {
+  test("the default is 7 days, not 30", async () => {
+    /*
+     * Thirty is the corporate default and it is wrong for this business. A
+     * one-person agency invoicing small trades does not extend a month of
+     * credit, and asking for it teaches a client that late is normal.
+     */
+    const s = await setup();
+    const result = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, now: JAN,
+    });
+    expect(result.termsDays).toBe(7);
+
+    const invoice = await s.owner.query(api.invoices.get, { invoiceId: result.invoiceId });
+    expect(invoice?.paymentTermsDays).toBe(7);
+    expect(invoice?.dueAt).toBe(JAN + 7 * 24 * 60 * 60 * 1000);
+  });
+
+  test("it can be overridden per invoice", async () => {
+    const s = await setup();
+    const result = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, paymentTermsDays: 30, now: JAN,
+    });
+    const invoice = await s.owner.query(api.invoices.get, { invoiceId: result.invoiceId });
+    expect(invoice?.dueAt).toBe(JAN + 30 * 24 * 60 * 60 * 1000);
+  });
+
+  test("0 days means on receipt, and is allowed", async () => {
+    const s = await setup();
+    const result = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, paymentTermsDays: 0, now: JAN,
+    });
+    const invoice = await s.owner.query(api.invoices.get, { invoiceId: result.invoiceId });
+    expect(invoice?.dueAt).toBe(JAN);
+  });
+
+  test("nonsense terms are refused", async () => {
+    const s = await setup();
+    for (const paymentTermsDays of [-1, 2.5, 400]) {
+      await expect(
+        s.owner.mutation(api.invoices.issue, {
+          clientId: s.clientId, lineItems: LINES, paymentTermsDays, now: JAN,
+        }),
+      ).rejects.toThrow(/INVALID_TERMS/);
+    }
+  });
+
+  test("the terms are SNAPSHOTTED — changing the default does not re-term what was sent", async () => {
+    // Same rule as the issuer. An invoice a client is holding says what was
+    // agreed on the day.
+    const s = await setup();
+    const result = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, paymentTermsDays: 14, now: JAN,
+    });
+    const invoice = await s.owner.query(api.invoices.get, { invoiceId: result.invoiceId });
+    expect(invoice?.paymentTermsDays).toBe(14);
+  });
+});
+
+describe("the payment reference IS the invoice number", () => {
+  /**
+   * South African clients pay by EFT, and an unreferenced deposit is the
+   * reconciliation problem: money lands with "PAYMENT" or the payer's surname
+   * on it and nobody can say which invoice it settled.
+   *
+   * Derived rather than stored, deliberately. A stored column could be set to
+   * something other than the number — which throws nothing, breaks no test,
+   * and produces exactly the deposit that reconciles to nothing.
+   */
+  test("every read carries it, and it always equals the number", async () => {
+    const s = await setup();
+    const issued = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, now: JAN,
+    });
+    expect(issued.paymentReference).toBe(issued.number);
+
+    const invoice = await s.owner.query(api.invoices.get, { invoiceId: issued.invoiceId });
+    expect(invoice?.paymentReference).toBe(issued.number);
+
+    const owed = await s.owner.query(api.invoices.outstanding, { clientId: s.clientId });
+    expect(owed.invoices[0]?.paymentReference).toBe(issued.number);
+  });
+
+  test("there is no stored reference column that could drift from it", async () => {
+    // The failure being designed out: two fields that are supposed to agree.
+    const s = await setup();
+    const { invoiceId } = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, now: JAN,
+    });
+    const row = await s.h.run((ctx) => ctx.db.get(invoiceId));
+    expect(row).not.toHaveProperty("paymentReference");
+  });
+
+  test("a bank statement line finds its invoice", async () => {
+    const s = await setup();
+    const issued = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, now: JAN,
+    });
+    const found = await s.owner.query(api.invoices.byReference, {
+      reference: issued.paymentReference,
+    });
+    expect(found?.invoiceId).toBe(issued.invoiceId);
+    expect(found?.clientName).toBe("Upper Highway Solar");
+  });
+
+  test("it matches however the client typed it into their banking app", async () => {
+    /*
+     * "inv 0001", "INV-0001", "inv0001" are one reference. A lookup that only
+     * matches a perfectly typed one is a lookup that fails on the day it is
+     * needed — which is the day money arrives.
+     */
+    const s = await setup();
+    const issued = await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, now: JAN,
+    });
+    for (const typed of ["INV-0001", "inv-0001", "inv 0001", "INV0001", "  inv0001  "]) {
+      const found = await s.owner.query(api.invoices.byReference, { reference: typed });
+      expect(found?.invoiceId, typed).toBe(issued.invoiceId);
+    }
+  });
+
+  test("an unknown reference returns nothing rather than a near miss", async () => {
+    // Guessing which invoice a stray deposit belongs to is worse than saying
+    // it cannot be matched — the wrong invoice gets marked paid.
+    const s = await setup();
+    await s.owner.mutation(api.invoices.issue, {
+      clientId: s.clientId, lineItems: LINES, now: JAN,
+    });
+    expect(await s.owner.query(api.invoices.byReference, { reference: "INV-0099" })).toBeNull();
+    expect(await s.owner.query(api.invoices.byReference, { reference: "" })).toBeNull();
   });
 });

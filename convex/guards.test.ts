@@ -419,6 +419,37 @@ describe("invoice numbering", () => {
     ).toBe(false);
   });
 
+  test("the payment reference is DERIVED from the number, never stored beside it", () => {
+    /*
+     * South African clients pay by EFT and the reference is how a deposit
+     * finds its invoice. A stored `paymentReference` column could be set to
+     * something other than the number — which throws nothing, fails no test,
+     * and produces a deposit that reconciles to nothing while both fields
+     * look perfectly reasonable in the database.
+     *
+     * Two fields that are supposed to agree are two fields that will not.
+     */
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (!file.path.startsWith("tables/")) continue;
+      if (/paymentReference:\s*v\./.test(file.code)) {
+        offenders.push(`${file.path}: stores a payment reference`);
+      }
+    }
+    expect(
+      offenders,
+      "The reference IS the invoice number. Derive it — see paymentReference() in invoices.ts.",
+    ).toEqual([]);
+  });
+
+  test("and every invoice read hands it over rather than leaving it to be worked out", () => {
+    // A template that has to derive the reference is a template that can
+    // print something else next to the bank details.
+    const invoices = sourceFiles.find((f) => f.path === "invoices.ts");
+    if (!invoices) return;
+    expect(invoices.code).toMatch(/paymentReference:\s*paymentReference\(/);
+  });
+
   test("no VAT is charged while there is no VAT number", () => {
     // Charging VAT you are not registered for is worse than not charging it:
     // the money is not yours and SARS wants it either way.

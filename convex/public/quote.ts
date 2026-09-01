@@ -91,7 +91,36 @@ export const submit = mutation({
       });
     }
 
-    return { ok: true as const, requestId };
+    /*
+     * THE FORM IS TOLD WHAT HAPPENED, RATHER THAN ASSUMING.
+     *
+     * A demo submission is recorded as engagement and reaches nobody. Left to
+     * answer for itself the form says "Thanks — that is with us", and a real
+     * customer who found the demo walks away believing a tradesman is coming.
+     * That is the same fail-open shape as the rest of the demo rules: silence
+     * reads as success.
+     *
+     * The verdict is decided HERE because this is the only place that knows
+     * whether anything was actually dispatched. A template that had to work
+     * it out for itself is a template that can be wrong, and the one that is
+     * wrong leaves somebody waiting in for an appointment nobody booked.
+     */
+    const recorded = !site.isDemo;
+    return {
+      ok: true as const,
+      requestId,
+      recorded,
+      notice: recorded
+        ? null
+        : {
+            title: "This is a preview — nothing was booked.",
+            body:
+              "This page is a proposal prepared by The Creative Current to show " +
+              "what a website could look like. It is not this business's site, " +
+              "no request has been sent to them, and nobody will call you. " +
+              "Please contact the business directly.",
+          },
+    };
   },
 });
 

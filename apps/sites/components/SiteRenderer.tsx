@@ -14,6 +14,7 @@ import {
 } from "./sections/Blocks";
 import { QuoteForm } from "./sections/QuoteForm";
 import { DemoDisclosure } from "./DemoDisclosure";
+import { localBusinessJsonLd } from "@/lib/demo-safety";
 
 /**
  * THE RENDERER. One of these serves every tenant.
@@ -52,7 +53,9 @@ export function SiteRenderer({
 }: {
   config: SiteConfig;
   slug: string;
-  onQuoteSubmit?: (payload: Record<string, unknown>) => Promise<void>;
+  onQuoteSubmit?: (
+    payload: Record<string, unknown>,
+  ) => Promise<{ recorded: boolean; notice: { title: string; body: string } | null }>;
   /** Variant preview: the quote form says nothing was recorded. */
   preview?: boolean;
   /** What the backend says this site is. */
@@ -74,6 +77,7 @@ export function SiteRenderer({
   if (isDemo && demo && demo.expiresAt <= Date.now()) {
     throw new Error("refusing to render an expired demo");
   }
+  const jsonLd = localBusinessJsonLd(config, { isDemo });
   const ramp = config.brand.accent ?? buildAccentRamp(config.brand.colour);
   const visible = config.sections.filter((section) => !section.hidden);
   const sticky = visible.find((section) => section.type === "stickyBar");
@@ -96,6 +100,22 @@ export function SiteRenderer({
       </a>
       {demo ? (
         <DemoDisclosure subjectName={demo.subjectName} expiresAt={demo.expiresAt} />
+      ) : null}
+      {/*
+        * LocalBusiness markup is a machine-readable assertion that a business
+        * of this name trades at this address. On a demo it is a claim we are
+        * not entitled to make, in the one format designed to be believed
+        * without a human reading it — so it is ABSENT rather than softened.
+        * There is no demo variant: a correct-looking record with a caveat in
+        * a field nothing parses is still an assertion.
+        */}
+      {jsonLd ? (
+        <script
+          type="application/ld+json"
+          // The string comes from JSON.stringify over config we parsed with
+          // Zod on read, never from user input at render time.
+          dangerouslySetInnerHTML={{ __html: jsonLd }}
+        />
       ) : null}
       <main id="main">
         {visible.map((section) => {

@@ -83,6 +83,9 @@ describe("the disclosure is the renderer's job, not a template's", () => {
     const offenders: string[] = [];
     for (const file of files) {
       if (file.path === RENDERER || file.path === DISCLOSURE) continue;
+      // The module that DECIDES what a demo may assert. It is the one place
+      // allowed to branch on it, which is the arrangement being enforced.
+      if (file.path === "lib/demo-safety.ts") continue;
       if (file.path.startsWith("app/")) continue; // routes wire props through
       if (/\bisDemo\b|\bDemoDisclosure\b/.test(file.code)) {
         offenders.push(`${file.path}: reads isDemo`);
@@ -127,7 +130,8 @@ describe("a demo is never indexable", () => {
     const page = files.find((f) => f.path === "app/[[...slug]]/page.tsx");
     expect(page, "the site route is missing").toBeTruthy();
     // seo.noindex OR isDemo — the site's own config cannot opt a demo in.
-    expect(page!.text).toMatch(/seo\.noindex\s*\|\|\s*resolved\.result\.isDemo/);
+    expect(page!.code).toMatch(/seo\.noindex\s*\|\|\s*isDemo/);
+    expect(page!.code).toMatch(/index:\s*false,\s*follow:\s*false/);
   });
 
   test("robots.txt denies everything on a demo host", () => {
@@ -145,5 +149,117 @@ describe("a demo is never indexable", () => {
     const page = files.find((f) => f.path === "app/[[...slug]]/page.tsx");
     expect(page!.text).toMatch(/demo_expired/);
     expect(page!.text).toMatch(/<DemoExpired\s*\/>/);
+  });
+});
+
+describe("the link preview carries the framing too", () => {
+  /**
+   * Sending the demo over WhatsApp is the intended flow, so the scraped card
+   * is the FIRST thing a prospect sees — before the page, and before the
+   * disclosure bar on it. `noindex` is irrelevant here: it tells search
+   * engines not to list the page and says nothing to a scraper, which reads
+   * the OG tags and renders them.
+   */
+  const page = () => files.find((f) => f.path === "app/[[...slug]]/page.tsx")!;
+
+  test("a demo's OG title and description both come from the demo card", () => {
+    // Correcting only the title leaves the business's own marketing copy
+    // underneath it, and the card as a whole still reads as theirs.
+    const text = page().code;
+    expect(text).toMatch(/demoPreviewCard\(/);
+    expect(text).toMatch(/openGraph:\s*\{[\s\S]*?title,[\s\S]*?description,/);
+  });
+
+  test("twitter card metadata is set explicitly, not left to fall back", () => {
+    // The OG fallback is a convention that mostly holds, and "mostly" is not
+    // the standard for how somebody's business is represented in a message
+    // they did not send.
+    expect(page().code).toMatch(/twitter:\s*\{[\s\S]*?card:/);
+  });
+
+  test("the og:site_name is not the business's own brand on a demo", () => {
+    // It is the line a reader trusts most on a forwarded link — it is what
+    // tells them who sent this.
+    expect(page().code).toMatch(/siteName:\s*card\s*\?/);
+  });
+
+  test("the demo card names the agency and denies the affiliation", () => {
+    const safety = files.find((f) => f.path === "lib/demo-safety.ts");
+    expect(safety, "lib/demo-safety.ts is missing").toBeTruthy();
+    expect(safety!.text).toMatch(/Proposal for/);
+    expect(safety!.text).toMatch(/not affiliated/i);
+  });
+});
+
+describe("a demo asserts nothing machine-readable", () => {
+  test("LocalBusiness markup is absent on a demo, not softened", () => {
+    /*
+     * Schema markup is the one format built to be believed without a human
+     * reading it, so a correct-looking record with a caveat in a field
+     * nothing parses is still an assertion that this business trades here.
+     */
+    const safety = files.find((f) => f.path === "lib/demo-safety.ts")!;
+    expect(safety.code).toMatch(/if\s*\(\s*options\.isDemo\s*\)\s*return null/);
+  });
+
+  test("only the renderer emits structured data", () => {
+    const offenders: string[] = [];
+    for (const file of files) {
+      if (file.path === RENDERER || file.path === "lib/demo-safety.ts") continue;
+      if (/application\/ld\+json/.test(file.code)) {
+        offenders.push(`${file.path}: emits JSON-LD`);
+      }
+    }
+    expect(
+      offenders,
+      "Structured data goes through localBusinessJsonLd, which returns null for a demo. A second emitter is a second place to forget.",
+    ).toEqual([]);
+  });
+
+  test("no aggregateRating is asserted anywhere", () => {
+    /*
+     * The field most likely to be added next, and the one that must not be.
+     * A rating is Google's 30-day licensed content; restating it as our own
+     * structured claim puts it on a page that outlives the licence.
+     */
+    const offenders = files
+      .filter((f) => /aggregateRating/.test(f.code))
+      .map((f) => f.path);
+    expect(offenders, "See convex/lib/places.ts — a rating is licensed for 30 days.").toEqual([]);
+  });
+});
+
+describe("a demo form says nothing was booked", () => {
+  /**
+   * Silence reads as success. A demo submission is logged as engagement and
+   * reaches nobody, so a form that answers for itself says "Thanks — that is
+   * with us", and a real customer who found the demo waits in for a tradesman
+   * nobody sent. Same fail-open shape as the rest of these rules.
+   */
+  test("the form displays the SERVER's verdict rather than deciding", () => {
+    const form = files.find((f) => f.path === "components/sections/QuoteForm.tsx")!;
+    expect(form.code).toMatch(/setNotice\(/);
+    expect(form.code).toMatch(/if\s*\(\s*notice\s*\)/);
+  });
+
+  test("the server notice outranks the configured success message", () => {
+    // A reassuring line from the template underneath the notice would undo
+    // the whole point of sending one.
+    const form = files.find((f) => f.path === "components/sections/QuoteForm.tsx")!;
+    const noticeAt = form.code.indexOf("if (notice)");
+    const successAt = form.code.indexOf("section.successMessage");
+    expect(noticeAt).toBeGreaterThan(-1);
+    expect(noticeAt).toBeLessThan(successAt);
+  });
+
+  test("the action carries the verdict through instead of discarding it", () => {
+    const action = files.find((f) => f.path === "app/actions.ts")!;
+    expect(action.code).toMatch(/notice:\s*result\.notice/);
+  });
+
+  test("the form still does not read isDemo — the notice is content, not a flag", () => {
+    // Sections receive a pre-decided message. They never decide.
+    const form = files.find((f) => f.path === "components/sections/QuoteForm.tsx")!;
+    expect(/\bisDemo\b/.test(form.code)).toBe(false);
   });
 });

@@ -208,6 +208,33 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   missing expiry is a refusal**. Expired serves a notice, never the site.
   Stock and AI imagery is already refused as work by `workImage` in the
   config schema; the disclosure says so in words as well.
+  **`noindex` covers search engines and NOTHING ELSE.** Three things sit
+  outside it, all handled in `apps/sites/lib/demo-safety.ts`:
+  *The link preview.* Sending the demo over WhatsApp is the intended flow, so
+  the scraped card is the FIRST thing a prospect sees - before the page and
+  before the disclosure bar. Scrapers do not honour noindex. Title AND
+  description carry the proposal framing (correcting only the title leaves
+  the business's own marketing copy underneath and the card still reads as
+  theirs), `og:site_name` becomes the agency rather than their brand, and the
+  Twitter card is set explicitly rather than left to fall back to OpenGraph.
+  The framing leads with "Proposal" so it survives WhatsApp's ~60-character
+  truncation.
+  *Structured data.* `LocalBusiness` JSON-LD is a machine-readable assertion
+  that a business of this name trades at this address. On a demo it is
+  ABSENT, not softened - a correct-looking record with a caveat in a field
+  nothing parses is still an assertion. `localBusinessJsonLd` returns null
+  for a demo, and a guard bans a second emitter and bans `aggregateRating`
+  anywhere (a rating is Google's 30-day licensed content; restating it as our
+  own structured claim puts it on a page that outlives the licence).
+  *The form response.* A demo submission is logged as engagement and reaches
+  nobody, so silence reads as success and a real customer who found the demo
+  waits in for a tradesman nobody sent. `public/quote.submit` returns
+  `recorded` and a `notice`, and the form DISPLAYS the server's verdict
+  rather than deciding - the backend is the only party that knows whether
+  anything was dispatched, and a template working it out is a template that
+  can be wrong. The notice OUTRANKS the configured success message. Sections
+  receive a pre-decided message, never a flag: the guard banning `isDemo` in
+  section components still holds.
 - **THE LEDGER STOPS AT THE DOCUMENT.** The ledger records money that
   actually moved and needs no registered entity to be true — payments,
   refunds, adjustments, reversals, per-client and per-venture totals, all
@@ -247,7 +274,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 374 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 390 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -522,7 +549,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 374 tests
+pnpm test                        # 390 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

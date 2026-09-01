@@ -2,7 +2,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import schema from "./schema";
 import { api } from "./_generated/api";
-import { solarTradesTemplate, buildAccentRamp } from "@cc/site-config";
+import { solarTradesTemplate, buildAccentRamp, safeParseSiteConfig } from "@cc/site-config";
 import { reserveSpend, periodFor } from "./lib/placesBudget";
 import { contactDecision } from "./lib/suppression";
 import { readPlace, writePlace, PLACES_CACHE_MS } from "./lib/places";
@@ -373,5 +373,104 @@ describe("a demo site cannot outlive its expiry", () => {
     expect(result.kind).toBe("site");
     if (result.kind !== "site") return;
     expect(result.demo).toBeNull();
+  });
+});
+
+describe("a demo form tells the customer nothing was booked", () => {
+  /**
+   * The fail-open this closes: a demo submission is logged as engagement and
+   * reaches nobody. Answered with the site's own success message, a real
+   * customer who found the demo waits in for a tradesman nobody sent.
+   *
+   * The verdict is decided in the backend because that is the only place that
+   * knows whether anything was dispatched. A template working it out for
+   * itself is a template that can be wrong.
+   */
+  async function submitTo(isDemo: boolean) {
+    const h = harness();
+    await h.run(async (ctx) => {
+      const ventureId = await ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      });
+      const clientId = await ctx.db.insert("clients", {
+        ventureId, kind: "platform", name: "Upper Highway Solar", slug: "uhs",
+        status: "live", timezone: "Africa/Johannesburg", currency: "ZAR",
+        featureFlags: {}, isDemo, isSeed: false,
+      });
+      const config = solarTradesTemplate({
+        businessName: "Upper Highway Solar", slug: "uhs", brandColour: "#1f6f43",
+        accent: buildAccentRamp("#1f6f43"), city: "Durban", region: "KwaZulu-Natal",
+        suburb: "Hillcrest", addressLine: "12 Old Main Road", phone: "+27315551234",
+      });
+      await ctx.db.insert("sites", {
+        clientId, slug: "uhs", status: isDemo ? "demo" : "live",
+        config, publishedConfig: config, version: 1, configSchemaVersion: 1,
+        demoExpiresAt: isDemo ? Date.now() + 30 * 24 * 60 * 60 * 1000 : undefined,
+        isDemo,
+      });
+    });
+
+    const parsed = safeParseSiteConfig(
+      await h.run(async (ctx) => (await ctx.db.query("sites").collect())[0]!.publishedConfig),
+    );
+    if (!parsed.success) throw new Error("template did not parse");
+    const quote = parsed.data.sections.find((section) => section.type === "quote");
+    if (!quote) throw new Error("the template has no quote section");
+
+    const answers: Record<string, string> = {};
+    if (quote.type === "quote") {
+      for (const field of quote.fields) {
+        if (field.required && field.kind !== "photos") answers[field.key] = "Yes";
+      }
+    }
+
+    const result = await h.mutation(api.public.quote.submit, {
+      slug: "uhs",
+      sectionId: quote.id,
+      name: "Thandi M",
+      phone: "0825551234",
+      answers,
+      consentAccepted: true,
+    });
+    return { h, result };
+  }
+
+  test("a demo submission comes back with a notice saying nothing was booked", async () => {
+    const { result } = await submitTo(true);
+    expect(result.recorded).toBe(false);
+    expect(result.notice?.title).toMatch(/nothing was booked/i);
+    // It also has to say what to do instead. "Nothing happened" without a
+    // route to the real business leaves the customer no better off.
+    expect(result.notice?.body).toMatch(/contact the business directly/i);
+  });
+
+  test("the notice names the agency and denies the affiliation", async () => {
+    const { result } = await submitTo(true);
+    expect(result.notice?.body).toMatch(/The Creative Current/);
+    expect(result.notice?.body).toMatch(/not this business's site/i);
+  });
+
+  test("a real site gets no notice, so its own success message shows", async () => {
+    // The rule must not degenerate into every form apologising.
+    const { result } = await submitTo(false);
+    expect(result.recorded).toBe(true);
+    expect(result.notice).toBeNull();
+  });
+
+  test("the demo submission is still RECORDED — it is engagement, not nothing", async () => {
+    // The prospect tapping their own demo's form is the strongest buying
+    // signal in the funnel. It is logged; it just reaches no customer. The
+    // notice is about what the CUSTOMER is told, not about discarding data.
+    const { h } = await submitTo(true);
+    const rows = await h.run((ctx) => ctx.db.query("quoteRequests").collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.isDemo).toBe(true);
+  });
+
+  test("and dispatch still refuses to message anyone about it", async () => {
+    // Recorded is not contacted. The demo block in dispatch is what keeps
+    // those two apart, and it is asserted here from the demo's own side.
+    const { h } = await submitTo(true);
+    expect(await h.run((ctx) => ctx.db.query("messages").collect())).toEqual([]);
   });
 });

@@ -25,7 +25,10 @@ export async function submitQuoteAction(payload: {
   email?: string;
   answers: Record<string, string>;
   consentAccepted: boolean;
-}): Promise<{ ok: true } | { ok: false; message: string }> {
+}): Promise<
+  | { ok: true; recorded: boolean; notice: { title: string; body: string } | null }
+  | { ok: false; message: string }
+> {
   const convex = convexClient();
   if (!convex) {
     return { ok: false, message: "Not connected yet. Please phone us instead." };
@@ -33,8 +36,14 @@ export async function submitQuoteAction(payload: {
 
   try {
     const userAgent = (await headers()).get("user-agent") ?? undefined;
-    await convex.mutation(api.public.quote.submit, { ...payload, userAgent });
-    return { ok: true };
+    const result = await convex.mutation(api.public.quote.submit, { ...payload, userAgent });
+    /*
+     * The verdict is carried through, not discarded. The backend is the only
+     * party that knows whether the submission reached anybody, and a demo
+     * that answers "thanks, that is with us" leaves a real customer expecting
+     * a call that is not coming.
+     */
+    return { ok: true, recorded: result.recorded, notice: result.notice };
   } catch (error) {
     // The customer gets a route to a human, never a stack trace. The detail
     // goes to the server log, where it is actually actionable.

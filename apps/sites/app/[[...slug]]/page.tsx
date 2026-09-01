@@ -7,6 +7,7 @@ import { resolveSite, redirectFor, type ResolvedSite } from "@/lib/site-cache";
 import { SiteRenderer } from "@/components/SiteRenderer";
 import { HoldingPage } from "@/components/HoldingPage";
 import { DemoExpired } from "@/components/DemoDisclosure";
+import { demoPreviewCard, AGENCY } from "@/lib/demo-safety";
 import { NotConnected } from "@/components/NotConnected";
 import { submitQuoteAction } from "../actions";
 
@@ -75,15 +76,50 @@ export async function generateMetadata({ params, searchParams }: Params): Promis
   // An expired demo never reaches here — resolve returns a holding — but the
   // noindex below is unconditional for demos regardless of what seo says.
   const { seo, brand } = parsed.data;
+  const isDemo = resolved.result.isDemo;
+
+  /*
+   * THE LINK PREVIEW IS THE FIRST THING A PROSPECT SEES.
+   *
+   * Sending the demo over WhatsApp is the intended flow, so the scraped card
+   * arrives before the page does — and before the disclosure bar on it.
+   * `noindex` does not help here at all: it tells search engines not to list
+   * the page, and says nothing to a scraper, which reads the OG tags and
+   * renders them.
+   *
+   * So the demo framing goes in the card itself, in the title AND the
+   * description. Correcting only the title still leaves the business's own
+   * marketing copy underneath it, and the card as a whole still reads as
+   * theirs. `demoPreviewCard` decides the wording once, for every template.
+   */
+  const card = isDemo ? demoPreviewCard(parsed.data) : null;
+  const title = card?.title ?? seo.title;
+  const description = card?.description ?? seo.description;
+
   return {
-    title: seo.title,
-    description: seo.description,
+    title,
+    description,
     // A demo must never be indexed. It carries a real business's name.
     robots:
-      seo.noindex || resolved.result.isDemo
-        ? { index: false, follow: false }
-        : { index: true, follow: true },
-    openGraph: { title: seo.title, description: seo.description, siteName: brand.name },
+      seo.noindex || isDemo ? { index: false, follow: false } : { index: true, follow: true },
+    openGraph: {
+      title,
+      description,
+      /*
+       * The site NAME too. Left as the business's own it labels the card with
+       * their brand, which is the line a reader trusts most on a forwarded
+       * link — it is what tells them who sent this.
+       */
+      siteName: card ? `${AGENCY} — proposal` : brand.name,
+      type: "website",
+    },
+    /*
+     * Twitter's card is set explicitly rather than left to fall back to
+     * OpenGraph. The fallback is a convention that mostly holds, and "mostly"
+     * is not the standard for the tag that decides how somebody's business is
+     * represented in a message they did not send.
+     */
+    twitter: { card: "summary", title, description },
   };
 }
 
@@ -140,6 +176,7 @@ export default async function SitePage({ params, searchParams }: Params) {
           consentAccepted: Boolean(payload.consentAccepted),
         });
         if (!outcome.ok) throw new Error(outcome.message);
+        return { recorded: outcome.recorded, notice: outcome.notice };
       }}
     />
   );

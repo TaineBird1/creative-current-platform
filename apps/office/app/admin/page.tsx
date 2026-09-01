@@ -7,6 +7,7 @@ import type { Id } from "@cc/convex/dataModel";
 import { SignOut } from "@/components/SignOut";
 import { AdminNav } from "@/components/AdminNav";
 import { NewExternalClient } from "./NewExternalClient";
+import { DemoData } from "./DemoData";
 import s from "./console.module.css";
 
 /**
@@ -229,6 +230,11 @@ export default async function Console({
                   }))}
                   isOwner={role === "owner"}
                 />
+              </section>
+
+              {/* Renders nothing unless the backend allows seeding. */}
+              <section className={s.section}>
+                <DemoData />
               </section>
             </>
           )}

@@ -177,16 +177,48 @@ describe("message keys", () => {
    */
   const STARTS_AT_WRITER = "bookings.ts";
 
-  test("only bookings.ts writes a booking's startsAt", () => {
+  /**
+   * Files that may INSERT a booking, each because it sets `messageRevision`
+   * in the same write — which is the actual rule. "Only bookings.ts" was the
+   * proxy for it, and the proxy became wrong when a second legitimate writer
+   * appeared (the demo seeder, which creates a booking so the back-office
+   * screens have one).
+   *
+   * The condition is asserted below rather than trusted. PATCHING `startsAt`
+   * is still restricted to `bookings.ts` alone: a patch is a reschedule, and
+   * that is the case the whole rule exists for.
+   */
+  const BOOKING_INSERTERS = new Set([STARTS_AT_WRITER, "demoSeed.ts"]);
+
+  test("every writer of a booking sets messageRevision in the same write", () => {
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      if (!/db\.insert\(\s*"bookings"/.test(file.code)) continue;
+      if (!BOOKING_INSERTERS.has(file.path)) {
+        offenders.push(`${file.path}: inserts a booking but is not an approved writer`);
+        continue;
+      }
+      if (!/messageRevision:/.test(file.code)) {
+        offenders.push(`${file.path}: inserts a booking without setting messageRevision`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "A booking's startsAt is part of its message idempotency key, and",
+        "messageRevision is the other half. A booking created without one has",
+        "nothing for the key to vary on when the time later moves.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("only bookings.ts RESCHEDULES — patches a booking's startsAt", () => {
     const offenders: string[] = [];
 
     for (const file of sourceFiles) {
       if (file.path === STARTS_AT_WRITER) continue;
-
-      // An insert into bookings anywhere else necessarily sets startsAt.
-      if (/db\.insert\(\s*"bookings"/.test(file.text)) {
-        offenders.push(`${file.path}: inserts into bookings`);
-      }
 
       /*
        * A patch that mentions startsAt. Matched loosely on purpose: a false
@@ -1033,7 +1065,7 @@ describe("single writers", () => {
    * The condition is asserted below rather than trusted, so this list cannot
    * quietly become a way out.
    */
-  const SITE_WRITERS = new Set([SITE_CONFIG_WRITER, "demos.ts"]);
+  const SITE_WRITERS = new Set([SITE_CONFIG_WRITER, "demos.ts", "demoSeed.ts"]);
 
   test("every writer of the sites table parses the config through Zod first", () => {
     // The config column is v.any(), so the database will store anything. The

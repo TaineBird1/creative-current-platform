@@ -364,6 +364,17 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   changed freely afterwards. Confirming means typing the legal name back, not
   ticking a box: a box can be ticked without reading, and the thing being
   guarded against is precisely a value nobody read.
+- **THE DEMO SEEDER IS GATED ON THE BACKEND, NOT THE BUNDLE.** `demoSeed`
+  refuses unless `ALLOW_DEMO_SEED=true` is set on the DEPLOYMENT, which it is
+  on dev and is not on prod. Not `NODE_ENV`, not a build flag: both are
+  properties of the bundle, and the same bundle is served against both
+  databases - only the backend knows which one it is talking to. The button
+  is ABSENT on production rather than present-and-refusing, because a button
+  that appears and then fails is one somebody keeps pressing.
+  Everything it creates hangs off one venture, so `clear` removes exactly it
+  by walking that venture's graph. Seed data you cannot delete becomes
+  permanent, and permanent fake clients are how a revenue figure quietly
+  stops meaning anything.
 - **WHEN THE INVOICE UI COMES, BUILD THE CLIENT-FACING HALF FIRST.** The PDF,
   email delivery, and the payment reference on the document. The owner's own
   admin table is the easy half and the one he can live without - he will

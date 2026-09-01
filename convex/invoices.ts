@@ -169,16 +169,29 @@ const lineItem = v.object({
  * disagrees with the lines printed above it is the version a client queries,
  * and the one that costs an afternoon to explain.
  */
-export const issue = ownerMutation({
+/**
+ * Issue an invoice. It exists issued; there is no earlier state.
+ *
+ * The totals are COMPUTED here and never taken from the caller — a total that
+ * disagrees with the lines printed above it is the version a client queries,
+ * and the one that costs an afternoon to explain.
+ *
+ * EXPORTED AS A HELPER so the demo seeder produces invoices through this
+ * exact code — the numbering, the issuer snapshot, the VAT decision and the
+ * ledger entry. A seeder with its own copy would drift from the real thing
+ * and, worse, would let you click through a flow that does not exist.
+ */
+export async function issueInvoice(
+  ctx: MutationCtx,
   args: {
-    clientId: v.id("clients"),
-    lineItems: v.array(lineItem),
-    /** Payment terms in days. Defaults to 7; 0 means on receipt. */
-    paymentTermsDays: v.optional(v.number()),
-    notes: v.optional(v.string()),
-    now: v.optional(v.number()),
+    clientId: Id<"clients">;
+    lineItems: { description: string; quantity: number; unitPriceCents: number }[];
+    paymentTermsDays?: number;
+    notes?: string;
+    now?: number;
   },
-  handler: async (ctx, args) => {
+  actorUserId?: Id<"users">,
+) {
     const now = args.now ?? Date.now();
 
     const client = await ctx.db.get(args.clientId);
@@ -313,11 +326,11 @@ export const issue = ownerMutation({
       currency,
       occurredAt: now,
       description: `${number} — ${client.name}`,
-      createdBy: ctx.platform.userId,
+      createdBy: actorUserId,
     });
 
     await ctx.db.insert("auditLog", {
-      actorUserId: ctx.platform.userId,
+      actorUserId: actorUserId,
       action: "invoice.issue",
       entityTable: "invoices",
       entityId: invoiceId,
@@ -340,7 +353,18 @@ export const issue = ownerMutation({
        */
       paymentReference: paymentReference(number),
     };
+}
+
+export const issue = ownerMutation({
+  args: {
+    clientId: v.id("clients"),
+    lineItems: v.array(lineItem),
+    /** Payment terms in days. Defaults to 7; 0 means on receipt. */
+    paymentTermsDays: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    now: v.optional(v.number()),
   },
+  handler: async (ctx, args) => issueInvoice(ctx, args, ctx.platform.userId),
 });
 
 /**

@@ -606,18 +606,185 @@ describe("suppression fails closed", () => {
     ).toEqual([]);
   });
 
-  test("the decision defaults to blocked, never to allowed", () => {
-    // Guards the inversion: a refactor that made the catch return
-    // `{ blocked: false }` would pass every other test in this suite.
+  test("EVERY catch in the module resolves to nobody being contacted", () => {
+    /*
+     * Checks every catch block, not just the last one, and the difference is
+     * not academic: this test originally read only the final block and went
+     * green while a batch filter added above it was the one that mattered.
+     * A file with three error paths needs three of them to fail closed.
+     *
+     * Two shapes count as failing closed, because the module has two return
+     * types: a single verdict resolves to `blocked(...)`, and a batch filter
+     * resolves to an empty allow-list. Returning the UNFILTERED input from a
+     * batch catch is the specific disaster — a full queue that skipped the
+     * check looks exactly like a normal working day.
+     */
     const file = sourceFiles.find((f) => f.path === SUPPRESSION_READER);
     expect(file, "convex/lib/suppression.ts is missing").toBeTruthy();
 
-    const catchBlock = file!.code.slice(file!.code.lastIndexOf("} catch"));
+    const blocks = file!.code.split(/\}\s*catch/).slice(1);
+    expect(blocks.length, "no catch blocks found — has the module moved?").toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const [index, rest] of blocks.entries()) {
+      const body = rest.slice(0, rest.indexOf("\n}") + 1);
+      const failsClosed = /blocked\(/.test(body) || /allowed:\s*\[\]/.test(body);
+      if (!failsClosed) offenders.push(`catch #${index + 1}: ${body.trim().slice(0, 80)}`);
+      if (/blocked:\s*false/.test(body)) offenders.push(`catch #${index + 1} returns blocked: false`);
+    }
+
     expect(
-      /blocked\(/.test(catchBlock),
-      "The catch in contactDecision must resolve to blocked. An error means we do not know whether they said no, and not knowing is not permission.",
-    ).toBe(true);
-    expect(/blocked:\s*false/.test(catchBlock)).toBe(false);
+      offenders,
+      [
+        "Every error path here must resolve to nobody being contacted.",
+        "An error means we do not know whether they said no, and not knowing",
+        "is not permission. A single verdict fails closed with blocked(...);",
+        "a batch filter fails closed with an empty allowed list.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the queue filter never returns the unfiltered list on failure", () => {
+    // Stated separately because it is the one that gets "optimised" — a
+    // reviewer sees an empty queue in a broken state and is tempted to make
+    // it degrade gracefully. Degrading gracefully here means phoning people
+    // who asked us not to.
+    const file = sourceFiles.find((f) => f.path === SUPPRESSION_READER)!;
+    const filter = file.code.slice(file.code.indexOf("export async function filterContactable"));
+    expect(filter).toMatch(/allowed:\s*\[\]/);
+    expect(filter).not.toMatch(/allowed:\s*items/);
+  });
+});
+
+describe("the queue is filtered, not the dial", () => {
+  /**
+   * BLOCKING AT THE DIAL IS ONE STEP TOO LATE.
+   *
+   * By then the name and the number are on a screen in front of a person, and
+   * a person who can see a number will phone it — from their own handset,
+   * outside the CRM, where the block that "worked" recorded nothing and
+   * stopped nobody. The refusal has to happen where the LIST is built.
+   *
+   * So lib/leadAccess.ts is the only module that may read the leads table,
+   * and it always filters. This is a heavy rule and it is the right weight:
+   * every screen that shows a callable lead is a screen someone can call from.
+   */
+  const LEAD_READER = "lib/leadAccess.ts";
+
+  /**
+   * Queries that assemble CANDIDATES and then hand them to listContactable.
+   * They may touch the table because the filter is applied to everything they
+   * assemble — adding to such a query can only add to what gets filtered.
+   */
+  const CANDIDATE_ASSEMBLERS = new Set(["queue.ts", "seed.ts"]);
+
+  test("only lib/leadAccess.ts and the queue assemblers read the leads table", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === LEAD_READER || CANDIDATE_ASSEMBLERS.has(file.path)) continue;
+      if (/query\(\s*"leads"/.test(file.code)) {
+        offenders.push(`${file.path}: queries leads directly`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Lead lists come from listContactable() in convex/lib/leadAccess.ts,",
+        "which always applies the suppression filter. A direct query returns",
+        "suppressed businesses, and a name on a screen is a name someone can",
+        "phone from their own handset — where nothing records it and nothing",
+        "stops it.",
+        "",
+        "If you are assembling candidates to hand to listContactable, add the",
+        "file to CANDIDATE_ASSEMBLERS above and make sure the filter is",
+        "applied to everything the query assembles.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("every queue assembler actually calls the filter", () => {
+    // The allowlist above says "this file may touch leads because it filters".
+    // This is the half that checks it does.
+    const offenders: string[] = [];
+    for (const path of CANDIDATE_ASSEMBLERS) {
+      const file = sourceFiles.find((f) => f.path === path);
+      if (!file) continue;
+      if (!/query\(\s*"leads"/.test(file.code)) continue; // reads none, fine
+      if (!/listContactable\(/.test(file.code)) {
+        offenders.push(`${path}: reads leads without calling listContactable`);
+      }
+    }
+    expect(
+      offenders,
+      "A file on the assembler allowlist has stopped filtering. Either call listContactable or take it off the list.",
+    ).toEqual([]);
+  });
+
+  test("no lead list is returned without the filter having run", () => {
+    /*
+     * The subtler failure: a query that calls listContactable AND also
+     * returns a raw candidate array it built earlier. The filter ran, and the
+     * suppressed rows went out anyway beside it.
+     */
+    const queue = sourceFiles.find((f) => f.path === "queue.ts");
+    if (!queue) return;
+    for (const chunk of queue.code.split(/export const /).slice(1)) {
+      const body = chunk.split(/\nexport /)[0]!;
+      if (!/query\(\s*"leads"/.test(body)) continue;
+      const name = chunk.match(/^(\w+)/)?.[1] ?? "unknown";
+      expect(
+        /listContactable\(/.test(body),
+        `queue.ts: ${name} reads leads but never filters them`,
+      ).toBe(true);
+      expect(
+        /return\s*\{[^}]*\bcandidates\b/.test(body),
+        `queue.ts: ${name} returns the unfiltered candidate array`,
+      ).toBe(false);
+    }
+  });
+});
+
+describe("provenance cannot be backfilled", () => {
+  /**
+   * "Where did you get my number" is a question a stranger is entitled to ask
+   * and we are obliged to answer, from the ROW rather than from somebody's
+   * memory of which spreadsheet a batch came out of.
+   *
+   * A provenance written LATER is a guess about the past dressed as a record
+   * of it, and the only reason to write one is that the true answer was not
+   * kept — which is exactly when a guess is worst.
+   */
+  test("nothing patches a lead's provenance", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      for (const m of file.code.matchAll(/db\.(patch|replace)\([^;]*?provenance/gs)) {
+        offenders.push(`${file.path}: writes provenance after creation (${m[1]})`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Provenance is set once, at capture, and never edited. A row whose",
+        "origin was not recorded cannot have one reconstructed — delete it and",
+        "re-source it if you need it, which is the honest repair.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("it is required by the schema, so a lead cannot exist without it", () => {
+    // Optional would mean the rows that most need it — a hurried import, a
+    // pasted list — are exactly the ones that would not have it.
+    const growth = sourceFiles.find((f) => f.path === "tables/growth.ts");
+    expect(growth?.code).toMatch(/provenance:\s*v\.object\(/);
+    expect(growth?.code).not.toMatch(/provenance:\s*v\.optional\(/);
+  });
+
+  test("it carries the source, the capture time and the lawful basis", () => {
+    const growth = sourceFiles.find((f) => f.path === "tables/growth.ts")!;
+    const block = growth.code.slice(growth.code.indexOf("provenance: v.object("));
+    for (const field of ["source:", "capturedAt:", "lawfulBasis:"]) {
+      expect(block.slice(0, 900)).toContain(field);
+    }
   });
 });
 

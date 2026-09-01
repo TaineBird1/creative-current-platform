@@ -181,6 +181,41 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   `placesCache`. A name/phone/website is a fact about a business that exists
   without Google; a rating exists only because Google computed it. That line
   is why `leads.provenance` exists.
+- **SUPPRESSION FILTERS THE QUEUE, NOT THE DIAL.** Blocking at the moment of
+  dialling is one step too late: the name and number are already on a screen,
+  and a person who can see a number will phone it from their own handset,
+  where nothing records it and nothing stops it. `lib/leadAccess.ts` is the
+  ONLY module that may read the `leads` table, and `listContactable` always
+  filters. A guard test fails on `query("leads")` anywhere else; the
+  candidate-assembler allowlist has a second guard asserting those files do
+  call the filter.
+  **A failed suppression read empties the queue rather than unfiltering it.**
+  An empty queue is visibly wrong and someone investigates; a full queue that
+  skipped the check looks exactly like a normal working day. `listUnavailable`
+  is returned so the UI can tell those apart. Every catch in
+  `lib/suppression.ts` is guarded, not just the last one - that test used to
+  read only the final block and went green while a batch filter above it was
+  the one that mattered.
+  The DETAIL view deliberately still shows a suppressed lead, with its reason:
+  somebody chasing "why has nobody contacted them" needs to find the answer,
+  and a vanished row sends them to re-source the same business and start over.
+  `queue.disposition` writes the suppression on `not_interested` /
+  `wrong_number` immediately - on placeId AND phone, closing both routes back -
+  because the gap between "they said no" and "they stop appearing" is the
+  window in which somebody phones them again.
+- **PROVENANCE AT CAPTURE, NEVER BACKFILLED.** Every lead row carries
+  `provenance: { source, capturedAt, lawfulBasis, detail? }`, REQUIRED in the
+  schema. "Where did you get my number" has to be answerable from the row, not
+  from somebody's memory of which spreadsheet a batch came from. Required
+  rather than optional because optional means the rows that most need it - a
+  hurried import, a pasted list - are the ones that will not have it. A guard
+  test fails on any `db.patch`/`replace` touching provenance: a provenance
+  written later is a guess about the past dressed as a record of it, and the
+  only reason to write one is that the true answer was not kept. `lawfulBasis`
+  is the operator's claim, stored and auditable; the code does not and cannot
+  validate it, and recording one is not a finding that any given channel is
+  permitted (POPIA s69 treats electronic direct marketing more strictly than a
+  call to a listed business number).
 - **SUPPRESSION FAILS CLOSED.** The consent problem again, resolved the same
   way: a missed check means phoning someone who asked us not to, which is not
   recoverable; being wrongly suppressed is. `lib/suppression.ts`'s
@@ -274,7 +309,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 390 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 407 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -549,7 +584,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 390 tests
+pnpm test                        # 407 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

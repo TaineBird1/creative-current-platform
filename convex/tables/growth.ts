@@ -35,26 +35,66 @@ export const growthTables = {
      * now, where the clock is enforced on read — join through `placeId`,
      * which is the one field the terms exempt and the reason it is stored
      * here at all.
-     *
-     * The line drawn between those two and the fields above is not
-     * convenience. A rating and a review count exist ONLY because Google
-     * computed them; they are Google Maps Content in the plainest sense. A
-     * business's name, phone and website are facts about the business that
-     * exist whether or not Google ever recorded them, and are routinely
-     * obtained from the business's own site. `provenance` records which
-     * applies, so a field sourced from Places can be told apart from one a
-     * human typed off a shopfront — and only the former expires.
      */
-    provenance: v.optional(
-      v.union(v.literal("places"), v.literal("manual"), v.literal("website")),
-    ),
+
     /** Free website audit score + the two specific faults the call note uses. */
     auditScore: v.optional(v.number()),
     auditFaults: v.array(v.string()),
     callNote: v.optional(v.string()),
     ownerName: v.optional(v.string()),
-    ownerNameConfidence: v.optional(v.union(v.literal("low"), v.literal("medium"), v.literal("high"))),
+    ownerNameConfidence: v.optional(
+      v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    ),
     ownerNameSource: v.optional(v.string()),
+
+    /**
+     * WHERE THIS ROW CAME FROM. REQUIRED, AND NEVER BACKFILLED.
+     *
+     * "Where did you get my number" is a question a stranger is entitled to
+     * ask and we are obliged to answer, and it has to be answerable from the
+     * ROW rather than from somebody's memory of which spreadsheet a batch
+     * came out of.
+     *
+     * Required rather than optional, because optional means the rows that
+     * most need it — a hurried import, a list somebody pasted in — are
+     * exactly the ones that will not have it. A lead that cannot say where it
+     * came from cannot be created.
+     *
+     * NOT BACKFILLABLE, enforced by guards.test.ts: nothing may patch this
+     * field. A provenance written later is a guess about the past dressed as
+     * a record of it, and the only reason to write one is that the true
+     * answer was not kept. That is precisely when a guess is worst.
+     */
+    provenance: v.object({
+      source: v.union(
+        v.literal("places"),
+        v.literal("sa_venues"),
+        v.literal("referral"),
+        v.literal("inbound"),
+      ),
+      /** When WE obtained it. Not when the business came into existence. */
+      capturedAt: v.number(),
+      /**
+       * The POPIA basis being relied on to hold and use this, as claimed by
+       * the operator at capture. The code stores it and makes it auditable;
+       * it does not and cannot validate that the claim is correct.
+       *
+       * `consent` is for inbound — they came to us. `legitimate_interest` is
+       * the basis for B2B prospecting, and note that POPIA s69 treats
+       * electronic DIRECT MARKETING more strictly than a phone call to a
+       * listed business number: a basis recorded here is not a finding that
+       * any particular channel is permitted.
+       */
+      lawfulBasis: v.union(v.literal("consent"), v.literal("legitimate_interest")),
+      /**
+       * The specific answer to "where". The search that returned it, the name
+       * of the person who referred them, the form they filled in. A source
+       * alone answers "from Google Places" and the follow-up question is
+       * always "yes, but how did I end up on your list".
+       */
+      detail: v.optional(v.string()),
+    }),
+
     status: v.union(
       v.literal("new"), v.literal("queued"), v.literal("working"),
       v.literal("demo_sent"), v.literal("converted"), v.literal("discarded"),

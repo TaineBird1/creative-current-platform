@@ -86,6 +86,42 @@ export async function contactDecision(
   ctx: QueryCtx,
   identifiers: ContactIdentifiers,
 ): Promise<ContactVerdict> {
+  let rows: SuppressionRow[];
+  try {
+    rows = await ctx.db.query("suppressions").collect();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
+    return blocked(`suppression lookup failed (${detail}) - refusing to contact on a failed check`);
+  }
+  return decideAgainst(rows, identifiers);
+}
+
+export type SuppressionRow = { kind: string; value: string; reason: string };
+
+/**
+ * Load the list ONCE, for a caller about to check many leads against it.
+ *
+ * A queue of sixty leads calling `contactDecision` sixty times is sixty full
+ * scans of the same table. This exists so the queue can read once and decide
+ * in memory — and it deliberately does NOT swallow its own failure, because
+ * the caller has to know the difference between "the list is empty" and "the
+ * list could not be read". Those two produce opposite correct behaviour and
+ * `filterContactable` is where that is handled.
+ */
+export async function loadSuppressions(ctx: QueryCtx): Promise<SuppressionRow[]> {
+  return ctx.db.query("suppressions").collect();
+}
+
+/**
+ * The decision itself, pure, against an already-loaded list.
+ *
+ * Every uncertain answer is still blocked. Being pure does not soften the
+ * rule; it only moves the read out.
+ */
+export function decideAgainst(
+  rows: readonly SuppressionRow[],
+  identifiers: ContactIdentifiers,
+): ContactVerdict {
   try {
     const placeId = identifiers.placeId?.trim();
     const rawPhone = identifiers.phone?.trim();
@@ -100,8 +136,6 @@ export async function contactDecision(
     if (!placeId && !rawPhone && !rawDomain && !name) {
       return blocked("no identifier to check against the suppression list");
     }
-
-    const rows = await ctx.db.query("suppressions").collect();
 
     if (placeId) {
       const hit = rows.find((row) => row.kind === "placeId" && row.value === placeId);
@@ -156,8 +190,37 @@ export async function contactDecision(
      * decision to whichever caller catches it, and one of them will proceed.
      */
     const detail = error instanceof Error ? error.message : "unknown error";
-    return blocked(`suppression lookup failed (${detail}) — refusing to contact on a failed check`);
+    return blocked(`suppression check failed (${detail}) — refusing to contact on a failed check`);
   }
+}
+
+/**
+ * Filter a batch of leads down to the ones we may contact. ONE read.
+ *
+ * THE FAILURE MODE THAT MATTERS: if the list cannot be read, this returns an
+ * EMPTY array — every lead blocked — rather than the unfiltered input. An
+ * empty queue is visibly wrong and someone investigates. A full queue that
+ * skipped the check looks exactly like a normal working day, and the people
+ * on it get phoned.
+ */
+export async function filterContactable<T>(
+  ctx: QueryCtx,
+  items: readonly T[],
+  identify: (item: T) => ContactIdentifiers,
+): Promise<{ allowed: T[]; blockedCount: number; listUnavailable: boolean }> {
+  let rows: SuppressionRow[];
+  try {
+    rows = await loadSuppressions(ctx);
+  } catch {
+    return { allowed: [], blockedCount: items.length, listUnavailable: true };
+  }
+
+  const allowed = items.filter((item) => !decideAgainst(rows, identify(item)).blocked);
+  return {
+    allowed,
+    blockedCount: items.length - allowed.length,
+    listUnavailable: false,
+  };
 }
 
 /** Convenience for call paths that only need the boolean. */

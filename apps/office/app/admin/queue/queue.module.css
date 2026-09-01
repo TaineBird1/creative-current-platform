@@ -1,0 +1,376 @@
+/*
+ * TODAY'S QUEUE. Operate mode, and the operating scene is specific: standing
+ * up, one hand, phone in the other ear, mid-morning. Everything here follows
+ * from that rather than from what an admin screen usually looks like.
+ *
+ * DENSITY IS A DESKTOP CONCERN. The other admin screens are tables because
+ * they are read sitting down, comparing rows. This one is read while a phone
+ * is ringing, so it is one lead, large, with nothing to scan past.
+ *
+ * Monochrome ink, same as the rest of the console — no client colour reaches
+ * this world. The only non-ink signal is the two finals, and they earn it by
+ * being the two that cannot be undone.
+ *
+ * Tabular figures on every number, per the console's rule. Here it matters
+ * more than usual: "3 of 39" changing width as it counts up is movement in
+ * the corner of the eye during a call.
+ */
+
+.wrap {
+  padding: var(--space-m);
+  max-width: 34rem;
+  margin-inline: auto;
+  /*
+   * A column, so the action bar can be the last child and stick rather than
+   * be positioned. The first version used `position: fixed` with a hand-tuned
+   * 17rem of bottom padding to clear it — a number that was already wrong for
+   * a lead with a long call note and would go wrong again the first time a
+   * button was added.
+   */
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+
+.progress {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: baseline;
+  gap: 0.25ch;
+}
+
+.progressOf {
+  color: var(--text-muted);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  color: var(--text);
+}
+
+.flag {
+  margin-inline-start: auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  border: var(--border-hairline) solid var(--control-border);
+  border-radius: var(--radius-s);
+  padding: 0.125rem 0.375rem;
+}
+
+.business {
+  margin: 0;
+  /*
+   * Large, because it is the one thing read at arm's length while dialling.
+   * Fixed rem rather than a fluid clamp: the console's type scale is fixed so
+   * a heading does not read as a different level at two window widths.
+   */
+  font-size: 1.625rem;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  font-weight: 650;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.faults {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.fault {
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--text);
+  padding-inline-start: 0.875rem;
+  position: relative;
+}
+
+.fault::before {
+  /* A rule, not a bullet glyph — it reads as a list without adding a font. */
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.65em;
+  width: 0.5rem;
+  height: var(--border-hairline);
+  background: var(--border-strong);
+}
+
+.note {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.meta {
+  margin: var(--space-2xs) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  border-top: var(--border-hairline) solid var(--border);
+  padding-top: var(--space-s);
+}
+
+.metaRow {
+  display: flex;
+  gap: var(--space-s);
+  align-items: baseline;
+  font-size: 0.875rem;
+}
+
+.metaKey {
+  margin: 0;
+  color: var(--text-muted);
+  min-width: 5.5rem;
+}
+
+.metaValue {
+  margin: 0;
+  color: var(--text);
+}
+
+.hedge {
+  color: var(--text-muted);
+}
+
+/* ---- the thumb zone --------------------------------------------------- */
+/*
+ * At the bottom because that is where a thumb rests on a phone held
+ * one-handed. The information is at the top where the eye goes; the two do
+ * not compete for the same space.
+ */
+.actions {
+  /*
+   * STICKY, not fixed. It stays in flow, so nothing can end up underneath it
+   * and no padding has to be maintained to match its height. `margin-top:
+   * auto` pushes it to the bottom of a short card and lets a long one scroll
+   * under it — which is the behaviour a phone wants either way.
+   */
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  z-index: 3;
+  /* Bleeds to the screen edges without breaking out of the flow. */
+  margin-inline: calc(var(--space-m) * -1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-s) var(--space-m);
+  /* Clears the home indicator on a modern phone. */
+  padding-bottom: calc(var(--space-s) + env(safe-area-inset-bottom, 0px));
+  background: var(--bg-raised);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.dial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5ch;
+  /* 3.25rem: comfortably past the 44px minimum, and it is the target hit
+     most often and in the most hurry. */
+  min-height: 3.25rem;
+  border-radius: var(--radius-m);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 1.0625rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.dialNumber {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  font-weight: 500;
+}
+
+.noPhone {
+  margin: 0;
+  min-height: 3.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+  border: var(--border-hairline) dashed var(--control-border);
+  border-radius: var(--radius-m);
+}
+
+.outcomes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2xs);
+}
+
+.outcome,
+.outcomeGood,
+.final,
+.secondary,
+.primary {
+  font: inherit;
+  min-height: 2.875rem;
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid var(--control-border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.outcomeGood {
+  border-color: var(--text);
+  font-weight: 650;
+}
+
+.outcome:disabled,
+.outcomeGood:disabled,
+.final:disabled,
+.primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/*
+ * The two that write a suppression. Separated into their own row, full width,
+ * and labelled with what they do rather than what they are called — mis-tapping
+ * one beside "No answer" would silently delete a lead for good.
+ */
+.finals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  margin-top: var(--space-3xs);
+  padding-top: var(--space-2xs);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.final {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.final:hover {
+  color: var(--signal-danger);
+  border-color: var(--signal-danger);
+}
+
+/* ---- callback --------------------------------------------------------- */
+
+.callback {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  margin-inline: calc(var(--space-m) * -1);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-m);
+  padding-bottom: calc(var(--space-m) + env(safe-area-inset-bottom, 0px));
+  background: var(--bg-raised);
+  border-top: var(--border-hairline) solid var(--border-strong);
+}
+
+.callbackLabel {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.callbackInput {
+  min-height: 2.875rem;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid var(--control-border);
+  font: inherit;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.callbackActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2xs);
+}
+
+.primary {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+  font-weight: 650;
+}
+
+/* ---- terminal states -------------------------------------------------- */
+
+.stop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xl) 0;
+}
+
+.stopTitle {
+  margin: 0;
+  font-size: 1.375rem;
+  line-height: 1.2;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.stopBody {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 46ch;
+}
+
+.stopMeta {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.error {
+  margin: var(--space-xs) 0 0;
+  font-size: 0.875rem;
+  color: var(--signal-danger);
+}
+
+/*
+ * Above the phone breakpoint the card gets more room, but the actions stay
+ * where they are. The scene does not change at 900px — this is still a job
+ * done with a phone in one hand, and moving the buttons would only serve a
+ * desktop habit.
+ */
+@media (min-width: 40rem) {
+  .wrap {
+    padding-top: var(--space-l);
+  }
+
+  .business {
+    font-size: 1.875rem;
+  }
+}

@@ -203,6 +203,16 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   `wrong_number` immediately - on placeId AND phone, closing both routes back -
   because the gap between "they said no" and "they stop appearing" is the
   window in which somebody phones them again.
+- **`leads.placeId` IS OPTIONAL.** It was required, which quietly assumed
+  Google Places was the only source. The first real import - 59 KZN solar
+  installers off trade directories - has none, and the tempting fix was to
+  mint synthetic IDs. That would put a fabricated key in the column
+  suppression matches on, where it could later collide with a real Place ID
+  and silently suppress the wrong business. `provenance` is the field that
+  always answers where a row came from; `placeId` only says whether Google
+  was involved. `queue.disposition` therefore suppresses on whatever
+  identifiers exist, and falls back to a name fragment when there are none -
+  a refusal recorded against nothing is not a refusal.
 - **PROVENANCE AT CAPTURE, NEVER BACKFILLED.** Every lead row carries
   `provenance: { source, capturedAt, lawfulBasis, detail? }`, REQUIRED in the
   schema. "Where did you get my number" has to be answerable from the row, not
@@ -309,7 +319,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 407 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 408 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -584,7 +594,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 407 tests
+pnpm test                        # 408 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

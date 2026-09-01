@@ -21,6 +21,7 @@ import type * as http from "../http.js";
 import type * as income from "../income.js";
 import type * as invites from "../invites.js";
 import type * as jobs from "../jobs.js";
+import type * as leadImport from "../leadImport.js";
 import type * as ledger from "../ledger.js";
 import type * as lib_consent from "../lib/consent.js";
 import type * as lib_dns from "../lib/dns.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   income: typeof income;
   invites: typeof invites;
   jobs: typeof jobs;
+  leadImport: typeof leadImport;
   ledger: typeof ledger;
   "lib/consent": typeof lib_consent;
   "lib/dns": typeof lib_dns;

@@ -238,23 +238,37 @@ export const disposition = platformMutation({
           : `asked not to be contacted — recorded on a call ${new Date(now).toISOString().slice(0, 10)}`;
 
       /*
-       * Suppress on placeId AND phone. The placeId stops this business
-       * reappearing from a future Places pull under a slightly different
-       * name; the phone stops the same number reaching us through another
-       * source entirely. Either one alone leaves a way back onto the queue.
+       * Suppress on EVERY identifier the lead has. The placeId stops this
+       * business reappearing from a future Places pull under a slightly
+       * different name; the phone stops the same number reaching us through
+       * another source entirely. Either one alone leaves a way back on.
+       *
+       * Not every lead has a placeId — a directory-sourced one has none — so
+       * this writes what exists rather than assuming Google was involved.
        */
-      await ctx.db.insert("suppressions", {
-        kind: "placeId",
-        value: lead.placeId,
-        reason,
-        createdAt: now,
-      });
+      let wrote = 0;
+      if (lead.placeId) {
+        await ctx.db.insert("suppressions", {
+          kind: "placeId", value: lead.placeId, reason, createdAt: now,
+        });
+        wrote++;
+      }
       if (lead.phone) {
         await ctx.db.insert("suppressions", {
-          kind: "phone",
-          value: lead.phone,
-          reason,
-          createdAt: now,
+          kind: "phone", value: lead.phone, reason, createdAt: now,
+        });
+        wrote++;
+      }
+
+      /*
+       * A refusal we cannot record against anything is not a refusal. The
+       * lead is still discarded below, but a name fragment is written so the
+       * business cannot walk back in from another source under the same name
+       * — which is the whole failure this branch exists to prevent.
+       */
+      if (wrote === 0) {
+        await ctx.db.insert("suppressions", {
+          kind: "nameFragment", value: lead.businessName, reason, createdAt: now,
         });
       }
       await ctx.db.patch(args.leadId, { status: "discarded" });

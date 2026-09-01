@@ -218,6 +218,47 @@ describe("message keys", () => {
     const bookings = sourceFiles.find((f) => f.path === STARTS_AT_WRITER);
     expect(bookings?.text).toMatch(/messageRevision:\s*1/);
   });
+
+  /**
+   * `book` was split into a tenant wrapper and `createBooking` when the first
+   * non-browser caller appeared. The split is only safe while there is exactly
+   * ONE function doing the work — a second caller that reimplements the
+   * overlap check, the 24-hour cap or the in-transaction confirmation gets a
+   * booking that looks identical and obeys different rules.
+   *
+   * The insert itself is already pinned to this file by the test above. This
+   * pins the ENTRY POINT, so a caller reaching past createBooking has to say
+   * why here.
+   */
+  test("every caller books through createBooking, not around it", () => {
+    const CALLERS = new Set(["bookings.ts", "onboarding.ts"]);
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      if (CALLERS.has(file.path)) continue;
+      if (/createBooking\(/.test(file.code)) {
+        offenders.push(`${file.path}: calls createBooking directly`);
+      }
+    }
+
+    // And the one that does must not have grown a second implementation.
+    const bookings = sourceFiles.find((f) => f.path === STARTS_AT_WRITER);
+    const inserts = [...(bookings?.code ?? "").matchAll(/db\.insert\(\s*"bookings"/g)].length;
+
+    expect(inserts, "bookings.ts inserts a booking in more than one place").toBe(1);
+    expect(
+      offenders,
+      [
+        "A booking is created by createBooking in convex/bookings.ts. It is",
+        "where the overlap guarantee, the 24-hour cap and the confirmation",
+        "queued in the same transaction all live. A second entry point gets a",
+        "booking that looks identical and obeys different rules.",
+        "",
+        "If you are adding a caller — a public booking form, an import — add it",
+        "to CALLERS above and say why it is safe.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
 });
 
 describe("the send choke point", () => {

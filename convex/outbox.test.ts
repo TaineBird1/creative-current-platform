@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
+import { viaSender } from "./lib/providers";
 
 /**
  * THE DRAIN.
@@ -254,6 +255,67 @@ describe("email goes out for real", () => {
     const row = await only(h);
     expect(row.status).toBe("scheduled"); // retrying, not silently dropped
     expect(row.error).toMatch(/No email provider configured/);
+  });
+});
+
+describe("the From line says what is actually happening", () => {
+  /**
+   * "Renu Solar via The Creative Current <hello@thecreativecurrent.co.za>".
+   *
+   * Not a deliverability workaround, though it helps with one. Every client's
+   * mail goes out from our domain on their behalf, and a From reading "Renu
+   * Solar <hello@thecreativecurrent.co.za>" states something untrue of either
+   * party. It is also the shape of a phishing attempt, which is why receivers
+   * weigh it — so saying the relationship out loud costs nothing and settles
+   * the ambiguity for a person and a filter at once.
+   */
+  test("the client is named, and so is who sends on their behalf", () => {
+    expect(viaSender("Renu Solar", "The Creative Current <hello@example.test>")).toBe(
+      '"Renu Solar via The Creative Current" <hello@example.test>',
+    );
+  });
+
+  test("a bare address still gets the platform name", () => {
+    expect(viaSender("Renu Solar", "hello@example.test")).toBe(
+      '"Renu Solar via The Creative Current" <hello@example.test>',
+    );
+  });
+
+  test("OUR OWN MAIL IS NOT SENT VIA OURSELVES", () => {
+    // "The Creative Current via The Creative Current" describes no relationship.
+    expect(viaSender("The Creative Current", "The Creative Current <hello@example.test>")).toBe(
+      '"The Creative Current" <hello@example.test>',
+    );
+  });
+
+  test("A NAME WITH A COMMA DOES NOT BREAK THE HEADER", () => {
+    /*
+     * Real client names carry commas, full stops and parentheses — "Renu Solar
+     * (Pty) Ltd" — and every one is a special character in an address header.
+     * Unquoted, that is not a nitpick: it is a 422 from the provider, or a
+     * header that parses into something other than what was meant.
+     */
+    expect(viaSender("Renu Solar (Pty) Ltd, Durban", "hello@example.test")).toBe(
+      '"Renu Solar (Pty) Ltd, Durban via The Creative Current" <hello@example.test>',
+    );
+  });
+
+  test("and a name containing a quote cannot escape the header", () => {
+    expect(viaSender('Bob "The Sparky" Smith', "hello@example.test")).toBe(
+      '"Bob \\"The Sparky\\" Smith via The Creative Current" <hello@example.test>',
+    );
+  });
+
+  test("it is what actually reaches Resend", async () => {
+    const h = harness();
+    const calls = stubResend({ status: 200 });
+    const s = await seed(h, { email: "thabo@example.com" });
+    await bookAt(s, AT(9, 1));
+
+    await h.action(internal.outbox.drain, { now: AT(8) });
+
+    const body = JSON.parse(String(calls[0]!.init.body)) as { from: string };
+    expect(body.from).toBe('"Renu Solar via The Creative Current" <hello@example.test>');
   });
 });
 

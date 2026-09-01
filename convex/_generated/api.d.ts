@@ -47,6 +47,7 @@ import type * as lib_tenancy from "../lib/tenancy.js";
 import type * as lib_vercel from "../lib/vercel.js";
 import type * as lib_webhookVerify from "../lib/webhookVerify.js";
 import type * as messages from "../messages.js";
+import type * as onboarding from "../onboarding.js";
 import type * as outbox from "../outbox.js";
 import type * as platform from "../platform.js";
 import type * as public_brand from "../public/brand.js";
@@ -119,6 +120,7 @@ declare const fullApi: ApiFromModules<{
   "lib/vercel": typeof lib_vercel;
   "lib/webhookVerify": typeof lib_webhookVerify;
   messages: typeof messages;
+  onboarding: typeof onboarding;
   outbox: typeof outbox;
   platform: typeof platform;
   "public/brand": typeof public_brand;

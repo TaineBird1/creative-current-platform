@@ -1,6 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { byAsc } from "./lib/ordering";
 import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, assertLocationAllowed, auditWrite } from "./lib/tenancy";
 import {
@@ -173,38 +174,60 @@ export const list = tenantQuery("staff")({
   },
 });
 
-export const book = tenantMutation("staff")({
-  args: {
-    locationId: v.id("locations"),
-    serviceId: v.id("services"),
-    customerId: v.id("customers"),
-    startsAt: v.number(),
-    staffUserId: v.optional(v.id("users")),
-    notes: v.optional(v.string()),
-    source: v.optional(
-      v.union(
-        v.literal("site"),
-        v.literal("back_office"),
-        v.literal("phone"),
-        v.literal("import"),
-      ),
-    ),
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    bookingId: Id<"bookings">;
-    startsAt: number;
-    endsAt: number;
-    /** Whether the customer will hear about it, and if not, why not. */
-    confirmation: { queued: boolean; notice: string | null };
-  }> => {
-    const location = assertOwned(ctx.tenant, await ctx.db.get(args.locationId));
-    assertLocationAllowed(ctx.tenant, location._id);
+/**
+ * THE BOOKING ITSELF, with no opinion about who is asking.
+ *
+ * Split out of `book` below when the first non-browser caller appeared. The
+ * overlap guarantee, the 24-hour cap, the buffer arithmetic, the confirmation
+ * queued in this same transaction — all of it lives here, so a second caller
+ * gets the identical rules rather than a second implementation of them that
+ * drifts. THE INSERT STAYS IN THIS FILE, which is what keeps the guard on
+ * `startsAt` meaningful: one writer, one place that sets messageRevision.
+ *
+ * What is NOT here is authorisation. `req.clientId` is taken as already
+ * established — `book` derives it from the caller's own memberships and this
+ * function never sees an untrusted slug. It still checks that every document
+ * belongs to that client, because a caller passing a mismatched pair should
+ * be refused rather than trusted, but that is consistency, not access control.
+ *
+ * Nor is the audit row: `auditWrite` needs an actor, and this function does
+ * not know who is acting. Every caller writes its own.
+ */
+export type BookingRequest = {
+  clientId: Id<"clients">;
+  locationId: Id<"locations">;
+  serviceId: Id<"services">;
+  customerId: Id<"customers">;
+  startsAt: number;
+  staffUserId?: Id<"users">;
+  notes?: string;
+  source?: "site" | "back_office" | "phone" | "import";
+};
 
-    const service = assertOwned(ctx.tenant, await ctx.db.get(args.serviceId));
-    const customer = assertOwned(ctx.tenant, await ctx.db.get(args.customerId));
+/** Consistency, not access control — see the note above. */
+function ownedBy<T extends { clientId: Id<"clients"> }>(
+  clientId: Id<"clients">,
+  doc: T | null,
+  what: string,
+): T {
+  if (!doc || doc.clientId !== clientId) {
+    throw new ConvexError({ code: "NOT_FOUND", message: `No such ${what}.` });
+  }
+  return doc;
+}
+
+export async function createBooking(
+  ctx: MutationCtx,
+  req: BookingRequest,
+): Promise<{
+  bookingId: Id<"bookings">;
+  startsAt: number;
+  endsAt: number;
+  /** Whether the customer will hear about it, and if not, why not. */
+  confirmation: { queued: boolean; notice: string | null };
+}> {
+    const service = ownedBy(req.clientId, await ctx.db.get(req.serviceId), "service");
+    const customer = ownedBy(req.clientId, await ctx.db.get(req.customerId), "customer");
 
     if (!service.active) {
       throw new ConvexError({
@@ -225,12 +248,12 @@ export const book = tenantMutation("staff")({
       });
     }
 
-    if (!Number.isFinite(args.startsAt)) {
+    if (!Number.isFinite(req.startsAt)) {
       throw new ConvexError({ code: "INVALID", message: "That is not a valid time." });
     }
 
     const durationMs = service.durationMinutes * 60_000;
-    const startsAt = args.startsAt;
+    const startsAt = req.startsAt;
     const endsAt = startsAt + durationMs;
 
     /*
@@ -258,7 +281,7 @@ export const book = tenantMutation("staff")({
     const nearby = await ctx.db
       .query("bookings")
       .withIndex("by_location_start", (q) =>
-        q.eq("locationId", args.locationId).gte("startsAt", windowFrom).lt("startsAt", holdTo),
+        q.eq("locationId", req.locationId).gte("startsAt", windowFrom).lt("startsAt", holdTo),
       )
       .collect();
 
@@ -266,7 +289,7 @@ export const book = tenantMutation("staff")({
       (
         await ctx.db
           .query("services")
-          .withIndex("by_client", (q) => q.eq("clientId", ctx.tenant.clientId))
+          .withIndex("by_client", (q) => q.eq("clientId", req.clientId))
           .collect()
       ).map((doc) => [doc._id, doc]),
     );
@@ -292,7 +315,7 @@ export const book = tenantMutation("staff")({
         });
       }
 
-      if (args.staffUserId && other.staffUserId === args.staffUserId) {
+      if (req.staffUserId && other.staffUserId === req.staffUserId) {
         if (otherFrom < holdTo && holdFrom < otherTo) {
           throw new ConvexError({
             code: "STAFF_BUSY",
@@ -305,7 +328,7 @@ export const book = tenantMutation("staff")({
     const blocks = await ctx.db
       .query("blockouts")
       .withIndex("by_location_start", (q) =>
-        q.eq("locationId", args.locationId).gte("startsAt", windowFrom).lt("startsAt", holdTo),
+        q.eq("locationId", req.locationId).gte("startsAt", windowFrom).lt("startsAt", holdTo),
       )
       .collect();
 
@@ -318,30 +341,23 @@ export const book = tenantMutation("staff")({
       }
     }
 
-    const client = await ctx.db.get(ctx.tenant.clientId);
+    const client = await ctx.db.get(req.clientId);
 
     const bookingId = await ctx.db.insert("bookings", {
-      clientId: ctx.tenant.clientId,
-      locationId: args.locationId,
-      customerId: args.customerId,
-      serviceId: args.serviceId,
-      staffUserId: args.staffUserId,
+      clientId: req.clientId,
+      locationId: req.locationId,
+      customerId: req.customerId,
+      serviceId: req.serviceId,
+      staffUserId: req.staffUserId,
       startsAt,
       endsAt,
       // 1 at creation; any future reschedule must bump it, or the customer's
       // confirmation for the new time is suppressed as a duplicate.
       messageRevision: 1,
       status: "confirmed",
-      source: args.source ?? "back_office",
-      notes: args.notes?.trim() || undefined,
+      source: req.source ?? "back_office",
+      notes: req.notes?.trim() || undefined,
       isDemo: client?.isDemo ?? false,
-    });
-
-    await auditWrite(ctx, ctx.tenant, {
-      action: "booking.create",
-      entityTable: "bookings",
-      entityId: bookingId,
-      after: { startsAt, endsAt, serviceId: args.serviceId, customerId: args.customerId },
     });
 
     /*
@@ -362,7 +378,7 @@ export const book = tenantMutation("staff")({
      * only party that knows, so the back end says so.
      */
     await establishTransactionalConsent(ctx, {
-      clientId: ctx.tenant.clientId,
+      clientId: req.clientId,
       customerId: customer._id,
       channel: transactionalChannelFor(customer),
       source: "made a booking",
@@ -372,8 +388,61 @@ export const book = tenantMutation("staff")({
     const confirmation = await queueBookingConfirmationFor(ctx, { bookingId });
 
     return { bookingId, startsAt, endsAt, confirmation: describe(confirmation) };
+}
+
+export const book = tenantMutation("staff")({
+  args: {
+    locationId: v.id("locations"),
+    serviceId: v.id("services"),
+    customerId: v.id("customers"),
+    startsAt: v.number(),
+    staffUserId: v.optional(v.id("users")),
+    notes: v.optional(v.string()),
+    source: v.optional(
+      v.union(
+        v.literal("site"),
+        v.literal("back_office"),
+        v.literal("phone"),
+        v.literal("import"),
+      ),
+    ),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    bookingId: Id<"bookings">;
+    startsAt: number;
+    endsAt: number;
+    confirmation: { queued: boolean; notice: string | null };
+  }> => {
+    /*
+     * The two things that ARE about who is asking, and so stay here rather
+     * than moving into createBooking: the tenant is re-derived from the
+     * caller's own memberships by the constructor, and a staff member confined
+     * to one branch may not book at another.
+     */
+    const location = assertOwned(ctx.tenant, await ctx.db.get(args.locationId));
+    assertLocationAllowed(ctx.tenant, location._id);
+
+    const result = await createBooking(ctx, { ...args, clientId: ctx.tenant.clientId });
+
+    await auditWrite(ctx, ctx.tenant, {
+      action: "booking.create",
+      entityTable: "bookings",
+      entityId: result.bookingId,
+      after: {
+        startsAt: result.startsAt,
+        endsAt: result.endsAt,
+        serviceId: args.serviceId,
+        customerId: args.customerId,
+      },
+    });
+
+    return result;
   },
 });
+
 
 /**
  * Cancelling RELEASES the slot, which is why status is checked on the way in

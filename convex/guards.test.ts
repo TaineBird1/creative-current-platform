@@ -773,6 +773,91 @@ describe("the queue is filtered, not the dial", () => {
   });
 });
 
+describe("one phone normaliser", () => {
+  /**
+   * THE PHONE IS A SUPPRESSION KEY, so two opinions about its canonical form
+   * is two opinions about who may be called.
+   *
+   * There WERE two. The importer produced "+27833176385" and the suppression
+   * matcher produced "833176385". They agreed only because both sides were
+   * normalised again at compare time, so the divergence was latent rather
+   * than harmless — one import path storing a raw "083 317 6385" and a
+   * suppressed number is back on the queue with every test still green.
+   *
+   * That is the failure this file cares about most: no error, no red test,
+   * and the person who asked not to be called gets called.
+   */
+  const PHONE = "lib/phone.ts";
+
+  test("nothing else strips digits out of a phone number", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === PHONE) continue;
+      // The shape of a hand-rolled normaliser: throwing away non-digits from
+      // something the surrounding code calls a phone.
+      for (const chunk of file.code.split(/\n(?=\s*(?:export )?(?:async )?function |\n)/)) {
+        if (!/phone/i.test(chunk)) continue;
+        if (/replace\(\s*\/\\D\/g/.test(chunk) || /replace\(\s*\/\[^0-9\]\/g/.test(chunk)) {
+          offenders.push(`${file.path}: normalises a phone number itself`);
+          break;
+        }
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Use toE164() from convex/lib/phone.ts. It is the one definition of",
+        "what a phone number IS here, and the phone is the key suppression",
+        "matches on. A second normaliser does not have to be wrong to be",
+        "dangerous — it only has to disagree, once, on one import path.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the suppression key is written through it, not raw", () => {
+    // disposition writes the value a future import will be matched against.
+    // Writing lead.phone directly works only while every writer normalises.
+    const queue = sourceFiles.find((f) => f.path === "queue.ts");
+    expect(queue?.code).toMatch(/toE164\(/);
+    expect(
+      /kind:\s*"phone",\s*value:\s*lead\.phone\b/.test(queue?.code ?? ""),
+      "queue.ts writes a raw lead.phone as a suppression value — normalise it first.",
+    ).toBe(false);
+  });
+
+  test("an unparseable number is a refusal, not a pass", () => {
+    const phone = sourceFiles.find((f) => f.path === PHONE);
+    expect(phone, "convex/lib/phone.ts is missing").toBeTruthy();
+    // toE164 must be able to say no. A normaliser that always returns
+    // something turns a typo into a number that matches nothing.
+    expect(phone!.code).toMatch(/e164:\s*null/);
+  });
+});
+
+describe("the queue only contains callable rows", () => {
+  test("leads with no number are filtered out, not rendered dead", () => {
+    /*
+     * A row you tap dial on where nothing happens teaches you that the dial
+     * button is sometimes a lie, and three of those in a morning is enough to
+     * stop trusting the screen. They go to `needsNumber` instead — finding a
+     * number is research, and research does not belong between two calls.
+     */
+    const queue = sourceFiles.find((f) => f.path === "queue.ts");
+    expect(queue?.code).toMatch(/callable\s*=\s*leads\.filter\(/);
+    expect(queue?.code).toMatch(/needsNumberCount/);
+    expect(queue?.code).toMatch(/export const needsNumber/);
+  });
+
+  test("the needs-a-number list is suppression-filtered too", () => {
+    // A business that asked not to be contacted should not appear on a list
+    // of people to go and find a number for either.
+    const queue = sourceFiles.find((f) => f.path === "queue.ts")!;
+    const block = queue.code.slice(queue.code.indexOf("export const needsNumber"));
+    const body = block.slice(0, block.indexOf("\nexport const"));
+    expect(body).toMatch(/listContactable\(/);
+  });
+});
+
 describe("provenance cannot be backfilled", () => {
   /**
    * "Where did you get my number" is a question a stranger is entitled to ask

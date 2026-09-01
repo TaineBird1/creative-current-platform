@@ -1,3 +1,4 @@
+import { toStorageKey } from "./lib/phone";
 import { v, ConvexError } from "convex/values";
 import { byName } from "./lib/ordering";
 import type { Id } from "./_generated/dataModel";
@@ -45,12 +46,19 @@ export type CustomerRow = {
  * customer rather than three. Without this the duplicate-merge tooling exists
  * to clean up a mess the write path created.
  */
-export function normalisePhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  if (digits.startsWith("27") && digits.length === 11) return `0${digits.slice(2)}`;
-  if (digits.startsWith("0027")) return `0${digits.slice(4)}`;
-  return digits;
-}
+/**
+ * Phone storage goes through lib/phone.ts, which is the ONE place that
+ * decides what a phone number is here.
+ *
+ * This used to be a third normaliser, producing "0833176385" where the
+ * importer produced "+27833176385" and the suppression matcher produced
+ * "833176385". Three canonical forms for the key that decides who may be
+ * called — they agreed only because every comparison re-normalised both
+ * sides, so the divergence was latent, and a guard test found it rather than
+ * a person.
+ */
+export const normalisePhone = toStorageKey;
+
 
 function toRow(doc: {
   _id: Id<"customers">;

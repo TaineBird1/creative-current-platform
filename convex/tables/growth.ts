@@ -38,7 +38,19 @@ export const growthTables = {
     placeId: v.optional(v.string()),
     businessName: v.string(),
     niche: v.string(),
+    /**
+     * E.164 (+27XXXXXXXXX), and it is a KEY, not a display string.
+     * Suppression matches on it, `tel:` dials it. Written only by
+     * lib/phone.ts — see the note there about the two normalisers that
+     * disagreed.
+     */
     phone: v.optional(v.string()),
+    /**
+     * What the source actually said: "0833176385 / 0622155142". Kept because
+     * it is what a person recognises, and because it holds the second number
+     * that normalising to a single key necessarily discards.
+     */
+    phoneDisplay: v.optional(v.string()),
     website: v.optional(v.string()),
     /*
      * NO rating OR reviewCount HERE, and the omission is deliberate.

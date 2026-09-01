@@ -6,6 +6,7 @@ import type { Id } from "./_generated/dataModel";
 import { solarTradesTemplate, buildAccentRamp, safeParseSiteConfig } from "@cc/site-config";
 import { reserveSpend, periodFor } from "./lib/placesBudget";
 import { contactDecision, filterContactable } from "./lib/suppression";
+import { toE164, samePhone } from "./lib/phone";
 import { readPlace, writePlace, PLACES_CACHE_MS } from "./lib/places";
 
 /**
@@ -249,7 +250,7 @@ describe("suppression fails closed", () => {
     const h = harness();
     const verdict = await h.run((ctx) => contactDecision(ctx, { phone: "n/a" }));
     expect(verdict.blocked).toBe(true);
-    expect(verdict.reason).toMatch(/cannot normalise/);
+    expect(verdict.reason).toMatch(/cannot read the phone/);
   });
 
   test("a FAILED LOOKUP resolves to blocked", async () => {
@@ -691,5 +692,196 @@ describe("provenance answers where did you get my number", () => {
         } as never),
       ),
     ).rejects.toThrow();
+  });
+});
+
+describe("one phone normaliser, because the phone is the key", () => {
+  /**
+   * There were three canonical forms in this codebase — "+27833176385",
+   * "833176385" and "0833176385" — and they agreed only because every
+   * comparison re-normalised both sides. The divergence was latent, not
+   * absent: one import path storing a raw string and a suppressed number is
+   * back on the queue with every test green.
+   */
+  test("the formats a South African number actually arrives in all agree", () => {
+    const forms = [
+      "0833176385",
+      "083 317 6385",
+      "083-317-6385",
+      "+27 83 317 6385",
+      "+27833176385",
+      "27833176385",
+      "0027833176385",
+      "(083) 317 6385",
+    ];
+    for (const form of forms) {
+      expect(toE164(form), form).toMatchObject({ ok: true, e164: "+27833176385" });
+    }
+  });
+
+  test("the first of two numbers is the key, and the rest is kept", () => {
+    // Three real rows in the campaign list look like this.
+    const parsed = toE164("0833176385 / 0622155142");
+    expect(parsed.e164).toBe("+27833176385");
+    // Nothing is lost: display keeps the second number, which is the only
+    // record that it exists at all.
+    expect(parsed.display).toBe("0833176385 / 0622155142");
+  });
+
+  test("a parenthetical LABEL is dropped but a bracketed AREA CODE is not", () => {
+    /*
+     * These look identical to a regex that strips parentheses, and the first
+     * version stripped both — turning "(031) 940 3961" into seven digits and
+     * losing a working Durban landline. A letter inside is what makes it a
+     * note.
+     */
+    expect(toE164("0832070485 (WhatsApp) / 0870744449").e164).toBe("+27832070485");
+    expect(toE164("(031) 940 3961").e164).toBe("+27319403961");
+    expect(toE164("(031) 940 3961 (after hours)").e164).toBe("+27319403961");
+  });
+
+  test("a number that is not South African is REFUSED, not guessed at", () => {
+    /*
+     * The important half. A normaliser that always returns something turns a
+     * typo into a key that matches nothing — and matching nothing means the
+     * do-not-call list has no opinion, which reads as permission.
+     */
+    for (const bad of ["12345", "", "n/a", "+44 20 7946 0958", "083317638500"]) {
+      expect(toE164(bad).ok, bad).toBe(false);
+      expect(toE164(bad).e164, bad).toBeNull();
+    }
+  });
+
+  test("the refusal quotes the number, so the source row can be fixed", () => {
+    const parsed = toE164("12345");
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.reason).toContain("12345");
+  });
+
+  test("samePhone matches across formats and refuses on either side unparsed", () => {
+    expect(samePhone("0833176385", "+27 83 317 6385")).toBe(true);
+    expect(samePhone("0833176385", "0622155142")).toBe(false);
+    // Unparseable is NOT a match — the caller treats that as blocked, which
+    // is the direction that cannot get somebody phoned.
+    expect(samePhone("0833176385", "n/a")).toBe(false);
+  });
+
+  test("a suppression written in ANY format still blocks an E.164 lead", async () => {
+    /*
+     * The scenario the consolidation is for: a suppression typed by hand off
+     * a note, against a lead whose number was normalised at import.
+     */
+    const h = harness();
+    await h.run((ctx) =>
+      ctx.db.insert("suppressions", {
+        kind: "phone",
+        value: "083 317 6385",
+        reason: "asked not to be contacted",
+        createdAt: AUG,
+      }),
+    );
+    const verdict = await h.run((ctx) => contactDecision(ctx, { phone: "+27833176385" }));
+    expect(verdict.blocked).toBe(true);
+  });
+
+  test("and the reverse: an E.164 suppression blocks a lead in national form", async () => {
+    const h = harness();
+    await h.run((ctx) =>
+      ctx.db.insert("suppressions", {
+        kind: "phone",
+        value: "+27833176385",
+        reason: "asked not to be contacted",
+        createdAt: AUG,
+      }),
+    );
+    const verdict = await h.run((ctx) => contactDecision(ctx, { phone: "0833176385" }));
+    expect(verdict.blocked).toBe(true);
+  });
+});
+
+describe("the queue holds only rows that can be dialled", () => {
+  async function seedMixed() {
+    const h = harness();
+    const { userId } = await h.mutation(internal.bootstrap.claimPlatformOwner, {
+      email: "owner@thecreativecurrent.co.za",
+    });
+    const owner = asUser(h, userId);
+    const ventureId = await h.run((ctx) =>
+      ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      }),
+    );
+    const make = (name: string, phone?: string, phoneDisplay?: string) =>
+      h.run((ctx) =>
+        ctx.db.insert("leads", {
+          ventureId,
+          businessName: name,
+          niche: "solar",
+          phone,
+          phoneDisplay,
+          auditFaults: [],
+          status: "new",
+          provenance: {
+            source: "campaign_list",
+            capturedAt: AUG,
+            lawfulBasis: "legitimate_interest",
+            detail: "SolarZA directory listing",
+          },
+        }),
+      );
+
+    await make("Callable Solar", "+27825550001", "0825550001");
+    await make("No Number Solar");
+    await make("Also No Number");
+    return { h, owner };
+  }
+
+  test("a lead with no number is not in the queue at all", async () => {
+    /*
+     * Not greyed out, not disabled — absent. A row you tap dial on where
+     * nothing happens teaches you the dial button is sometimes a lie, and
+     * three of those in a morning is enough to stop trusting the screen.
+     */
+    const s = await seedMixed();
+    const result = await s.owner.query(api.queue.today, {});
+    expect(result.rows.map((row) => row.businessName)).toEqual(["Callable Solar"]);
+    for (const row of result.rows) expect(row.phone).toBeTruthy();
+  });
+
+  test("they are COUNTED, so the shortfall is never a mystery", async () => {
+    const s = await seedMixed();
+    const result = await s.owner.query(api.queue.today, {});
+    expect(result.needsNumberCount).toBe(2);
+  });
+
+  test("and they are listed separately, as research rather than calling", async () => {
+    const s = await seedMixed();
+    const rows = await s.owner.query(api.queue.needsNumber, {});
+    expect(rows.map((row) => row.businessName).sort()).toEqual([
+      "Also No Number",
+      "No Number Solar",
+    ]);
+  });
+
+  test("the needs-a-number list is suppression-filtered too", async () => {
+    // Someone who asked not to be contacted should not appear on a list of
+    // businesses to go and find a number for.
+    const s = await seedMixed();
+    await s.h.run((ctx) =>
+      ctx.db.insert("suppressions", {
+        kind: "nameFragment", value: "No Number Solar",
+        reason: "asked not to be contacted", createdAt: AUG,
+      }),
+    );
+    const rows = await s.owner.query(api.queue.needsNumber, {});
+    expect(rows.map((row) => row.businessName)).toEqual(["Also No Number"]);
+  });
+
+  test("the queue keeps the original string beside the dialling key", async () => {
+    const s = await seedMixed();
+    const result = await s.owner.query(api.queue.today, {});
+    expect(result.rows[0]?.phone).toBe("+27825550001");
+    expect(result.rows[0]?.phoneDisplay).toBe("0825550001");
   });
 });

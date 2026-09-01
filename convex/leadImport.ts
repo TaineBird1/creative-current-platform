@@ -1,5 +1,6 @@
 import { v, ConvexError } from "convex/values";
 import { internalMutation } from "./_generated/server";
+import { toE164 } from "./lib/phone";
 
 /**
  * BULK IMPORT, WITH THE PROVENANCE THAT MAKES IT DEFENSIBLE.
@@ -75,20 +76,29 @@ export const importLeads = internalMutation({
     }
 
     const existing = await ctx.db.query("leads").collect();
-    const byPhone = new Map(
-      existing.filter((row) => row.phone).map((row) => [normalise(row.phone!), row]),
-    );
+    /*
+     * Keyed on the STORED E.164, which is already canonical — re-normalising
+     * it here would be a second opinion about a value lib/phone.ts has
+     * already decided, and second opinions are how the two normalisers this
+     * codebase used to have came about.
+     */
+    const byPhone = new Map(existing.filter((row) => row.phone).map((row) => [row.phone!, row]));
     const byName = new Map(existing.map((row) => [row.businessName.trim().toLowerCase(), row]));
 
     let created = 0;
     let skipped = 0;
     let withoutPhone = 0;
+    /** Rows whose number is present but unusable. Named, not merged with blanks. */
+    const unusable: string[] = [];
 
     for (const row of args.rows) {
       const name = row.businessName.trim();
       if (!name) continue;
 
-      const phone = row.phone?.trim() ? normalise(row.phone) : null;
+      const parsed = toE164(row.phone);
+      const phone = parsed.ok ? parsed.e164 : null;
+      if (row.phone?.trim() && !parsed.ok) unusable.push(`${name}: ${parsed.reason}`);
+
       const duplicate =
         (phone && byPhone.get(phone)) || byName.get(name.toLowerCase()) || null;
 
@@ -107,6 +117,9 @@ export const importLeads = internalMutation({
         businessName: name,
         niche: args.niche,
         phone: phone ?? undefined,
+        // The source string, kept whole. It is what a person recognises, and
+        // it holds any second number the key had to drop.
+        phoneDisplay: row.phone?.trim() || undefined,
         website: row.website?.trim() || undefined,
         auditFaults: row.auditFaults ?? [],
         callNote: row.callNote?.trim() || undefined,
@@ -128,25 +141,12 @@ export const importLeads = internalMutation({
     }
 
     /*
-     * `withoutPhone` is reported rather than buried. Those rows are real
-     * leads and worth keeping, but they cannot be called — so a queue of 39
-     * out of an import of 59 is expected, not a bug, and the number is here
-     * so nobody spends an afternoon looking for the missing twenty.
+     * `withoutPhone` and `unusable` are reported rather than buried, and they
+     * are counted apart on purpose. A blank number is a row nobody has
+     * researched yet; a number that failed to parse is a row with a TYPO in
+     * it, and those are worth fixing rather than re-researching. Merged into
+     * one figure, the typos hide inside the blanks forever.
      */
-    return { created, skipped, withoutPhone };
+    return { created, skipped, withoutPhone, unusable };
   },
 });
-
-/**
- * To E.164, so a `tel:` link dials and two formats of one number cannot read
- * as two businesses. South Africa only, which is what this list is.
- */
-function normalise(raw: string): string {
-  // "0833176385 / 0622155142" — a second number is kept out of the identity
-  // field. Whoever answers the first one is who we reached.
-  const first = raw.split(/[/,;]/)[0] ?? raw;
-  const digits = first.replace(/\D/g, "");
-  if (digits.startsWith("27")) return `+${digits}`;
-  if (digits.startsWith("0")) return `+27${digits.slice(1)}`;
-  return digits ? `+27${digits}` : "";
-}

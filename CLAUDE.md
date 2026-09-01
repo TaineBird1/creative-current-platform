@@ -213,6 +213,32 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   was involved. `queue.disposition` therefore suppresses on whatever
   identifiers exist, and falls back to a name fragment when there are none -
   a refusal recorded against nothing is not a refusal.
+- **ONE PHONE NORMALISER: `toE164` IN `lib/phone.ts`.** The phone is the
+  suppression key, so two opinions about its canonical form are two opinions
+  about who may be called. There were THREE - the importer produced
+  `+27833176385`, the suppression matcher `833176385`, and `customers.ts`
+  `0833176385`. They agreed only because every comparison re-normalised both
+  sides, so the divergence was latent rather than harmless: one import path
+  storing a raw string and a suppressed number is back on the queue with
+  every test green. A guard test now fails on any other module that strips
+  digits out of a phone.
+  **E.164 is the stored KEY; `leads.phoneDisplay` keeps the original string**
+  - it is what a person recognises and it holds the second number that
+  normalising to one key necessarily discards ("0833176385 / 0622155142").
+  `toE164` REFUSES rather than guessing: a normaliser that always returns
+  something turns a typo into a key matching nothing, and matching nothing
+  reads as permission. `toStorageKey` falls back to digits for a non-SA
+  number so a booking is not refused - with the stated cost that such a
+  customer cannot be checked against the DNC list and will therefore be
+  suppressed, visibly, in the outbox.
+- **THE CALL QUEUE CONTAINS ONLY CALLABLE ROWS.** A lead with no dialable
+  number is excluded, not greyed out: a dial button that does nothing teaches
+  you it is sometimes a lie, and three of those in a morning is enough to
+  stop trusting the screen. They are counted (`needsNumberCount`) and listed
+  by `queue.needsNumber`, which is research and does not belong between two
+  calls - and that list is suppression-filtered too, because someone who
+  asked not to be contacted should not appear on a list of numbers to go and
+  find.
 - **PROVENANCE AT CAPTURE, NEVER BACKFILLED.** Every lead row carries
   `provenance: { source, capturedAt, lawfulBasis, detail? }`, REQUIRED in the
   schema. "Where did you get my number" has to be answerable from the row, not
@@ -319,7 +345,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 408 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 426 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -594,7 +620,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 408 tests
+pnpm test                        # 426 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

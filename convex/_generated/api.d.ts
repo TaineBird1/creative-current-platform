@@ -32,6 +32,7 @@ import type * as lib_ledger from "../lib/ledger.js";
 import type * as lib_messaging from "../lib/messaging.js";
 import type * as lib_money from "../lib/money.js";
 import type * as lib_ordering from "../lib/ordering.js";
+import type * as lib_phone from "../lib/phone.js";
 import type * as lib_places from "../lib/places.js";
 import type * as lib_placesBudget from "../lib/placesBudget.js";
 import type * as lib_reseller from "../lib/reseller.js";
@@ -95,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   "lib/messaging": typeof lib_messaging;
   "lib/money": typeof lib_money;
   "lib/ordering": typeof lib_ordering;
+  "lib/phone": typeof lib_phone;
   "lib/places": typeof lib_places;
   "lib/placesBudget": typeof lib_placesBudget;
   "lib/reseller": typeof lib_reseller;

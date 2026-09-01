@@ -2,6 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { platformQuery, platformMutation } from "./lib/functions";
 import { listContactable, getWithVerdict } from "./lib/leadAccess";
 import { byAsc } from "./lib/ordering";
+import { toE164 } from "./lib/phone";
 import type { Doc, Id } from "./_generated/dataModel";
 
 /**
@@ -24,7 +25,10 @@ type Rank = keyof typeof RANK;
 export type QueueRow = {
   leadId: Id<"leads">;
   businessName: string;
-  phone: string | null;
+  /** E.164. Non-null for every row in the queue — see the filter below. */
+  phone: string;
+  /** What the source said, for a human to recognise. */
+  phoneDisplay: string;
   suburb: string | null;
   niche: string;
   rank: Rank;
@@ -50,6 +54,13 @@ export const today = platformQuery({
     rows: QueueRow[];
     /** Shown to the caller so an empty queue is never a mystery. */
     suppressedCount: number;
+    /**
+     * Leads with no number we can dial. They are NOT in `rows` — a row you
+     * tap dial on and nothing happens is how a screen stops being trusted,
+     * and three of those in a morning is enough. They are counted here and
+     * listed by `needsNumber`, which is research, not calling.
+     */
+    needsNumberCount: number;
     /**
      * True when the suppression list could not be read. The queue is EMPTY in
      * that case rather than unfiltered — see filterContactable — and the UI
@@ -109,13 +120,25 @@ export const today = platformQuery({
      */
     const { leads, suppressedCount, listUnavailable } = await listContactable(ctx, candidates);
 
+    /*
+     * A CALL QUEUE CONTAINS ONLY THINGS THAT CAN BE CALLED.
+     *
+     * These rows are real leads and worth keeping — 20 of the first 59 have
+     * no number — but they belong in a research list, not between two calls.
+     * Filtered here rather than rendered greyed out: an un-dialable row still
+     * costs a decision every time it comes up, and it teaches you that the
+     * dial button is sometimes a lie.
+     */
+    const callable = leads.filter((lead) => Boolean(lead.phone));
+    const needsNumberCount = leads.length - callable.length;
+
     const attemptsByLead = new Map<string, Doc<"dispositions">[]>();
     for (const disposition of dispositions) {
       const key = disposition.leadId as string;
       attemptsByLead.set(key, [...(attemptsByLead.get(key) ?? []), disposition]);
     }
 
-    const rows: QueueRow[] = leads.map((lead) => {
+    const rows: QueueRow[] = callable.map((lead) => {
       const meta = byLead.get(lead._id)!;
       const attempts = (attemptsByLead.get(lead._id as string) ?? []).sort(
         byAsc((row) => row.calledAt),
@@ -124,7 +147,8 @@ export const today = platformQuery({
       return {
         leadId: lead._id,
         businessName: lead.businessName,
-        phone: lead.phone ?? null,
+        phone: lead.phone!,
+        phoneDisplay: lead.phoneDisplay ?? lead.phone!,
         suburb: null,
         niche: lead.niche,
         rank: meta.rank,
@@ -144,7 +168,49 @@ export const today = platformQuery({
       (a, b) => RANK[a.rank] - RANK[b.rank] || a.dueAt - b.dueAt || (a.leadId < b.leadId ? -1 : 1),
     );
 
-    return { rows: rows.slice(0, args.limit ?? 50), suppressedCount, listUnavailable };
+    return {
+      rows: rows.slice(0, args.limit ?? 50),
+      suppressedCount,
+      needsNumberCount,
+      listUnavailable,
+    };
+  },
+});
+
+/**
+ * THE "NEEDS A NUMBER" BUCKET.
+ *
+ * Separate from the queue on purpose. These are leads worth having and not
+ * worth interrupting a calling session for: the work is finding a number,
+ * which is a different job done at a different time with a different tool.
+ *
+ * Still filtered through `listContactable`, because a business that asked not
+ * to be contacted should not appear on a list of people to go and find a
+ * number for either.
+ */
+export const needsNumber = platformQuery({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const all = await ctx.db
+      .query("leads")
+      .withIndex("by_status", (q) => q.eq("status", "new"))
+      .take(500);
+
+    const { leads } = await listContactable(
+      ctx,
+      all.filter((lead) => !lead.phone),
+    );
+
+    return leads.slice(0, limit ?? 100).map((lead) => ({
+      leadId: lead._id,
+      businessName: lead.businessName,
+      website: lead.website ?? null,
+      niche: lead.niche,
+      /** What the source said, when it said something unusable. */
+      phoneDisplay: lead.phoneDisplay ?? null,
+      source: lead.provenance.source,
+      detail: lead.provenance.detail ?? null,
+    }));
   },
 });
 
@@ -164,6 +230,7 @@ export const lead = platformQuery({
       // The number is returned even when blocked, because this screen exists
       // to answer "what happened with them" — but never without the verdict.
       phone: found.lead.phone ?? null,
+      phoneDisplay: found.lead.phoneDisplay ?? null,
       website: found.lead.website ?? null,
       niche: found.lead.niche,
       auditScore: found.lead.auditScore ?? null,
@@ -253,9 +320,20 @@ export const disposition = platformMutation({
         });
         wrote++;
       }
-      if (lead.phone) {
+      /*
+       * THE SUPPRESSION KEY GOES THROUGH THE SAME NORMALISER THE IMPORT USES.
+       *
+       * `lead.phone` is already E.164, so this is a no-op today — and that is
+       * exactly why it is here. The moment a lead arrives from a path that
+       * did not normalise, this writes the canonical form anyway, and the
+       * refusal keeps working. Writing the raw string instead would produce a
+       * suppression that silently fails to match on the next import, with
+       * every guard test still green.
+       */
+      const key = toE164(lead.phone);
+      if (key.ok) {
         await ctx.db.insert("suppressions", {
-          kind: "phone", value: lead.phone, reason, createdAt: now,
+          kind: "phone", value: key.e164, reason, createdAt: now,
         });
         wrote++;
       }

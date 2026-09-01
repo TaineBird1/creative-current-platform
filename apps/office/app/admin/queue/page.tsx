@@ -30,7 +30,7 @@ export const dynamic = "force-dynamic";
 export default async function QueuePage() {
   const token = await convexAuthNextjsToken();
 
-  let queue: Queue = { rows: [], suppressedCount: 0, listUnavailable: false };
+  let queue: Queue = { rows: [], suppressedCount: 0, needsNumberCount: 0, listUnavailable: false };
   let expired = false;
   let refused = false;
 

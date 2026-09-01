@@ -123,6 +123,14 @@ export function CallQueue({ initial }: { initial: Queue }) {
             do-not-call list and were never shown.
           </p>
         ) : null}
+        {initial.needsNumberCount > 0 ? (
+          // Said here so the shortfall between "59 imported" and what you
+          // actually called is never something to work out mid-morning.
+          <p className={s.stopMeta}>
+            <span className={s.num}>{initial.needsNumberCount}</span> have no number
+            yet. Finding one is research, not a call, so they are kept out of here.
+          </p>
+        ) : null}
       </section>
     );
   }
@@ -238,13 +246,18 @@ export function CallQueue({ initial }: { initial: Queue }) {
         * it is reachable one-handed on a phone held normally.
         */}
       <div className={s.actions}>
-        {lead.phone ? (
-          <a className={s.dial} href={`tel:${lead.phone}`}>
-            Call <span className={s.dialNumber}>{lead.phone}</span>
-          </a>
-        ) : (
-          <p className={s.noPhone}>No number on this record — skip or find one.</p>
-        )}
+        {/*
+          * Always present. The queue excludes leads with no dialable number
+          * rather than rendering a dead button, so there is no branch here —
+          * a dial that does nothing is how a screen stops being trusted.
+          *
+          * `href` takes the E.164 key because that is what dials reliably;
+          * the label shows what the source said, because that is what a
+          * person recognises and it carries any second number.
+          */}
+        <a className={s.dial} href={`tel:${lead.phone}`}>
+          Call <span className={s.dialNumber}>{lead.phoneDisplay}</span>
+        </a>
 
         <div className={s.outcomes}>
           <button type="button" className={s.outcome} disabled={busy} onClick={() => disposition("no_answer")}>

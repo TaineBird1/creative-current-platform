@@ -83,7 +83,9 @@ export function localBusinessJsonLd(
     name: config.brand.legalName ?? config.brand.name,
     address: {
       "@type": "PostalAddress",
-      streetAddress: location.addressLine,
+      // Omitted rather than emptied when unknown. A PostalAddress with a
+      // blank street is a worse claim than one without the field.
+      ...(location.addressLine ? { streetAddress: location.addressLine } : {}),
       addressLocality: location.suburb,
       addressRegion: location.region,
       postalCode: location.postalCode,

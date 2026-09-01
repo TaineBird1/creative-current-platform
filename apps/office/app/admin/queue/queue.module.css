@@ -213,6 +213,27 @@
   border-radius: var(--radius-m);
 }
 
+/*
+ * Once built, the button becomes the link. One control that changes what it
+ * does is better here than two: the second one would sit dead for every lead
+ * that never gets a demo, which is most of them.
+ */
+.demoLink {
+  font: inherit;
+  min-height: 2.875rem;
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid var(--text);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding-inline: var(--space-s);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .outcomes {
   display: grid;
   grid-template-columns: 1fr 1fr;

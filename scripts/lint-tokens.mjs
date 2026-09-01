@@ -35,6 +35,11 @@ const COLOUR_ALLOWLIST = new Set([
   // Same seam: seed data supplies a client's brand colour, which is a hex by
   // definition. It is fed through the ramp, not painted.
   join("convex", "seed.ts"),
+  // And again: a demo is built for a business whose brand colour we do not
+  // know, so it carries a fallback. It goes through buildAccentRamp and is
+  // AA-validated like any other client colour -- it is data entering, not
+  // style shipping.
+  join("convex", "demos.ts"),
 ]);
 
 const SKIP_DIRS = new Set([

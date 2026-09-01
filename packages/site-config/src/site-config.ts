@@ -18,7 +18,18 @@ export const brand = z.object({
 export const siteLocation = z.object({
   id: slug,
   name: z.string().min(1),
-  addressLine: z.string().min(1),
+  /**
+   * OPTIONAL, and the reason is a demo.
+   *
+   * A demo site carries a real business's name and suburb, taken from a
+   * directory listing that does not include a street. Requiring one here
+   * would force the demo builder to invent an address for a real business
+   * and print it on a page in their name — which is the exact harm the whole
+   * demo regime exists to prevent, arriving through a schema default.
+   *
+   * A real client's site has one, because a real client tells us.
+   */
+  addressLine: z.string().min(1).optional(),
   suburb: z.string().min(1),
   city: z.string().min(1),
   region: z.string().min(1),

@@ -51,6 +51,16 @@ export const growthTables = {
      * that normalising to a single key necessarily discards.
      */
     phoneDisplay: v.optional(v.string()),
+    /**
+     * Suburb or town, as the directory listed it. A public fact about a
+     * business rather than Google Maps Content, so it does not expire.
+     *
+     * It exists as its own field because a DEMO needs it — the site says
+     * "solar installation in Hillcrest" and that has to come from somewhere.
+     * It was previously folded into `provenance.detail` and nowhere else,
+     * which put it in the one field that may never be edited.
+     */
+    area: v.optional(v.string()),
     website: v.optional(v.string()),
     /*
      * NO rating OR reviewCount HERE, and the omission is deliberate.

@@ -282,7 +282,7 @@ export function Contact({
           <div>
             <p className={s.contactLabel}>Where we are</p>
             <p className={s.contactValue}>
-              {loc.addressLine}, {loc.suburb}, {loc.city}
+              {[loc.addressLine, loc.suburb, loc.city].filter(Boolean).join(", ")}
             </p>
           </div>
         ) : null}

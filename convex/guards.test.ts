@@ -1023,25 +1023,62 @@ describe("provenance cannot be backfilled", () => {
 });
 
 describe("single writers", () => {
-  test("only siteConfigs.ts writes the sites table", () => {
-    // The config column is v.any(), so the database will store anything. This
-    // rule is what makes the Zod parse in siteConfigs.ts non-optional.
+  /**
+   * Files permitted to write the sites table, each because it parses the
+   * config through Zod first — which is the rule. "One writer" was the proxy
+   * for it, and the proxy became wrong the moment a second legitimate writer
+   * appeared (the demo builder, which generates a config from a template and
+   * parses it exactly as siteConfigs does).
+   *
+   * The condition is asserted below rather than trusted, so this list cannot
+   * quietly become a way out.
+   */
+  const SITE_WRITERS = new Set([SITE_CONFIG_WRITER, "demos.ts"]);
+
+  test("every writer of the sites table parses the config through Zod first", () => {
+    // The config column is v.any(), so the database will store anything. The
+    // parse is the only thing standing between that and a render-time crash
+    // on a page a prospect just opened.
     const offenders: string[] = [];
     for (const file of sourceFiles) {
-      if (file.path === SITE_CONFIG_WRITER) continue;
-      if (/db\.insert\(\s*"sites"/.test(file.text)) {
-        offenders.push(`${file.path}: inserts into sites`);
+      const writes =
+        /db\.insert\(\s*"sites"/.test(file.code) ||
+        /db\.(patch|replace)\(\s*site(Id|\._id)/.test(file.code);
+      if (!writes) continue;
+
+      if (!SITE_WRITERS.has(file.path)) {
+        offenders.push(`${file.path}: writes sites but is not an approved writer`);
+        continue;
       }
-      // A patch on a site doc is caught by the naming convention used
-      // throughout: siteId, or site._id.
-      if (/db\.(patch|replace)\(\s*site(Id|\._id)/.test(file.text)) {
-        offenders.push(`${file.path}: patches a site`);
+      if (!/safeParseSiteConfig\(|parseSiteConfig\(/.test(file.code)) {
+        offenders.push(`${file.path}: writes sites without parsing the config`);
       }
     }
     expect(
       offenders,
-      `SiteConfig is stored as v.any(). ${SITE_CONFIG_WRITER} is the only file that parses it through Zod before writing, so it must be the only file that writes.`,
+      [
+        "SiteConfig is stored as v.any(). Every writer must parse it through Zod",
+        "before writing — that parse is the schema, and a config that only fails",
+        "at render time fails on a page somebody is looking at.",
+        "",
+        "If you are adding a writer, add it to SITE_WRITERS and parse the config.",
+      ].join("\n"),
     ).toEqual([]);
+  });
+
+  test("a demo is never written without an expiry", () => {
+    /*
+     * The resolver refuses to serve a demo with no `demoExpiresAt`, so one
+     * created without it is a page that never loads rather than a leak. That
+     * is the correct failure and still a bug — and the version of it that
+     * matters is a demo built by a future path that forgets, on a page
+     * carrying a real business's name.
+     */
+    const demos = sourceFiles.find((f) => f.path === "demos.ts");
+    if (!demos) return;
+    const insert = demos.code.slice(demos.code.indexOf('db.insert("sites"'));
+    expect(insert.slice(0, 800)).toMatch(/demoExpiresAt:/);
+    expect(insert.slice(0, 800)).toMatch(/isDemo:\s*true/);
   });
 
   test("only lib/reseller.ts writes clients.resellerId", () => {

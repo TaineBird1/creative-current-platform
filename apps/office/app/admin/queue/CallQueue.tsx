@@ -33,6 +33,7 @@ type Row = Queue["rows"][number];
  */
 export function CallQueue({ initial }: { initial: Queue }) {
   const record = useMutation(api.queue.disposition);
+  const buildDemo = useMutation(api.demos.createForLead);
 
   const [rows, setRows] = useState<Row[]>(initial.rows);
   const [index, setIndex] = useState(0);
@@ -41,6 +42,13 @@ export function CallQueue({ initial }: { initial: Queue }) {
   const [callbackFor, setCallbackFor] = useState<string | null>(null);
   /** Open the full day grid. Closed by default: four buttons cover most calls. */
   const [pickingDay, setPickingDay] = useState(false);
+  /*
+   * The demo link, once built. Held in state rather than navigated to,
+   * because the moment it is needed is mid-call — "can you show me?" — and
+   * leaving the queue to fetch a link loses your place in it.
+   */
+  const [demoPath, setDemoPath] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const lead = rows[index];
   const done = initial.rows.length - rows.length;
@@ -60,6 +68,9 @@ export function CallQueue({ initial }: { initial: Queue }) {
        */
       setRows((prev) => prev.filter((row) => row.leadId !== lead.leadId));
       setIndex((prev) => Math.min(prev, rows.length - 2 < 0 ? 0 : rows.length - 2));
+      // The next lead gets a clean card.
+      setDemoPath(null);
+      setCopied(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That did not save. Try again.");
     } finally {
@@ -304,6 +315,46 @@ export function CallQueue({ initial }: { initial: Queue }) {
         <a className={s.dial} href={`tel:${lead.phone}`}>
           Call <span className={s.dialNumber}>{lead.phoneDisplay}</span>
         </a>
+
+        {/*
+          * BUILD A DEMO, mid-call. The moment it is wanted is "can you show
+          * me?", and the answer has to be a link in the next thirty seconds.
+          *
+          * The path is shown rather than opened: the useful action is pasting
+          * it into WhatsApp, and opening it would leave the queue.
+          */}
+        {demoPath ? (
+          <button
+            type="button"
+            className={s.demoLink}
+            onClick={() => {
+              const url = `${window.location.origin.replace("//app.", "//")}${demoPath}`;
+              void navigator.clipboard?.writeText(url).then(() => setCopied(true));
+            }}
+          >
+            {copied ? "Copied — paste it to them" : `Copy link ${demoPath}`}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={s.outcome}
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                const built = await buildDemo({ leadId: lead.leadId });
+                setDemoPath(built.path);
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : "Could not build that demo.");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Build a demo site
+          </button>
+        )}
 
         <div className={s.outcomes}>
           <button type="button" className={s.outcome} disabled={busy} onClick={() => disposition("no_answer")}>

@@ -349,6 +349,21 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   can be wrong. The notice OUTRANKS the configured success message. Sections
   receive a pre-decided message, never a flag: the guard banning `isDemo` in
   section components still holds.
+- **AN EMPTY FIELD REFUSES; A PLAUSIBLE ONE PRINTS.** The issuer's legal
+  name goes at the top of a document a client keeps, so a value invented by a
+  seed script, a test fixture or an assistant filling in a form it could not
+  leave blank is worse than a blank one - blank fails safely, plausible does
+  not. Two defences, because one is not enough:
+  `PLACEHOLDER` in issuer.ts refuses obvious fakes (test, ACME, John Doe) on
+  WHOLE WORDS, so "Testa Holdings" and "Barlow Trading" still pass - a rule
+  people work around protects nothing.
+  `issuers.confirmedAt` covers the rest, which the word list cannot: a name
+  that is plausible, passes every pattern, and is still not the person's
+  actual legal name. `invoices.issue` refuses an unconfirmed issuer, and
+  EVERY edit clears the confirmation - otherwise it is approved once and
+  changed freely afterwards. Confirming means typing the legal name back, not
+  ticking a box: a box can be ticked without reading, and the thing being
+  guarded against is precisely a value nobody read.
 - **WHEN THE INVOICE UI COMES, BUILD THE CLIENT-FACING HALF FIRST.** The PDF,
   email delivery, and the payment reference on the document. The owner's own
   admin table is the easy half and the one he can live without - he will

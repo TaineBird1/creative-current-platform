@@ -203,6 +203,21 @@ export const issue = ownerMutation({
       );
     }
 
+    /*
+     * UNCONFIRMED MEANS NOBODY HAS READ IT.
+     *
+     * An empty issuer field refuses on its own. A plausible one — a name a
+     * seed script or a hurried CLI call put there — prints at the top of a
+     * document a client keeps, and nothing errors. So the row has to have
+     * been looked at by a person, and every edit clears that again.
+     */
+    if (issuer.confirmedAt === undefined) {
+      throw bad(
+        "ISSUER_UNCONFIRMED",
+        `The issuer for this venture has not been confirmed. Check the details and run issuer.confirm with the legal name — an invoice carries it forever, and a plausible wrong one is worse than none.`,
+      );
+    }
+
     if (args.lineItems.length === 0) {
       throw bad("EMPTY_INVOICE", "An invoice with no lines is not a document, it is a number.");
     }

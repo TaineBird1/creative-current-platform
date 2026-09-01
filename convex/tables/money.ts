@@ -27,6 +27,49 @@ export const moneyTables = {
     next: v.number(),
   }).index("by_venture_series", ["ventureId", "series"]),
 
+  /**
+   * WHO IS ISSUING. Required before a venture can invoice anything.
+   *
+   * A South African SOLE PROPRIETOR invoices in their own name and has no
+   * registration number — there is nothing to register and nothing to wait
+   * for. `registrationNumber` is therefore optional, and its absence is the
+   * normal case rather than a gap: it appears when a Pty Ltd exists, and not
+   * before.
+   *
+   * `vatNumber` is likewise absent until VAT registration, which is
+   * compulsory only above R1m turnover. While it is absent no invoice renders
+   * a VAT line, because charging VAT without being registered for it is a
+   * different and much worse problem than not charging it.
+   *
+   * Per VENTURE, not per platform. One person can trade as a sole prop for
+   * consulting and form a company for the sites business, and on the day that
+   * happens only one venture's issuer changes.
+   */
+  issuers: defineTable({
+    ventureId: v.id("ventures"),
+    /** The legal person or company. For a sole prop, their own full name. */
+    legalName: v.string(),
+    /** The name on the letterhead, when it differs. */
+    tradingName: v.optional(v.string()),
+    /** Absent for a sole prop. Present once a Pty Ltd is registered. */
+    registrationNumber: v.optional(v.string()),
+    /** Absent until VAT registration. No VAT is charged while it is absent. */
+    vatNumber: v.optional(v.string()),
+    addressLine: v.string(),
+    suburb: v.optional(v.string()),
+    city: v.string(),
+    postalCode: v.optional(v.string()),
+    countryCode: v.string(),
+    email: v.string(),
+    phone: v.optional(v.string()),
+    /** Their OWN account, printed so a client can pay by EFT. */
+    bankName: v.optional(v.string()),
+    bankAccountName: v.optional(v.string()),
+    bankAccountNumber: v.optional(v.string()),
+    bankBranchCode: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_venture", ["ventureId"]),
+
   invoices: defineTable({
     ventureId: v.id("ventures"),
     clientId: v.id("clients"),

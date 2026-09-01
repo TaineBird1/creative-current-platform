@@ -20,6 +20,8 @@ import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as income from "../income.js";
 import type * as invites from "../invites.js";
+import type * as invoices from "../invoices.js";
+import type * as issuer from "../issuer.js";
 import type * as jobs from "../jobs.js";
 import type * as leadImport from "../leadImport.js";
 import type * as ledger from "../ledger.js";
@@ -84,6 +86,8 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   income: typeof income;
   invites: typeof invites;
+  invoices: typeof invoices;
+  issuer: typeof issuer;
   jobs: typeof jobs;
   leadImport: typeof leadImport;
   ledger: typeof ledger;

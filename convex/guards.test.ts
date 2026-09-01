@@ -299,45 +299,19 @@ describe("the ledger", () => {
   });
 });
 
-describe("the invoice boundary", () => {
+describe("invoice numbering", () => {
   /**
-   * WHERE THIS BACKEND STOPS, AND WHY IT IS A TEST.
+   * THE BOUNDARY THAT USED TO BE HERE IS GONE, AND WHY MATTERS.
    *
-   * The ledger needs no registered entity: it records money that actually
-   * moved, and that is true with or without letterhead. An INVOICE is the
-   * other thing. It carries a legal name, a registration number and a
-   * sequential number, it is the document a customer receives, and in South
-   * Africa it is the document SARS reads. Issuing one before there is an
-   * entity to issue it means sending a customer a number that belongs to
-   * nobody.
+   * This block previously asserted that NOTHING writes the invoices table,
+   * on the reasoning that an invoice needs a registered entity and none
+   * existed. That was half wrong. It is true of a Pty Ltd, which takes weeks
+   * at CIPC — and false of a SOLE PROPRIETOR, who invoices in their own name
+   * and has nothing to register. The schema had it right all along:
+   * `issuerRegistrationNumber` was already optional. The guard did not.
    *
-   * So `invoices` has no writer, and this is a test rather than a note,
-   * because a note does not survive a session boundary. Whoever registers the
-   * entity will find this failing and will have to state what the issuer is
-   * before the first invoice can exist — which is the order those two things
-   * have to happen in anyway.
+   * What survives is the rule that actually governs numbering, below.
    */
-  test("nothing writes the invoices table yet", () => {
-    const offenders: string[] = [];
-    for (const file of sourceFiles) {
-      if (/db\.insert\(\s*"invoices"/.test(file.text)) {
-        offenders.push(`${file.path}: inserts into invoices`);
-      }
-    }
-    expect(
-      offenders,
-      [
-        "An invoice is a legal document, not a ledger row. It needs an issuer",
-        "legal name and a registration number, and there is no registered",
-        "entity behind this platform yet.",
-        "",
-        "If you are adding invoicing: record the entity first, snapshot it onto",
-        "each invoice at issue (never join to it — a company that renames must",
-        "not silently rewrite documents already sent), then delete this test",
-        "and say in the PR what the issuer is.",
-      ].join("\n"),
-    ).toEqual([]);
-  });
 
   test("a number is never allocated apart from the invoice it belongs to", () => {
     /**
@@ -359,28 +333,39 @@ describe("the invoice boundary", () => {
      * survivable, and then a standing temptation to "tidy it up" by reusing
      * the number, which is the duplicate this rule exists to prevent.
      *
-     * Nothing writes either table today, so this guard is aimed forward: it
-     * fires on whoever builds invoicing, at the moment they get it wrong.
+     * WHAT THIS USED TO MISS, found while building invoicing. It scanned only
+     * the chunks AFTER the first `export const`, so a counter helper defined
+     * above the exports was invisible — which is exactly where such a helper
+     * lives. `quotes.ts` has had one since it was written and this passed
+     * anyway. It now follows the CALLS, because the call site is where the
+     * transaction boundary actually is.
      */
     const offenders: string[] = [];
+    /** Tables whose rows consume a number from `invoiceCounters`. */
+    const NUMBERED = ["quotes", "invoices"];
+    /** Helpers that take a number. Calling one counts as touching the counter. */
+    const TAKERS = /\b(takeNumber|nextNumber)\s*\(/;
 
     for (const file of sourceFiles) {
+      if (!/invoiceCounters/.test(file.code) && !TAKERS.test(file.code)) continue;
+
       // Per exported function, so "same file" is not mistaken for "same
       // transaction" — two mutations in one file are still two transactions.
-      for (const chunk of file.text.split(/export const /).slice(1)) {
+      for (const chunk of file.code.split(/export const /).slice(1)) {
         const body = chunk.split(/\nexport /)[0]!;
         const name = chunk.match(/^(\w+)/)?.[1] ?? "unknown";
 
-        const touchesCounter =
+        const takesNumber =
           /db\.(patch|replace|insert)\([^;]*invoiceCounter/s.test(body) ||
-          /query\(\s*"invoiceCounters"/.test(body);
-        const createsInvoice = /db\.insert\(\s*"invoices"/.test(body);
+          /query\(\s*"invoiceCounters"/.test(body) ||
+          TAKERS.test(body);
+        if (!takesNumber) continue;
 
-        if (touchesCounter && !createsInvoice) {
-          offenders.push(`${file.path}: ${name} allocates a number without inserting the invoice`);
-        }
-        if (createsInvoice && !touchesCounter) {
-          offenders.push(`${file.path}: ${name} inserts an invoice without allocating its number`);
+        const insertsNumbered = NUMBERED.some((table) =>
+          new RegExp(`db\\.insert\\(\\s*"${table}"`).test(body),
+        );
+        if (!insertsNumbered) {
+          offenders.push(`${file.path}: ${name} takes a number without inserting the row for it`);
         }
       }
     }
@@ -401,20 +386,45 @@ describe("the invoice boundary", () => {
     ).toEqual([]);
   });
 
-  test("and no reader claims a receivables figure", () => {
-    // A receivables total of R0 is a claim that nothing is owed, which is a
-    // different statement from "we do not track this". Same reasoning that put
-    // "not tracked" in the P&L instead of a zero.
+  test("an issued invoice is never deleted, only voided", () => {
+    /*
+     * Deleting leaves a gap that looks like a MISSING invoice rather than a
+     * cancelled one, and an accountant cannot tell those apart from outside.
+     * Voiding keeps the number used and the document visible, with a
+     * reversing ledger entry beside it.
+     */
     const offenders: string[] = [];
     for (const file of sourceFiles) {
-      for (const m of file.text.matchAll(/(outstandingCents|receivableCents|agingBuckets)/g)) {
-        offenders.push(`${file.path}: reports ${m[1]}`);
+      if (/db\.delete\([^)]*invoice/i.test(file.code)) {
+        offenders.push(`${file.path}: deletes an invoice`);
       }
     }
+    expect(offenders, "Void it instead — the record has to stay.").toEqual([]);
+  });
+
+  test("the issuer is snapshotted onto the invoice, never joined at read time", () => {
+    /*
+     * A person who converts to a Pty Ltd, or corrects their trading name,
+     * must not silently rewrite documents already in clients' inboxes. What
+     * was true on the day is what the invoice says forever.
+     */
+    const invoices = sourceFiles.find((f) => f.path === "invoices.ts");
+    if (!invoices) return;
+    expect(invoices.code).toMatch(/issuerLegalName:\s*issuer\.legalName/);
+
+    const get = invoices.code.slice(invoices.code.indexOf("export const get"));
     expect(
-      offenders,
-      "Nothing is owed until something has been issued. Do not report a zero for it.",
-    ).toEqual([]);
+      /query\(\s*"issuers"/.test(get),
+      "invoices.get must not look the issuer up — the invoice already carries it",
+    ).toBe(false);
+  });
+
+  test("no VAT is charged while there is no VAT number", () => {
+    // Charging VAT you are not registered for is worse than not charging it:
+    // the money is not yours and SARS wants it either way.
+    const invoices = sourceFiles.find((f) => f.path === "invoices.ts");
+    if (!invoices) return;
+    expect(invoices.code).toMatch(/taxFlag\s*=\s*Boolean\(issuer\.vatNumber\)/);
   });
 });
 

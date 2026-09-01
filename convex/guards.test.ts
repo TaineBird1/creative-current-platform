@@ -1130,3 +1130,72 @@ describe("money rules", () => {
     ).toEqual([]);
   });
 });
+
+describe("the pipeline", () => {
+  /**
+   * A deal's probability is what makes the forecast a number rather than a
+   * mood. It is derived from the stage in deals.ts and must not be settable
+   * from anywhere — including, especially, a form that lets an optimistic
+   * afternoon raise it.
+   */
+  test("probability is never taken from a caller", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      for (const m of file.text.matchAll(/args:\s*\{([\s\S]*?)\n {2}\},/g)) {
+        if (/probability:\s*v\./.test(m[1]!)) {
+          offenders.push(`${file.path}: accepts probability as an argument`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "Probability is derived from the stage in deals.ts. A forecast whose inputs can be nudged is a mood, not a number.",
+    ).toEqual([]);
+  });
+
+  /**
+   * `openDeal` is what makes "one open deal per lead" true. A direct insert
+   * bypasses it, and two rows for one conversation double the forecast — the
+   * exact failure the whole module is shaped to avoid.
+   */
+  test("only deals.ts inserts into the deals table", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === "deals.ts") continue;
+      if (/db\.insert\(\s*"deals"/.test(file.text)) {
+        offenders.push(`${file.path}: inserts a deal directly`);
+      }
+    }
+    expect(
+      offenders,
+      "Use openDeal() from deals.ts. It is what enforces one open deal per lead.",
+    ).toEqual([]);
+  });
+
+  /**
+   * Won means they said yes. Converted means a client exists. Nothing may
+   * mark a lead converted without minting one, or the funnel's last column
+   * fills with rows that have nothing behind them.
+   */
+  test("a lead is never marked converted without a client", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      // Line by line, so a COMMENT explaining why we do not do this is not
+      // itself reported as doing it — which is exactly what caught deals.ts
+      // when this guard was first written.
+      const lines = file.text.split("\n");
+      lines.forEach((line, i) => {
+        if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+        if (!/status:\s*"converted"/.test(line)) return;
+        const around = lines.slice(Math.max(0, i - 8), i + 8).join("\n");
+        if (!/convertedClientId/.test(around)) {
+          offenders.push(`${file.path}:${i + 1}: sets status "converted" with no client alongside it`);
+        }
+      });
+    }
+    expect(
+      offenders,
+      "A lead marked converted with no client behind it makes every downstream count wrong, in the direction that flatters us.",
+    ).toEqual([]);
+  });
+});

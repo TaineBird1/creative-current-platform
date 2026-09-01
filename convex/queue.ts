@@ -4,6 +4,7 @@ import { listContactable, getWithVerdict } from "./lib/leadAccess";
 import { byAsc } from "./lib/ordering";
 import { toE164 } from "./lib/phone";
 import type { Doc, Id } from "./_generated/dataModel";
+import { openDeal } from "./deals";
 
 /**
  * TODAY'S QUEUE — the list you work down with a phone in your hand.
@@ -293,6 +294,19 @@ export const disposition = platformMutation({
     });
 
     /*
+     * A MEETING SET IS AN OPPORTUNITY, so it opens a deal rather than sitting
+     * as a disposition nobody counts. Recording the call and then losing the
+     * outcome is how a pipeline ends up being the notebook next to the phone.
+     *
+     * Idempotent on the lead's open deal — see deals.ts. Phoning back and
+     * re-setting a meeting is normal, and must not double the forecast.
+     */
+    let dealId: Id<"deals"> | null = null;
+    if (args.outcome === "meeting_set") {
+      dealId = (await openDeal(ctx, { leadId: args.leadId, now })).dealId;
+    }
+
+    /*
      * A refusal becomes a suppression IMMEDIATELY, not a task for later. The
      * gap between "they said no" and "they stop appearing" is the window in
      * which somebody phones them again, and the person on the other end has
@@ -354,6 +368,9 @@ export const disposition = platformMutation({
       await ctx.db.patch(args.leadId, { status: "working" });
     }
 
-    return { ok: true as const };
+    // Hand back the deal so the UI can go straight to it — a meeting set on
+    // a call is followed by filling in what was agreed, not by hunting for
+    // the row afterwards.
+    return { ok: true as const, dealId };
   },
 });

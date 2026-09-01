@@ -678,10 +678,39 @@ describe("the queue is filtered, not the dial", () => {
    */
   const CANDIDATE_ASSEMBLERS = new Set(["queue.ts", "seed.ts"]);
 
+  /**
+   * Reads leads WITHOUT returning any, and so cannot put a suppressed name on
+   * a screen. `leadImport` scans for duplicates and returns counts.
+   *
+   * A narrower exemption than the assemblers, with its own condition below:
+   * these must be unreachable from a browser at all. "It only returns counts"
+   * is a promise about today's code; "it is an internalMutation" is a
+   * property the next person cannot quietly change without noticing.
+   */
+  const INTERNAL_DEDUPE = new Set(["leadImport.ts"]);
+
+  test("dedupe readers are unreachable from a browser", () => {
+    const offenders: string[] = [];
+    for (const path of INTERNAL_DEDUPE) {
+      const file = sourceFiles.find((f) => f.path === path);
+      if (!file) continue;
+      for (const m of file.code.matchAll(/export\s+const\s+(\w+)\s*=\s*(\w+)\s*\(/g)) {
+        if (!/^internal(Query|Mutation|Action)$/.test(m[2]!)) {
+          offenders.push(`${path}: ${m[1]} is ${m[2]}, not internal`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "A file on the dedupe allowlist reads leads without filtering. It is only safe while nothing in a browser can call it.",
+    ).toEqual([]);
+  });
+
   test("only lib/leadAccess.ts and the queue assemblers read the leads table", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === LEAD_READER || CANDIDATE_ASSEMBLERS.has(file.path)) continue;
+      if (INTERNAL_DEDUPE.has(file.path)) continue;
       if (/query\(\s*"leads"/.test(file.code)) {
         offenders.push(`${file.path}: queries leads directly`);
       }
@@ -741,6 +770,130 @@ describe("the queue is filtered, not the dial", () => {
         `queue.ts: ${name} returns the unfiltered candidate array`,
       ).toBe(false);
     }
+  });
+});
+
+describe("one phone normaliser", () => {
+  /**
+   * THE PHONE IS A SUPPRESSION KEY, so two opinions about its canonical form
+   * is two opinions about who may be called.
+   *
+   * There WERE two. The importer produced "+27833176385" and the suppression
+   * matcher produced "833176385". They agreed only because both sides were
+   * normalised again at compare time, so the divergence was latent rather
+   * than harmless — one import path storing a raw "083 317 6385" and a
+   * suppressed number is back on the queue with every test still green.
+   *
+   * That is the failure this file cares about most: no error, no red test,
+   * and the person who asked not to be called gets called.
+   */
+  const PHONE = "lib/phone.ts";
+
+  test("nothing else strips digits out of a phone number", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === PHONE) continue;
+      // The shape of a hand-rolled normaliser: throwing away non-digits from
+      // something the surrounding code calls a phone.
+      for (const chunk of file.code.split(/\n(?=\s*(?:export )?(?:async )?function |\n)/)) {
+        if (!/phone/i.test(chunk)) continue;
+        if (/replace\(\s*\/\\D\/g/.test(chunk) || /replace\(\s*\/\[^0-9\]\/g/.test(chunk)) {
+          offenders.push(`${file.path}: normalises a phone number itself`);
+          break;
+        }
+      }
+    }
+    expect(
+      offenders,
+      [
+        "Use toE164() from convex/lib/phone.ts. It is the one definition of",
+        "what a phone number IS here, and the phone is the key suppression",
+        "matches on. A second normaliser does not have to be wrong to be",
+        "dangerous — it only has to disagree, once, on one import path.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the suppression key is written through it, not raw", () => {
+    // disposition writes the value a future import will be matched against.
+    // Writing lead.phone directly works only while every writer normalises.
+    const queue = sourceFiles.find((f) => f.path === "queue.ts");
+    expect(queue?.code).toMatch(/toE164\(/);
+    expect(
+      /kind:\s*"phone",\s*value:\s*lead\.phone\b/.test(queue?.code ?? ""),
+      "queue.ts writes a raw lead.phone as a suppression value — normalise it first.",
+    ).toBe(false);
+  });
+
+  test("a customer we cannot message is TOLD, at the moment they give it", () => {
+    /**
+     * The silent failure this closes. A number that does not reach E.164
+     * cannot be checked against the do-not-call list, so dispatch suppresses
+     * every message to it — correctly. But the outbox row explaining that is
+     * visible to the BUSINESS, and the customer sees nothing: they submit,
+     * the confirmation is dropped, and they wait for a message that was never
+     * going to arrive.
+     *
+     * Exactly the demo-form shape, and it gets the same answer. The backend
+     * knows at submission time, so the backend says so.
+     */
+    const quote = sourceFiles.find((f) => f.path === "public/quote.ts");
+    expect(quote, "convex/public/quote.ts is missing").toBeTruthy();
+    expect(
+      /toE164\(/.test(quote!.code),
+      "public/quote.ts must decide whether the number it just took can be messaged.",
+    ).toBe(true);
+    expect(
+      /reachable/.test(quote!.code),
+      "and it must return that, so the form can say it at the time.",
+    ).toBe(true);
+
+    // Staff-side capture too: the person typing it is the only one who can
+    // still ask for a different number, and only if they are told now.
+    const customers = sourceFiles.find((f) => f.path === "customers.ts");
+    expect(customers?.code).toMatch(/reachable/);
+  });
+
+  test("an unreachable number does not lose the enquiry", () => {
+    // Refusing the number would turn a messaging limitation into a lost
+    // booking, which is worse for everyone. It is recorded, and said.
+    const quote = sourceFiles.find((f) => f.path === "public/quote.ts")!;
+    expect(
+      /throw rejected\([^)]*reachab/i.test(quote.code),
+      "an unmessageable number must not be rejected — record it and say so",
+    ).toBe(false);
+  });
+
+  test("an unparseable number is a refusal, not a pass", () => {
+    const phone = sourceFiles.find((f) => f.path === PHONE);
+    expect(phone, "convex/lib/phone.ts is missing").toBeTruthy();
+    // toE164 must be able to say no. A normaliser that always returns
+    // something turns a typo into a number that matches nothing.
+    expect(phone!.code).toMatch(/e164:\s*null/);
+  });
+});
+
+describe("the queue only contains callable rows", () => {
+  test("leads with no number are filtered out, not rendered dead", () => {
+    /*
+     * A row you tap dial on where nothing happens teaches you that the dial
+     * button is sometimes a lie, and three of those in a morning is enough to
+     * stop trusting the screen. They go to `needsNumber` instead — finding a
+     * number is research, and research does not belong between two calls.
+     */
+    const queue = sourceFiles.find((f) => f.path === "queue.ts");
+    expect(queue?.code).toMatch(/callable\s*=\s*leads\.filter\(/);
+    expect(queue?.code).toMatch(/needsNumberCount/);
+    expect(queue?.code).toMatch(/export const needsNumber/);
+  });
+
+  test("the needs-a-number list is suppression-filtered too", () => {
+    // A business that asked not to be contacted should not appear on a list
+    // of people to go and find a number for either.
+    const queue = sourceFiles.find((f) => f.path === "queue.ts")!;
+    const block = queue.code.slice(queue.code.indexOf("export const needsNumber"));
+    const body = block.slice(0, block.indexOf("\nexport const"));
+    expect(body).toMatch(/listContactable\(/);
   });
 });
 

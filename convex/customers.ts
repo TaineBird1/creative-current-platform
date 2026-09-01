@@ -1,3 +1,4 @@
+import { toStorageKey, toE164 } from "./lib/phone";
 import { v, ConvexError } from "convex/values";
 import { byName } from "./lib/ordering";
 import type { Id } from "./_generated/dataModel";
@@ -45,12 +46,19 @@ export type CustomerRow = {
  * customer rather than three. Without this the duplicate-merge tooling exists
  * to clean up a mess the write path created.
  */
-export function normalisePhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  if (digits.startsWith("27") && digits.length === 11) return `0${digits.slice(2)}`;
-  if (digits.startsWith("0027")) return `0${digits.slice(4)}`;
-  return digits;
-}
+/**
+ * Phone storage goes through lib/phone.ts, which is the ONE place that
+ * decides what a phone number is here.
+ *
+ * This used to be a third normaliser, producing "0833176385" where the
+ * importer produced "+27833176385" and the suppression matcher produced
+ * "833176385". Three canonical forms for the key that decides who may be
+ * called — they agreed only because every comparison re-normalised both
+ * sides, so the divergence was latent, and a guard test found it rather than
+ * a person.
+ */
+export const normalisePhone = toStorageKey;
+
 
 function toRow(doc: {
   _id: Id<"customers">;
@@ -116,9 +124,30 @@ export const upsertByPhone = tenantMutation("staff")({
   handler: async (
     ctx,
     args,
-  ): Promise<{ customerId: Id<"customers">; created: boolean }> => {
+  ): Promise<{
+    customerId: Id<"customers">;
+    created: boolean;
+    /**
+     * False when the number cannot be normalised to E.164 — which means every
+     * message to this customer will be suppressed, because a number we cannot
+     * canonicalise is one we cannot check against the do-not-call list.
+     *
+     * Returned rather than left to be discovered in the outbox three days
+     * later: the person typing it is the only one who can still ask for a
+     * different number, and they can only do that if they are told now.
+     */
+    reachable: boolean;
+  }> => {
     const name = args.name.trim();
     const phone = normalisePhone(args.phone);
+    /*
+     * Whether we will ever be able to MESSAGE this person. A number that does
+     * not reach E.164 cannot be checked against the do-not-call list, so
+     * dispatch suppresses everything to it — see lib/phone.ts. The booking is
+     * still accepted; the caller is told so it can be said at the time rather
+     * than found in an outbox days later.
+     */
+    const reachable = toE164(args.phone).ok;
     if (!name) {
       throw new ConvexError({ code: "INVALID", message: "A customer needs a name." });
     }
@@ -159,7 +188,7 @@ export const upsertByPhone = tenantMutation("staff")({
       if (args.email && !target.email) patch.email = args.email.trim();
       if (Object.keys(patch).length > 0) await ctx.db.patch(target._id, patch);
 
-      return { customerId: target._id, created: false };
+      return { customerId: target._id, created: false, reachable };
     }
 
     const customerId = await ctx.db.insert("customers", {
@@ -185,7 +214,7 @@ export const upsertByPhone = tenantMutation("staff")({
       after: { name, phone },
     });
 
-    return { customerId, created: true };
+    return { customerId, created: true, reachable };
   },
 });
 

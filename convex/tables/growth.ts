@@ -22,10 +22,35 @@ export const growthTables = {
   leads: defineTable({
     ventureId: v.id("ventures"),
     geoAreaId: v.optional(v.id("geoAreas")),
-    placeId: v.string(),
+    /**
+     * OPTIONAL, because not every lead comes from Google.
+     *
+     * It was required, which quietly assumed Places was the only source. The
+     * first real import — 59 KZN solar installers off trade directories — has
+     * no Place IDs at all, and the tempting fix was to mint synthetic ones.
+     * That would put a fabricated key in the column suppression matches on,
+     * where it could later collide with a real Place ID and silently suppress
+     * the wrong business.
+     *
+     * Absent is honest. `provenance` is the field that always answers where a
+     * row came from; this one only says whether Google was involved.
+     */
+    placeId: v.optional(v.string()),
     businessName: v.string(),
     niche: v.string(),
+    /**
+     * E.164 (+27XXXXXXXXX), and it is a KEY, not a display string.
+     * Suppression matches on it, `tel:` dials it. Written only by
+     * lib/phone.ts — see the note there about the two normalisers that
+     * disagreed.
+     */
     phone: v.optional(v.string()),
+    /**
+     * What the source actually said: "0833176385 / 0622155142". Kept because
+     * it is what a person recognises, and because it holds the second number
+     * that normalising to a single key necessarily discards.
+     */
+    phoneDisplay: v.optional(v.string()),
     website: v.optional(v.string()),
     /*
      * NO rating OR reviewCount HERE, and the omission is deliberate.
@@ -69,6 +94,8 @@ export const growthTables = {
       source: v.union(
         v.literal("places"),
         v.literal("sa_venues"),
+        /** A list compiled off trade directories, e.g. SolarZA, ENF, Procompare. */
+        v.literal("campaign_list"),
         v.literal("referral"),
         v.literal("inbound"),
       ),

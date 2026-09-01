@@ -1,3 +1,4 @@
+import { toE164, samePhone } from "./phone";
 import type { QueryCtx } from "../_generated/server";
 
 /**
@@ -59,13 +60,15 @@ const blocked = (reason: string, matched?: ContactVerdict["matched"]): ContactVe
   matched,
 });
 
-/** Digits only, so "+27 82 555 1234" and "0825551234" cannot disagree. */
-function normalisePhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  // Drop a leading country code or trunk zero so the comparison is on the
-  // subscriber number. Two formats of one number must not read as two people.
-  return digits.replace(/^(?:0027|27|0)/, "");
-}
+/*
+ * Phone normalisation lives in lib/phone.ts and is shared with the importer.
+ * It used to be defined here too, with a DIFFERENT canonical form — this
+ * produced "833176385" where the importer produced "+27833176385". They
+ * agreed only because both sides were normalised at compare time, so the
+ * divergence was latent rather than harmless, and one import path that
+ * stored a raw string would have let a suppressed number back onto the queue
+ * with every test still green.
+ */
 
 function normaliseDomain(raw: string): string | null {
   const trimmed = raw.trim().toLowerCase();
@@ -143,14 +146,13 @@ export function decideAgainst(
     }
 
     if (rawPhone) {
-      const mine = normalisePhone(rawPhone);
-      if (!mine) {
-        // A phone we cannot normalise is a phone we cannot clear.
-        return blocked(`cannot normalise the phone "${rawPhone}" to check it`);
+      const mine = toE164(rawPhone);
+      if (!mine.ok) {
+        // A number we cannot parse is a number we cannot clear against the
+        // list. Fail closed, and say which one so it can be fixed.
+        return blocked(`cannot read the phone ${mine.reason} — refusing to contact`);
       }
-      const hit = rows.find(
-        (row) => row.kind === "phone" && normalisePhone(row.value) === mine,
-      );
+      const hit = rows.find((row) => row.kind === "phone" && samePhone(row.value, mine.e164));
       if (hit) return blocked(hit.reason, { kind: hit.kind, value: hit.value });
     }
 

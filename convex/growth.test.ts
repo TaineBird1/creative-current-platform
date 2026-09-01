@@ -6,6 +6,7 @@ import type { Id } from "./_generated/dataModel";
 import { solarTradesTemplate, buildAccentRamp, safeParseSiteConfig } from "@cc/site-config";
 import { reserveSpend, periodFor } from "./lib/placesBudget";
 import { contactDecision, filterContactable } from "./lib/suppression";
+import { toE164, samePhone } from "./lib/phone";
 import { readPlace, writePlace, PLACES_CACHE_MS } from "./lib/places";
 
 /**
@@ -249,7 +250,7 @@ describe("suppression fails closed", () => {
     const h = harness();
     const verdict = await h.run((ctx) => contactDecision(ctx, { phone: "n/a" }));
     expect(verdict.blocked).toBe(true);
-    expect(verdict.reason).toMatch(/cannot normalise/);
+    expect(verdict.reason).toMatch(/cannot read the phone/);
   });
 
   test("a FAILED LOOKUP resolves to blocked", async () => {
@@ -691,5 +692,366 @@ describe("provenance answers where did you get my number", () => {
         } as never),
       ),
     ).rejects.toThrow();
+  });
+});
+
+describe("one phone normaliser, because the phone is the key", () => {
+  /**
+   * There were three canonical forms in this codebase — "+27833176385",
+   * "833176385" and "0833176385" — and they agreed only because every
+   * comparison re-normalised both sides. The divergence was latent, not
+   * absent: one import path storing a raw string and a suppressed number is
+   * back on the queue with every test green.
+   */
+  test("the formats a South African number actually arrives in all agree", () => {
+    const forms = [
+      "0833176385",
+      "083 317 6385",
+      "083-317-6385",
+      "+27 83 317 6385",
+      "+27833176385",
+      "27833176385",
+      "0027833176385",
+      "(083) 317 6385",
+    ];
+    for (const form of forms) {
+      expect(toE164(form), form).toMatchObject({ ok: true, e164: "+27833176385" });
+    }
+  });
+
+  test("the first of two numbers is the key, and the rest is kept", () => {
+    // Three real rows in the campaign list look like this.
+    const parsed = toE164("0833176385 / 0622155142");
+    expect(parsed.e164).toBe("+27833176385");
+    // Nothing is lost: display keeps the second number, which is the only
+    // record that it exists at all.
+    expect(parsed.display).toBe("0833176385 / 0622155142");
+  });
+
+  test("a parenthetical LABEL is dropped but a bracketed AREA CODE is not", () => {
+    /*
+     * These look identical to a regex that strips parentheses, and the first
+     * version stripped both — turning "(031) 940 3961" into seven digits and
+     * losing a working Durban landline. A letter inside is what makes it a
+     * note.
+     */
+    expect(toE164("0832070485 (WhatsApp) / 0870744449").e164).toBe("+27832070485");
+    expect(toE164("(031) 940 3961").e164).toBe("+27319403961");
+    expect(toE164("(031) 940 3961 (after hours)").e164).toBe("+27319403961");
+  });
+
+  test("a number that is not South African is REFUSED, not guessed at", () => {
+    /*
+     * The important half. A normaliser that always returns something turns a
+     * typo into a key that matches nothing — and matching nothing means the
+     * do-not-call list has no opinion, which reads as permission.
+     */
+    for (const bad of ["12345", "", "n/a", "+44 20 7946 0958", "083317638500"]) {
+      expect(toE164(bad).ok, bad).toBe(false);
+      expect(toE164(bad).e164, bad).toBeNull();
+    }
+  });
+
+  test("the refusal quotes the number, so the source row can be fixed", () => {
+    const parsed = toE164("12345");
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.reason).toContain("12345");
+  });
+
+  test("samePhone matches across formats and refuses on either side unparsed", () => {
+    expect(samePhone("0833176385", "+27 83 317 6385")).toBe(true);
+    expect(samePhone("0833176385", "0622155142")).toBe(false);
+    // Unparseable is NOT a match — the caller treats that as blocked, which
+    // is the direction that cannot get somebody phoned.
+    expect(samePhone("0833176385", "n/a")).toBe(false);
+  });
+
+  test("a suppression written in ANY format still blocks an E.164 lead", async () => {
+    /*
+     * The scenario the consolidation is for: a suppression typed by hand off
+     * a note, against a lead whose number was normalised at import.
+     */
+    const h = harness();
+    await h.run((ctx) =>
+      ctx.db.insert("suppressions", {
+        kind: "phone",
+        value: "083 317 6385",
+        reason: "asked not to be contacted",
+        createdAt: AUG,
+      }),
+    );
+    const verdict = await h.run((ctx) => contactDecision(ctx, { phone: "+27833176385" }));
+    expect(verdict.blocked).toBe(true);
+  });
+
+  test("and the reverse: an E.164 suppression blocks a lead in national form", async () => {
+    const h = harness();
+    await h.run((ctx) =>
+      ctx.db.insert("suppressions", {
+        kind: "phone",
+        value: "+27833176385",
+        reason: "asked not to be contacted",
+        createdAt: AUG,
+      }),
+    );
+    const verdict = await h.run((ctx) => contactDecision(ctx, { phone: "0833176385" }));
+    expect(verdict.blocked).toBe(true);
+  });
+});
+
+describe("the queue holds only rows that can be dialled", () => {
+  async function seedMixed() {
+    const h = harness();
+    const { userId } = await h.mutation(internal.bootstrap.claimPlatformOwner, {
+      email: "owner@thecreativecurrent.co.za",
+    });
+    const owner = asUser(h, userId);
+    const ventureId = await h.run((ctx) =>
+      ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      }),
+    );
+    const make = (name: string, phone?: string, phoneDisplay?: string) =>
+      h.run((ctx) =>
+        ctx.db.insert("leads", {
+          ventureId,
+          businessName: name,
+          niche: "solar",
+          phone,
+          phoneDisplay,
+          auditFaults: [],
+          status: "new",
+          provenance: {
+            source: "campaign_list",
+            capturedAt: AUG,
+            lawfulBasis: "legitimate_interest",
+            detail: "SolarZA directory listing",
+          },
+        }),
+      );
+
+    await make("Callable Solar", "+27825550001", "0825550001");
+    await make("No Number Solar");
+    await make("Also No Number");
+    return { h, owner };
+  }
+
+  test("a lead with no number is not in the queue at all", async () => {
+    /*
+     * Not greyed out, not disabled — absent. A row you tap dial on where
+     * nothing happens teaches you the dial button is sometimes a lie, and
+     * three of those in a morning is enough to stop trusting the screen.
+     */
+    const s = await seedMixed();
+    const result = await s.owner.query(api.queue.today, {});
+    expect(result.rows.map((row) => row.businessName)).toEqual(["Callable Solar"]);
+    for (const row of result.rows) expect(row.phone).toBeTruthy();
+  });
+
+  test("they are COUNTED, so the shortfall is never a mystery", async () => {
+    const s = await seedMixed();
+    const result = await s.owner.query(api.queue.today, {});
+    expect(result.needsNumberCount).toBe(2);
+  });
+
+  test("and they are listed separately, as research rather than calling", async () => {
+    const s = await seedMixed();
+    const rows = await s.owner.query(api.queue.needsNumber, {});
+    expect(rows.map((row) => row.businessName).sort()).toEqual([
+      "Also No Number",
+      "No Number Solar",
+    ]);
+  });
+
+  test("the needs-a-number list is suppression-filtered too", async () => {
+    // Someone who asked not to be contacted should not appear on a list of
+    // businesses to go and find a number for.
+    const s = await seedMixed();
+    await s.h.run((ctx) =>
+      ctx.db.insert("suppressions", {
+        kind: "nameFragment", value: "No Number Solar",
+        reason: "asked not to be contacted", createdAt: AUG,
+      }),
+    );
+    const rows = await s.owner.query(api.queue.needsNumber, {});
+    expect(rows.map((row) => row.businessName)).toEqual(["Also No Number"]);
+  });
+
+  test("the queue keeps the original string beside the dialling key", async () => {
+    const s = await seedMixed();
+    const result = await s.owner.query(api.queue.today, {});
+    expect(result.rows[0]?.phone).toBe("+27825550001");
+    expect(result.rows[0]?.phoneDisplay).toBe("0825550001");
+  });
+});
+
+describe("a customer we cannot message is told at the time", () => {
+  /**
+   * The silent failure: a number that does not reach E.164 cannot be checked
+   * against the do-not-call list, so dispatch suppresses everything to it.
+   * That is correct, and it is invisible to the person who typed it — the
+   * outbox row explaining it belongs to the BUSINESS. They submit, the
+   * confirmation is dropped, and they wait.
+   *
+   * Same shape as the demo form, same answer: the backend knows at submission
+   * time, so it says so then.
+   */
+  async function submitWithPhone(phone: string) {
+    const h = harness();
+    await h.run(async (ctx) => {
+      const ventureId = await ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      });
+      const clientId = await ctx.db.insert("clients", {
+        ventureId, kind: "platform", name: "Hillcrest Guest House", slug: "hgh",
+        status: "live", timezone: "Africa/Johannesburg", currency: "ZAR",
+        featureFlags: {}, isDemo: false, isSeed: false,
+      });
+      const config = solarTradesTemplate({
+        businessName: "Hillcrest Guest House", slug: "hgh", brandColour: "#1f6f43",
+        accent: buildAccentRamp("#1f6f43"), city: "Durban", region: "KwaZulu-Natal",
+        suburb: "Hillcrest", addressLine: "12 Old Main Road", phone: "+27315551234",
+      });
+      await ctx.db.insert("sites", {
+        clientId, slug: "hgh", status: "live", config, publishedConfig: config,
+        version: 1, configSchemaVersion: 1, isDemo: false,
+      });
+    });
+
+    const parsed = safeParseSiteConfig(
+      await h.run(async (ctx) => (await ctx.db.query("sites").collect())[0]!.publishedConfig),
+    );
+    if (!parsed.success) throw new Error("template did not parse");
+    const quote = parsed.data.sections.find((section) => section.type === "quote")!;
+
+    const answers: Record<string, string> = {};
+    if (quote.type === "quote") {
+      for (const field of quote.fields) {
+        if (field.required && field.kind !== "photos") answers[field.key] = "Yes";
+      }
+    }
+
+    const result = await h.mutation(api.public.quote.submit, {
+      slug: "hgh",
+      sectionId: quote.id,
+      name: "Visitor",
+      phone,
+      answers,
+      consentAccepted: true,
+    });
+    return { h, result };
+  }
+
+  test("a South African number is reachable and gets no notice", async () => {
+    const { result } = await submitWithPhone("0825551234");
+    expect(result.reachable).toBe(true);
+    expect(result.notice).toBeNull();
+  });
+
+  test("a foreign number is told we will PHONE rather than message", async () => {
+    const { result } = await submitWithPhone("+44 20 7946 0958");
+    expect(result.reachable).toBe(false);
+    expect(result.notice?.title).toMatch(/phone you/i);
+    // And what to do about it, if they would rather have it in writing.
+    expect(result.notice?.body).toMatch(/South African number/i);
+  });
+
+  test("the enquiry is still RECORDED — this is not a rejection", async () => {
+    /*
+     * Refusing the number would turn a messaging limitation into a lost
+     * booking. The business would rather have the enquiry and phone them.
+     */
+    const { h, result } = await submitWithPhone("+44 20 7946 0958");
+    expect(result.ok).toBe(true);
+    const rows = await h.run((ctx) => ctx.db.query("quoteRequests").collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.phone).toBe("+44 20 7946 0958");
+  });
+
+  test("the demo notice still outranks it — nothing was booked beats how we reply", async () => {
+    // Both can apply at once. "Nothing was booked at all" is the more
+    // important of the two things to say, so it wins.
+    const h = harness();
+    await h.run(async (ctx) => {
+      const ventureId = await ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      });
+      const clientId = await ctx.db.insert("clients", {
+        ventureId, kind: "platform", name: "Demo Solar", slug: "demo",
+        status: "live", timezone: "Africa/Johannesburg", currency: "ZAR",
+        featureFlags: {}, isDemo: true, isSeed: false,
+      });
+      const config = solarTradesTemplate({
+        businessName: "Demo Solar", slug: "demo", brandColour: "#1f6f43",
+        accent: buildAccentRamp("#1f6f43"), city: "Durban", region: "KwaZulu-Natal",
+        suburb: "Hillcrest", addressLine: "12 Old Main Road", phone: "+27315551234",
+      });
+      await ctx.db.insert("sites", {
+        clientId, slug: "demo", status: "demo", config, publishedConfig: config,
+        version: 1, configSchemaVersion: 1, isDemo: true,
+        demoExpiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      });
+    });
+    const parsed = safeParseSiteConfig(
+      await h.run(async (ctx) => (await ctx.db.query("sites").collect())[0]!.publishedConfig),
+    );
+    if (!parsed.success) throw new Error("template did not parse");
+    const quote = parsed.data.sections.find((section) => section.type === "quote")!;
+    const answers: Record<string, string> = {};
+    if (quote.type === "quote") {
+      for (const field of quote.fields) {
+        if (field.required && field.kind !== "photos") answers[field.key] = "Yes";
+      }
+    }
+    const result = await h.mutation(api.public.quote.submit, {
+      slug: "demo", sectionId: quote.id, name: "Visitor",
+      phone: "+44 20 7946 0958", answers, consentAccepted: true,
+    });
+    expect(result.notice?.title).toMatch(/nothing was booked/i);
+  });
+
+  test("staff creating a customer are told too", async () => {
+    /*
+     * The other capture point. The person typing it is the only one who can
+     * still ask for a different number, and only if they are told now rather
+     * than finding it in an outbox three days later.
+     */
+    const h = harness();
+    const ids = await h.run(async (ctx) => {
+      const ventureId = await ctx.db.insert("ventures", {
+        name: "Sites", type: "platform", currency: "ZAR", active: true, sortOrder: 1,
+      });
+      const clientId = await ctx.db.insert("clients", {
+        ventureId, kind: "platform", name: "Alpha", slug: "alpha", status: "live",
+        timezone: "Africa/Johannesburg", currency: "ZAR",
+        featureFlags: {}, isDemo: false, isSeed: false,
+      });
+      const user = await ctx.db.insert("users", { email: "owner@alpha.test" });
+      await ctx.db.insert("memberships", {
+        userId: user, clientId, role: "owner", active: true, acceptedAt: Date.now(),
+      });
+      return { user };
+    });
+    const owner = asUser(h, ids.user);
+
+    const local = await owner.mutation(api.customers.upsertByPhone, {
+      clientSlug: "alpha", name: "Thabo M", phone: "0825551234",
+    });
+    expect(local.reachable).toBe(true);
+
+    const foreign = await owner.mutation(api.customers.upsertByPhone, {
+      clientSlug: "alpha", name: "Anna V", phone: "+44 20 7946 0958",
+    });
+    expect(foreign.reachable).toBe(false);
+  });
+
+  test("and dispatch really does suppress that customer, which is why it is said", async () => {
+    // The two halves have to agree, or the notice is a lie in one direction
+    // or the other. This is the half that makes the warning true.
+    const h = harness();
+    const verdict = await h.run((ctx) => contactDecision(ctx, { phone: "442079460958" }));
+    expect(verdict.blocked).toBe(true);
+    expect(verdict.reason).toMatch(/cannot read the phone/);
   });
 });

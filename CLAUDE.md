@@ -272,6 +272,20 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   It is wired into `dispatch` too: a business that refused us during
   prospecting has not changed their mind because someone later typed their
   number into a booking.
+- **A DEMO INVENTS NOTHING ABOUT THE BUSINESS.** `siteLocation.addressLine`
+  is OPTIONAL for exactly this reason: a directory listing gives a suburb,
+  not a street, and requiring one would force the demo builder to invent an
+  address for a real business and print it under their name - the harm the
+  whole demo regime exists to prevent, arriving through a schema default. The
+  phone shown is theirs, off the listing they already publish. `leads.area`
+  carries the suburb as its own field because a demo needs it; it used to
+  live only inside `provenance.detail`, which is the one field that may never
+  be edited.
+  Building a demo is OUTREACH and goes through `contactDecision` - doing it
+  for a business that asked not to be contacted is the same act as calling
+  them. Revoking expires the demo rather than deleting it, so the slug stays
+  claimed and a link already sent cannot later resolve to a different
+  business's demo.
 - **A DEMO CARRIES A REAL BUSINESS'S NAME. ENFORCE AT THE RENDERER.** Not per
   template - one template missing a meta tag is a live, indexable
   impersonation of a business trading in its own name, which is a legal
@@ -314,6 +328,12 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   can be wrong. The notice OUTRANKS the configured success message. Sections
   receive a pre-decided message, never a flag: the guard banning `isDemo` in
   section components still holds.
+- **WHEN THE INVOICE UI COMES, BUILD THE CLIENT-FACING HALF FIRST.** The PDF,
+  email delivery, and the payment reference on the document. The owner's own
+  admin table is the easy half and the one he can live without - he will
+  issue from the CLI until the client half exists. Building the admin table
+  first is the tempting order because it is easier and more visible to the
+  person building it, which is exactly why it is the wrong one.
 - **THE LEDGER STOPS AT THE DOCUMENT.** The ledger records money that
   actually moved and needs no registered entity to be true — payments,
   refunds, adjustments, reversals, per-client and per-venture totals, all

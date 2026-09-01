@@ -140,6 +140,9 @@ for (const line of lines) {
     businessName: name,
     phone: (line[iPhone] ?? "").trim() || undefined,
     website: (line[iWebsite] ?? "").trim() || undefined,
+    // Its own field, not only inside provenance.detail — a demo needs the
+    // suburb to say where they work, and provenance may never be edited.
+    area: area || undefined,
     detail: area ? `${directory} directory listing (${area})` : `${directory} directory listing`,
     // Not invented. Only what the file actually observed about their web
     // presence — a fault we cannot evidence is a claim on a cold call.

@@ -13,6 +13,7 @@ import type * as bookings from "../bookings.js";
 import type * as bootstrap from "../bootstrap.js";
 import type * as clients from "../clients.js";
 import type * as customers from "../customers.js";
+import type * as demos from "../demos.js";
 import type * as domains from "../domains.js";
 import type * as expenses from "../expenses.js";
 import type * as finance from "../finance.js";
@@ -79,6 +80,7 @@ declare const fullApi: ApiFromModules<{
   bootstrap: typeof bootstrap;
   clients: typeof clients;
   customers: typeof customers;
+  demos: typeof demos;
   domains: typeof domains;
   expenses: typeof expenses;
   finance: typeof finance;

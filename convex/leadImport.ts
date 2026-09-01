@@ -44,6 +44,8 @@ export const importLeads = internalMutation({
         businessName: v.string(),
         phone: v.optional(v.string()),
         website: v.optional(v.string()),
+        /** Suburb or town. A demo needs it: the site names where they work. */
+        area: v.optional(v.string()),
         placeId: v.optional(v.string()),
         /** The specific directory or search this row came from. */
         detail: v.string(),
@@ -121,6 +123,7 @@ export const importLeads = internalMutation({
         // it holds any second number the key had to drop.
         phoneDisplay: row.phone?.trim() || undefined,
         website: row.website?.trim() || undefined,
+        area: row.area?.trim() || undefined,
         auditFaults: row.auditFaults ?? [],
         callNote: row.callNote?.trim() || undefined,
         ownerName: row.ownerName?.trim() || undefined,

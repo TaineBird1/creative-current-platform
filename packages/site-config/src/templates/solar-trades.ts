@@ -29,7 +29,8 @@ type SeedInput = {
   city: string;
   region: string;
   suburb: string;
-  addressLine: string;
+  /** Absent on a demo: we know the suburb, not the street. */
+  addressLine?: string;
   phone: string;
   whatsapp?: string;
   email?: string;

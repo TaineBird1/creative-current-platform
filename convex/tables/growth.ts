@@ -214,7 +214,11 @@ export const growthTables = {
     /** Mandatory on lost. Enforced in the mutation, not just the form. */
     lossReason: v.optional(v.string()),
     closedAt: v.optional(v.number()),
-  }).index("by_stage", ["stage"]),
+  })
+    .index("by_stage", ["stage"])
+    // The pipeline is idempotent on "one OPEN deal per lead", so opening one
+    // has to be able to ask that question without scanning every deal.
+    .index("by_lead", ["leadId"]),
 
   /** Records, not users. Accrual on PAID only. */
   agents: defineTable({

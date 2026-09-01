@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { PLACEHOLDER } from "./issuer";
 
 /**
  * INVOICES.
@@ -50,6 +51,14 @@ async function setup(over: { issuer?: Partial<typeof SOLE_PROP> & { vatNumber?: 
 
   if (over.issuer !== null) {
     await owner.mutation(api.issuer.set, { ventureId, ...SOLE_PROP, ...over.issuer });
+    /*
+     * Confirmed, because these tests are about invoices and an unconfirmed
+     * issuer refuses before any of that is reached. The refusal itself is
+     * tested in its own block below, where it is the subject rather than a
+     * step in the way.
+     */
+    const name = over.issuer?.legalName ?? SOLE_PROP.legalName;
+    await owner.mutation(api.issuer.confirm, { ventureId, legalName: name });
   }
 
   const clientId = await h.run((ctx) =>
@@ -676,5 +685,139 @@ describe("settlement is derived from the balance, never stamped", () => {
     expect(owed.invoices[0]?.settlement).toBe("part_paid");
     expect(owed.invoices[0]?.overdue).toBe(true);
     expect(owed.totals[0]?.overdueCents).toBe(50_000);
+  });
+});
+
+describe("a plausible wrong issuer is refused, because an empty one already is", () => {
+  /**
+   * The asymmetry this whole block exists for: an EMPTY legal name refuses on
+   * its own and is therefore safe. A PLAUSIBLE one — invented by a seed
+   * script, a test fixture, or an assistant filling in a form it could not
+   * leave blank — prints at the top of a document a client keeps, and nothing
+   * errors anywhere.
+   */
+  async function withIssuer(over: Record<string, string> = {}) {
+    const h = harness();
+    const { userId } = await h.mutation(internal.bootstrap.claimPlatformOwner, {
+      email: "owner@thecreativecurrent.co.za",
+    });
+    const owner = asUser(h, userId);
+    const { ventureId } = await owner.mutation(api.ventures.create, {
+      name: "Sites", type: "platform", currency: "ZAR",
+    });
+    const clientId = await h.run((ctx) =>
+      ctx.db.insert("clients", {
+        ventureId, kind: "external", name: "Upper Highway Solar", status: "live",
+        timezone: "Africa/Johannesburg", currency: "ZAR",
+        featureFlags: {}, isDemo: false, isSeed: false,
+      }),
+    );
+    return { h, owner, ventureId, clientId, over };
+  }
+
+  test("obvious placeholder values are refused at the door", async () => {
+    const s = await withIssuer();
+    for (const legalName of ["Test Company", "ACME Holdings", "John Doe", "Your Name Here"]) {
+      await expect(
+        s.owner.mutation(api.issuer.set, { ventureId: s.ventureId, ...SOLE_PROP, legalName }),
+        legalName,
+      ).rejects.toThrow(/PLACEHOLDER_VALUE/);
+    }
+  });
+
+  test("a real name that CONTAINS one of those words is not refused", async () => {
+    /*
+     * The check is on whole words. "Testa" is a surname and "Barlow" is a
+     * business — a rule that refused them would be a rule people work around,
+     * and a worked-around rule protects nothing.
+     */
+    const s = await withIssuer();
+    for (const legalName of ["Testa Holdings", "Barlow Trading", "Sampson Electrical"]) {
+      await expect(
+        s.owner.mutation(api.issuer.set, { ventureId: s.ventureId, ...SOLE_PROP, legalName }),
+        legalName,
+      ).resolves.toBeTruthy();
+    }
+  });
+
+  test("the placeholder pattern actually matches something", () => {
+    /*
+     * This test exists because the pattern was once written with escaped word
+     * boundaries that became literal BACKSPACE bytes. The regex compiled, the
+     * code ran, every test passed — and it matched nothing at all. A guard
+     * that cannot fire is worse than no guard, because it is believed.
+     */
+    expect(PLACEHOLDER.test("Test Company")).toBe(true);
+    expect(PLACEHOLDER.test("Testa Holdings")).toBe(false);
+    // And the source carries real boundaries, not control characters.
+    expect(PLACEHOLDER.source).toContain("\\b");
+    expect(PLACEHOLDER.source).not.toContain("");
+  });
+
+  test("an issuer that has not been CONFIRMED cannot issue anything", async () => {
+    // The half the word list cannot cover: a name that is plausible, passes
+    // every pattern, and is still not the person's actual legal name.
+    const s = await withIssuer();
+    await s.owner.mutation(api.issuer.set, { ventureId: s.ventureId, ...SOLE_PROP });
+
+    await expect(
+      s.owner.mutation(api.invoices.issue, {
+        clientId: s.clientId,
+        lineItems: [{ description: "Website", quantity: 1, unitPriceCents: 100_000 }],
+      }),
+    ).rejects.toThrow(/ISSUER_UNCONFIRMED/);
+  });
+
+  test("confirming requires typing the legal name back, not ticking a box", async () => {
+    /*
+     * A checkbox can be ticked without reading, and the thing being guarded
+     * against is precisely a value nobody read. Typing the name means the
+     * name was looked at.
+     */
+    const s = await withIssuer();
+    await s.owner.mutation(api.issuer.set, { ventureId: s.ventureId, ...SOLE_PROP });
+
+    await expect(
+      s.owner.mutation(api.issuer.confirm, {
+        ventureId: s.ventureId, legalName: "Something Else",
+      }),
+    ).rejects.toThrow(/NAME_MISMATCH/);
+
+    await s.owner.mutation(api.issuer.confirm, {
+      ventureId: s.ventureId, legalName: SOLE_PROP.legalName,
+    });
+    const issuer = await s.owner.query(api.issuer.get, { ventureId: s.ventureId });
+    expect(issuer?.confirmed).toBe(true);
+  });
+
+  test("EVERY edit clears the confirmation", async () => {
+    /*
+     * Otherwise the check is decorative: approved once, changed freely
+     * afterwards. What was confirmed has to be what would print.
+     */
+    const s = await withIssuer();
+    await s.owner.mutation(api.issuer.set, { ventureId: s.ventureId, ...SOLE_PROP });
+    await s.owner.mutation(api.issuer.confirm, {
+      ventureId: s.ventureId, legalName: SOLE_PROP.legalName,
+    });
+
+    await s.owner.mutation(api.issuer.set, {
+      ventureId: s.ventureId, ...SOLE_PROP, addressLine: "9 Kloof Road",
+    });
+
+    expect((await s.owner.query(api.issuer.get, { ventureId: s.ventureId }))?.confirmed).toBe(false);
+    await expect(
+      s.owner.mutation(api.invoices.issue, {
+        clientId: s.clientId,
+        lineItems: [{ description: "Website", quantity: 1, unitPriceCents: 100_000 }],
+      }),
+    ).rejects.toThrow(/ISSUER_UNCONFIRMED/);
+  });
+
+  test("the reader says whether it is confirmed rather than leaving it to be inferred", async () => {
+    const s = await withIssuer();
+    await s.owner.mutation(api.issuer.set, { ventureId: s.ventureId, ...SOLE_PROP });
+    const issuer = await s.owner.query(api.issuer.get, { ventureId: s.ventureId });
+    expect(issuer?.confirmed).toBe(false);
   });
 });

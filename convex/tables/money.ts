@@ -68,6 +68,21 @@ export const moneyTables = {
     bankAccountNumber: v.optional(v.string()),
     bankBranchCode: v.optional(v.string()),
     updatedAt: v.number(),
+    /**
+     * A HUMAN LOOKED AT THIS AND SAID IT WAS RIGHT.
+     *
+     * Null until confirmed, and every edit clears it again. `invoices.issue`
+     * refuses an unconfirmed issuer, because the failure being prevented is
+     * not an empty field — an empty field refuses on its own — it is a
+     * PLAUSIBLE one. A legal name invented by a seed script, a test fixture
+     * or an assistant filling in a form looks exactly like a real one and
+     * prints at the top of a document a client keeps.
+     *
+     * Empty refuses. Plausible prints. So plausible has to refuse too, and
+     * the only thing that can tell them apart is a person.
+     */
+    confirmedAt: v.optional(v.number()),
+    confirmedBy: v.optional(v.id("users")),
   }).index("by_venture", ["ventureId"]),
 
   invoices: defineTable({

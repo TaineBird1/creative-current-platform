@@ -4,6 +4,7 @@ import { convexAuthNextjsToken } from "@convex-dev/auth/nextjs/server";
 import Link from "next/link";
 import { api } from "@cc/convex/api";
 import { SignOut } from "@/components/SignOut";
+import { AdminNav } from "@/components/AdminNav";
 import { CallQueue } from "./CallQueue";
 import s from "../console.module.css";
 import q from "./queue.module.css";
@@ -57,6 +58,7 @@ export default async function QueuePage() {
               The Creative Current
             </Link>
           </p>
+          <AdminNav />
           <div className={s.who}>
             <SignOut />
           </div>

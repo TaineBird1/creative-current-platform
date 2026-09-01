@@ -1,0 +1,214 @@
+/*
+ * THE INBOX. Operate mode, read twice a day: once before the calls and once
+ * after. Monochrome ink like the rest of the console.
+ *
+ * Denser than the queue, deliberately. The queue is one lead at a time
+ * because it is read standing up mid-call; this is a list you scan, and the
+ * whole value is seeing how much is late in one look.
+ *
+ * Tabular figures on every number, per the console's rule.
+ */
+
+.filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-s);
+}
+
+.filterLabel {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.select {
+  font: inherit;
+  font-size: 0.875rem;
+  min-height: 2.5rem;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-s);
+  border: var(--border-hairline) solid var(--control-border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/*
+ * The one line above the list. Not a badge or a pill — a sentence, because it
+ * is the only thing on the screen that should change what you do next.
+ */
+.behind {
+  margin: 0 0 var(--space-s);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--signal-danger);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ---- add ---------------------------------------------------------------- */
+
+.add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding-bottom: var(--space-m);
+  margin-bottom: var(--space-m);
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.addLabel {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.input {
+  font: inherit;
+  font-size: 1rem;
+  min-height: 3rem;
+  padding: 0 var(--space-s);
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid var(--control-border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.input::placeholder {
+  color: var(--ink-500);
+}
+
+/*
+ * The date buttons appear only once there is a title, so an empty screen is
+ * one field rather than six controls asking when for a task that does not
+ * exist yet.
+ */
+.when {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3xs);
+}
+
+.whenButton {
+  font: inherit;
+  font-size: 0.875rem;
+  min-height: 2.5rem;
+  padding: 0 var(--space-s);
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid var(--control-border);
+  background: var(--bg);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.whenButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- groups ------------------------------------------------------------- */
+
+.group {
+  margin-bottom: var(--space-l);
+}
+
+.groupHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-2xs);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.groupHead[data-late] {
+  color: var(--signal-danger);
+}
+
+.count {
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+/*
+ * The tick is the whole left edge of the row and 44px tall, because it is
+ * tapped with a thumb while holding a phone — a small checkbox next to text
+ * is a desktop control.
+ */
+.tick {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  min-height: 2.75rem;
+  margin-inline-start: calc(var(--space-2xs) * -1);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.box {
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: var(--radius-s);
+  border: 1.5px solid var(--control-border);
+}
+
+.tick:hover .box {
+  border-color: var(--text);
+  background: var(--bg-sunken);
+}
+
+.title {
+  flex: 1;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.due {
+  flex: none;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.due[data-late] {
+  color: var(--signal-danger);
+  font-weight: 600;
+}
+
+.muted {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+}
+
+.error {
+  margin: var(--space-2xs) 0 0;
+  font-size: 0.875rem;
+  color: var(--signal-danger);
+}

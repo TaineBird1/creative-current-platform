@@ -272,6 +272,27 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   It is wired into `dispatch` too: a business that refused us during
   prospecting has not changed their mind because someone later typed their
   number into a booking.
+- **SHORT LINKS ARE NOT BEING BUILT, AND THE REASON IS NOT EFFORT.** A demo
+  link goes out over WhatsApp, which fetches the URL to build the preview
+  card - as does every forward, and every device it lands on. A redirect
+  count cannot tell a scraper from a person, so it would register a hit on
+  every demo the moment the link was PASTED, before anyone looked. That is
+  not a weak signal, it is a false one on every row, and it is the kind you
+  act on. If it is ever built it needs scraper user-agents excluded and only
+  a second, later view counted - and it still guesses. `demoEngagements`
+  (form submitted) is a real signal precisely because a scraper cannot
+  produce it.
+- **`tasks.status` IS STORED, AND THAT IS NOT THE INVOICE MISTAKE REPEATED.**
+  An invoice is paid because money arrived and the ledger can be counted, so
+  storing settlement was a bug - a truer source existed. A task is done
+  because a PERSON judged it done, and there is nothing else to compute it
+  from. `status` and `completedAt` are written together by `complete` and
+  `reopen` only, because two fields that must agree are two fields that will
+  disagree. Overdue is still derived: it is a fact about today.
+  CANCELLED is distinct from DONE. "I did it" and "it stopped being worth
+  doing" are different answers, and collapsing them makes a completed-work
+  list that flatters whoever is reading it - who is the person who wrote the
+  tasks.
 - **A DEMO INVENTS NOTHING ABOUT THE BUSINESS.** `siteLocation.addressLine`
   is OPTIONAL for exactly this reason: a directory listing gives a suburb,
   not a street, and requiring one would force the demo builder to invent an

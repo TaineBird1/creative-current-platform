@@ -5,6 +5,7 @@ import Link from "next/link";
 import { api } from "@cc/convex/api";
 import { formatCents } from "@cc/convex-src/lib/money";
 import { SignOut } from "@/components/SignOut";
+import { AdminNav } from "@/components/AdminNav";
 import { RecordEntry } from "./RecordEntry";
 import c from "../console.module.css";
 import s from "./finance.module.css";
@@ -123,6 +124,7 @@ export default async function Finance({
       <div className={c.shell}>
         <header className={c.topbar}>
           <p className={c.brand}>The Creative Current</p>
+          <AdminNav />
           <div className={c.who}>
             <span className={c.role}>{role}</span>
             <SignOut />

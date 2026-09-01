@@ -1,0 +1,46 @@
+/*
+ * Sits in the top bar beside the brand. Scrolls horizontally rather than
+ * wrapping: on a narrow phone a wrapped nav pushes the page heading below the
+ * fold, and the heading is what tells you where you are.
+ */
+.nav {
+  display: flex;
+  gap: var(--space-2xs);
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* Bleeds past the bar's padding so the last item is not clipped mid-scroll. */
+  margin-inline: calc(var(--space-2xs) * -1);
+  padding-inline: var(--space-2xs);
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
+}
+
+.link {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0 var(--space-2xs);
+  border-radius: var(--radius-s);
+  font-size: 0.8125rem;
+  font-weight: 550;
+  color: var(--text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.link:hover {
+  color: var(--text);
+}
+
+/*
+ * The current section is marked by weight and ink, not a background chip.
+ * A chip in a monochrome world reads as a button you can press to go
+ * somewhere — which is exactly what it is not, since you are already there.
+ */
+.link[aria-current="page"] {
+  color: var(--text);
+  font-weight: 650;
+}

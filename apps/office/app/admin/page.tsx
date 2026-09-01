@@ -5,6 +5,7 @@ import Link from "next/link";
 import { api } from "@cc/convex/api";
 import type { Id } from "@cc/convex/dataModel";
 import { SignOut } from "@/components/SignOut";
+import { AdminNav } from "@/components/AdminNav";
 import { NewExternalClient } from "./NewExternalClient";
 import s from "./console.module.css";
 
@@ -34,6 +35,7 @@ function Refused({ expired }: { expired: boolean }) {
       <div className={s.shell}>
         <header className={s.topbar}>
           <p className={s.brand}>The Creative Current</p>
+          <AdminNav />
           <div className={s.who}>
             <SignOut />
           </div>

@@ -1,5 +1,7 @@
 import { internalQuery } from "./_generated/server";
 import { LIVE_CHANNELS, sendAllowlist } from "./lib/providers";
+import { paystackMode } from "./lib/paystack";
+import type { Id } from "./_generated/dataModel";
 
 /**
  * Is this deployment's auth actually configured?
@@ -104,6 +106,132 @@ export const messagingConfig = internalQuery({
       note:
         "WhatsApp and SMS have no provider. Those messages are queued, logged " +
         "and recorded as not sent, never marked delivered.",
+    };
+  },
+});
+
+/**
+ * IS ANY MONEY STUCK?
+ *
+ * The same shape as `messagingConfig`, and it exists for the same reason that
+ * one does: this system's expensive failures are the quiet ones, and a row
+ * that parks where nobody looks is indistinguishable from a system with
+ * nothing wrong.
+ *
+ * `unattributed` is the case worth the command. A verified webhook we could
+ * not tie to a client is REAL MONEY that arrived and never reached the
+ * ledger — deliberately, because guessing whose it is cannot be undone. But
+ * parking is only half an answer: the other half is somebody noticing, and
+ * nothing was ever going to make them.
+ *
+ *   npx convex run health:money
+ */
+export const money = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const events = await ctx.db.query("webhookEvents").collect();
+    const stuck = events.filter((e) => e.status === "unattributed" || e.status === "refused");
+
+    const subscriptions = await ctx.db.query("subscriptions").collect();
+    const pastDue = subscriptions.filter((s) => s.status === "past_due");
+    /*
+     * A pending subscription with no provider reference is a checkout nobody
+     * completed. Harmless one at a time, and a pile of them means the
+     * checkout link is not working for anybody.
+     */
+    const abandoned = subscriptions.filter((s) => s.status === "pending" && !s.providerRef);
+
+    const clientName = async (id: Id<"clients"> | undefined) =>
+      id ? ((await ctx.db.get(id))?.name ?? "(client removed)") : null;
+
+    return {
+      charging: paystackMode(),
+      /** The headline. Anything but zero is money that arrived and stopped. */
+      stuckEvents: stuck.length,
+      stuck: await Promise.all(
+        stuck
+          .sort((a, b) => b.receivedAt - a.receivedAt)
+          .slice(0, 20)
+          .map(async (e) => ({
+            eventId: e.eventId,
+            provider: e.provider,
+            type: e.type,
+            status: e.status,
+            receivedAt: new Date(e.receivedAt).toISOString(),
+            why: e.note ?? null,
+            /*
+             * The keys that arrived, never the values. Enough to see WHY it
+             * could not be placed — a payload with no `data.reference` and no
+             * `data.metadata` explains itself.
+             */
+            payloadKeys: e.payloadKeys ?? null,
+            client: await clientName(e.clientId),
+          })),
+      ),
+      pastDue: await Promise.all(
+        pastDue.map(async (s) => ({
+          plan: s.plan,
+          amountCents: s.amountCents,
+          currency: s.currency,
+          client: await clientName(s.clientId),
+          /* Suspension is explicit-only. Nothing here has chased them. */
+          note: "past_due. Nothing chases this — dunning is not built.",
+        })),
+      ),
+      abandonedCheckouts: abandoned.length,
+      note:
+        stuck.length === 0
+          ? "Nothing stuck."
+          : "Read `stuck`. Each row is verified money we could not place — it is " +
+            "parked rather than guessed, and it stays parked until somebody acts.",
+    };
+  },
+});
+
+/**
+ * WHAT EACH PROVIDER ACTUALLY SENDS.
+ *
+ * Written to settle a specific question — does Paystack's `subscription.create`
+ * carry the metadata we attached at checkout? — and kept because that question
+ * has a new instance every time a provider is integrated. Their documentation
+ * is vague, the sample payloads are behind a login, and the honest answer has
+ * always been "run it and read the logs", which means the answer belongs to
+ * whoever was watching at the time.
+ *
+ * This makes it belong to the data instead. Key names only, so it is safe to
+ * run and safe to paste into a message.
+ *
+ *   npx convex run health:webhookShapes
+ */
+export const webhookShapes = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const events = await ctx.db.query("webhookEvents").collect();
+    const byType = new Map<string, { seen: number; keys: Set<string> }>();
+
+    for (const event of events) {
+      const key = `${event.provider}:${event.type}`;
+      const entry = byType.get(key) ?? { seen: 0, keys: new Set<string>() };
+      entry.seen += 1;
+      for (const k of event.payloadKeys ?? []) entry.keys.add(k);
+      byType.set(key, entry);
+    }
+
+    return {
+      note:
+        events.length === 0
+          ? "No webhooks have arrived yet. Run the flow in test mode and ask again."
+          : "Key names only — never values. `carriesMetadata` is the question this was written for.",
+      types: [...byType.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([type, entry]) => ({
+          type,
+          seen: entry.seen,
+          /** The one that decides whether attribution can rely on metadata. */
+          carriesMetadata: entry.keys.has("data.metadata"),
+          carriesReference: entry.keys.has("data.reference"),
+          keys: [...entry.keys].sort(),
+        })),
     };
   },
 });

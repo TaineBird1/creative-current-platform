@@ -409,6 +409,29 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   `past_due` and stops. Suspension stays explicit-only, because a card
   declining once is not a decision to cancel and an automatic suspension is a
   client whose site goes dark over a bank glitch.
+- **A PARKED EVENT KEEPS ITS PAYLOAD, AND NOTHING ELSE DOES.** The note on
+  `unattributed` always said such an event was "parked with the payload
+  intact". It was not — nothing stored one, so reconciling a parked event
+  meant going to the provider dashboard with an event id, which is exactly the
+  look-somewhere-else that parking exists to avoid. `payload` is now kept for
+  `unattributed` and `refused` only: money we could not place and money a
+  rule turned away, the two cases where a person has to read what arrived.
+  An applied event needs none — its effects are rows — and that restriction is
+  also the POPIA answer, because a charge payload carries a customer email and
+  card metadata.
+  **`payloadKeys` is kept on EVERY event: key names, never values.** It
+  settles the structural questions a provider documentation is vague about
+  ("does subscription.create carry metadata?") from data rather than from
+  whoever happened to be reading the logs, and a list of field names has
+  nothing in it to protect. `health:webhookShapes` reports it per event type.
+- **`health:money` EXISTS BECAUSE PARKING IS ONLY HALF AN ANSWER.** An
+  `unattributed` event is REAL MONEY that arrived and never reached the
+  ledger — deliberately, because guessing whose it is cannot be undone. The
+  other half is somebody noticing, and nothing was ever going to make them.
+  One command reports stuck events with the reason and the payload shape, any
+  subscription in `past_due` (saying out loud that nothing chases it), and
+  abandoned checkouts — one is nothing, a pile means the link is broken for
+  everybody. Same shape and same reasoning as `health:messagingConfig`.
 - **THE LEDGER STOPS AT THE DOCUMENT.** The ledger records money that
   actually moved and needs no registered entity to be true — payments,
   refunds, adjustments, reversals, per-client and per-venture totals, all
@@ -814,7 +837,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 708 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 716 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -1095,7 +1118,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 708 tests
+pnpm test                        # 716 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

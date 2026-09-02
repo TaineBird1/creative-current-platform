@@ -580,3 +580,145 @@ describe("a first payment can find its subscription", () => {
     expect(row.providerRef).toBe("SUB_new_001");
   });
 });
+
+describe("nothing is stuck where nobody looks", () => {
+  /**
+   * The failure this whole block is about: `unattributed` is REAL MONEY that
+   * arrived and never reached the ledger, parked on purpose because guessing
+   * whose it is cannot be undone. Parking is half an answer; the other half is
+   * somebody noticing, and until `health:money` nothing was going to make
+   * them.
+   */
+  test("a clean deployment says so plainly", async () => {
+    const s = await setup();
+    const report = await s.h.query(internal.health.money, {});
+    expect(report.stuckEvents).toBe(0);
+    expect(report.stuck).toEqual([]);
+    expect(report.note).toBe("Nothing stuck.");
+  });
+
+  test("AN UNATTRIBUTED EVENT IS COUNTED AND EXPLAINED", async () => {
+    const s = await setup();
+    await paystackPost(s.h, {
+      event: "charge.success",
+      id: "evt_orphan",
+      data: {
+        id: 4242,
+        reference: "nobody_knows_this",
+        amount: 95000,
+        currency: "ZAR",
+        paid_at: "2026-09-01T10:00:00.000Z",
+      },
+    });
+
+    const report = await s.h.query(internal.health.money, {});
+    expect(report.stuckEvents).toBe(1);
+    expect(report.stuck[0]!.eventId).toBe("evt_orphan");
+    expect(report.stuck[0]!.why).toMatch(/no subscription/i);
+    expect(report.note).toMatch(/parked rather than guessed/);
+  });
+
+  test("and the payload KEYS are there, so it explains itself", async () => {
+    /*
+     * Key names, never values. A payload with no `data.reference` and no
+     * `data.metadata` says why it could not be placed, without putting a
+     * customer's email into a diagnostic anybody can run.
+     */
+    const s = await setup();
+    await paystackPost(s.h, {
+      event: "charge.success",
+      id: "evt_shapeless",
+      data: { id: 4243, amount: 95000, currency: "ZAR", paid_at: "2026-09-01T10:00:00.000Z" },
+    });
+
+    const report = await s.h.query(internal.health.money, {});
+    const keys = report.stuck[0]!.payloadKeys!;
+    expect(keys).toContain("data.amount");
+    expect(keys).not.toContain("data.reference");
+    expect(keys).not.toContain("data.metadata");
+  });
+
+  test("THE VALUES ARE NEVER IN THE SHAPE", async () => {
+    // The whole reason payloadKeys can be kept on every event forever.
+    const s = await setup();
+    await paystackPost(s.h, {
+      event: "charge.success",
+      id: "evt_pii",
+      data: {
+        id: 4244,
+        reference: "unknown_ref",
+        amount: 95000,
+        currency: "ZAR",
+        paid_at: "2026-09-01T10:00:00.000Z",
+        customer: { email: "someone@example.com" },
+      },
+    });
+
+    const stored = (await eventsOf(s.h))[0]!;
+    expect(stored.payloadKeys).toContain("data.customer");
+    expect(JSON.stringify(stored.payloadKeys)).not.toContain("someone@example.com");
+  });
+
+  test("A PARKED EVENT KEEPS ITS PAYLOAD — the comment always claimed it did", async () => {
+    /*
+     * It did not. Nothing stored one, so reconciling a parked event meant
+     * going to the provider's dashboard with an event id — which is exactly
+     * the "look somewhere else" that parking is supposed to avoid.
+     */
+    const s = await setup();
+    await paystackPost(s.h, {
+      event: "charge.success",
+      id: "evt_keepme",
+      data: {
+        id: 4245,
+        reference: "unknown_ref",
+        amount: 95000,
+        currency: "ZAR",
+        paid_at: "2026-09-01T10:00:00.000Z",
+      },
+    });
+
+    const stored = (await eventsOf(s.h))[0]!;
+    expect(stored.status).toBe("unattributed");
+    expect((stored.payload as { data: { reference: string } }).data.reference).toBe("unknown_ref");
+  });
+
+  test("AN APPLIED EVENT DOES NOT — its effects are rows, and payloads carry PII", async () => {
+    const s = await setup();
+    await paystackPost(s.h, charge("2026-09-01T10:00:00.000Z"));
+
+    const stored = (await eventsOf(s.h))[0]!;
+    expect(stored.status).toBe("applied");
+    expect(stored.payload).toBeUndefined();
+    // The shape is still kept, because it has nothing in it to protect.
+    expect(stored.payloadKeys).toContain("data.reference");
+  });
+
+  test("a past_due subscription is surfaced, and says nothing is chasing it", async () => {
+    const s = await setup();
+    await s.h.run((ctx) => ctx.db.patch(s.subscriptionId, { status: "past_due" }));
+
+    const report = await s.h.query(internal.health.money, {});
+    expect(report.pastDue).toHaveLength(1);
+    expect(report.pastDue[0]!.client).toBe("Alpha");
+    expect(report.pastDue[0]!.note).toMatch(/dunning is not built/i);
+  });
+
+  test("abandoned checkouts are counted — one is nothing, a pile is a broken link", async () => {
+    const s = await setup();
+    await s.h.run((ctx) =>
+      ctx.db.insert("subscriptions", {
+        ventureId: s.ventureId,
+        clientId: s.clientId,
+        plan: "care",
+        amountCents: 95000,
+        currency: "ZAR",
+        provider: "paystack" as const,
+        startReference: "cc_sub_never_paid",
+        status: "pending" as const,
+      }),
+    );
+
+    expect((await s.h.query(internal.health.money, {})).abandonedCheckouts).toBe(1);
+  });
+});

@@ -1,4 +1,7 @@
 import { v, ConvexError, type Infer } from "convex/values";
+import { newToken, hashToken } from "./lib/tokens";
+import { invoiceViewUrl, officeOrigin } from "./lib/links";
+import { dispatchToClient } from "./lib/messaging";
 import { ownerMutation, platformQuery } from "./lib/functions";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -238,6 +241,25 @@ export async function issueInvoiceFor(ctx: MutationCtx, args: IssueInvoiceArgs) 
     }
 
     /*
+     * NO LINK ORIGIN, NO INVOICE — checked HERE, before a number is taken.
+     *
+     * This is deliberately the opposite answer to the one messaging gives
+     * elsewhere. A booking is still taken when nothing can reach the
+     * customer, because an unreachable phone is a fact about the WORLD and
+     * refusing would turn a messaging limitation into lost work. An unset
+     * `SITE_URL` is a fact about the DEPLOYMENT, fixed in one command, and
+     * proceeding past it would burn a number in a sequence on a document
+     * whose link nobody can open — which is exactly the kind of invoice
+     * somebody has to explain to an accountant later.
+     *
+     * Convex mutations are serializable, so throwing anywhere in here rolls
+     * the counter back with everything else and no number is consumed. It is
+     * checked before `takeNumber` anyway, so the refusal costs nothing at
+     * all and reads in the right order.
+     */
+    officeOrigin();
+
+    /*
      * Rounded PER LINE before summing. Summing unrounded and rounding once at
      * the end produces a total that disagrees with the lines printed above
      * it — by a cent, which is exactly the kind of thing a client notices and
@@ -286,6 +308,24 @@ export async function issueInvoiceFor(ctx: MutationCtx, args: IssueInvoiceArgs) 
 
     const { number, seq } = await takeNumber(ctx, client.ventureId);
 
+    /*
+     * THE VIEW LINK'S CREDENTIAL, minted in the same transaction as the
+     * document it opens.
+     *
+     * Random, from lib/tokens.ts — never the number, never the id, never a
+     * counter. `paymentReference` above is deliberately the invoice number
+     * because a reference has to be short enough to type into a banking app;
+     * this is the opposite requirement and gets the opposite answer, and the
+     * two must never be confused. A view token derived from the number would
+     * turn one leaked link into every invoice we have ever issued.
+     *
+     * The PLAINTEXT is returned once and stored nowhere, exactly like an
+     * invite. It does reach `messages.payload`, because that is the row that
+     * builds the email — which is the same exposure as the recipient's inbox,
+     * and the reason the link is revocable.
+     */
+    const viewToken = newToken();
+
     const invoiceId = await ctx.db.insert("invoices", {
       ventureId: client.ventureId,
       clientId: args.clientId,
@@ -307,6 +347,13 @@ export async function issueInvoiceFor(ctx: MutationCtx, args: IssueInvoiceArgs) 
       issuerLegalName: issuer.legalName,
       issuerRegistrationNumber: issuer.registrationNumber,
       issuerVatNumber: issuer.vatNumber,
+      /*
+       * Snapshotted so `public/invoice.view` never has to reach the clients
+       * table. A join there would mean a leaked link could be made to answer
+       * questions about a client rather than about one document.
+       */
+      billToName: client.name,
+      viewTokenHash: await hashToken(viewToken),
       status: "issued",
       paymentTermsDays: termsDays,
       issuedAt: now,
@@ -342,6 +389,43 @@ export async function issueInvoiceFor(ctx: MutationCtx, args: IssueInvoiceArgs) 
       at: now,
     });
 
+    /*
+     * THE CLIENT-FACING HALF, IN THE SAME TRANSACTION.
+     *
+     * An invoice that committed while its delivery did not is the exact
+     * failure this is worth preventing: the admin screen shows a document
+     * that went out, the client never received one, and the first person to
+     * notice is whoever chases a payment that was never asked for.
+     *
+     * `dispatchToClient` RETURNS an outcome rather than throwing, which is
+     * what makes this safe to run here — a client with no contact email must
+     * not roll back a numbered document. The caller is told, and the outbox
+     * holds the row saying why.
+     */
+    const delivery = await dispatchToClient(ctx, {
+      message: { kind: "invoice.issued", invoiceId },
+      clientId: args.clientId,
+      templateKey: "invoice_issued",
+      payload: {
+        number,
+        billToName: client.name,
+        issuerLegalName: issuer.legalName,
+        totalCents: String(totalCents),
+        currency,
+        paymentReference: paymentReference(number),
+        dueAt: String(now + termsDays * 24 * 60 * 60 * 1000),
+        termsDays: String(termsDays),
+        viewUrl: invoiceViewUrl(viewToken),
+      },
+      /*
+       * It happened just now, in this transaction. That is what buys it the
+       * hour in which it may go out whatever the clock says — and what makes
+       * it wait for morning if the drain is down until 03:00.
+       */
+      triggeredAt: now,
+      now,
+    });
+
     return {
       invoiceId,
       number,
@@ -354,6 +438,14 @@ export async function issueInvoiceFor(ctx: MutationCtx, args: IssueInvoiceArgs) 
        * number — that is not a coincidence to be preserved, it is the rule.
        */
       paymentReference: paymentReference(number),
+      /*
+       * Returned ONCE. Nothing stores the plaintext, so a caller that wants
+       * to read the link down a phone has to take it from here — and if it
+       * is lost, `reissueViewLink` mints a new one rather than recovering it.
+       */
+      viewUrl: invoiceViewUrl(viewToken),
+      /** What actually happened to the email. Never assumed to be "sent". */
+      delivery: delivery.outcome,
     };
 }
 
@@ -626,5 +718,162 @@ export const byReference = platformQuery({
       currency: match.currency,
       dueAt: match.dueAt ?? null,
     };
+  },
+});
+
+/* ==========================================================================
+ * THE VIEW LINK, AFTER IT HAS GONE OUT.
+ *
+ * A bearer token with no off switch is one you can only respond to by
+ * voiding the document, which destroys a valid invoice to fix a mis-sent
+ * email. These two are the off switch and the replacement.
+ * ======================================================================= */
+
+/**
+ * Kill a link. The invoice is untouched.
+ *
+ * Revoking is NOT voiding, and keeping them apart is the whole point: an
+ * invoice emailed to the wrong address is still owed, still numbered, and
+ * still the document the ledger has an entry for. What went wrong was the
+ * link, so the link is what stops working.
+ *
+ * The page then says the link was withdrawn rather than that it is invalid —
+ * see public/invoice.ts. Whoever is holding it knows to ask for another,
+ * instead of hunting for a typo in something they were sent.
+ */
+export const revokeViewLink = ownerMutation({
+  args: { invoiceId: v.id("invoices"), now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const invoice = await ctx.db.get(args.invoiceId);
+    if (!invoice) throw bad("NO_SUCH_INVOICE", "No such invoice.");
+    if (invoice.viewTokenHash === undefined) {
+      throw bad("NO_LINK", `${invoice.number} has no view link to revoke.`);
+    }
+    if (invoice.viewTokenRevokedAt !== undefined) {
+      throw bad("ALREADY_REVOKED", `${invoice.number}'s link was already revoked.`);
+    }
+
+    const now = args.now ?? Date.now();
+    await ctx.db.patch(args.invoiceId, { viewTokenRevokedAt: now });
+
+    await ctx.db.insert("auditLog", {
+      actorUserId: ctx.platform.userId,
+      action: "invoice.revokeViewLink",
+      entityTable: "invoices",
+      entityId: args.invoiceId,
+      ventureId: invoice.ventureId,
+      clientId: invoice.clientId,
+      at: now,
+    });
+
+    return { number: invoice.number, revokedAt: now };
+  },
+});
+
+/**
+ * Mint a fresh link for an invoice that already exists.
+ *
+ * Needed for three ordinary things and one careless one: a revoked link, a
+ * link lost because the plaintext is returned once and stored nowhere, a
+ * client who deleted the email, and an invoice whose delivery was refused at
+ * issue because nobody had set a contact address yet.
+ *
+ * THE OLD LINK STOPS WORKING. There is one `viewTokenHash` column, so minting
+ * replaces it — which is the honest behaviour: two live links to one document
+ * is two things to remember to revoke, and the second one is the one nobody
+ * remembers.
+ *
+ * IT DOES NOT SEND. Re-sending is `resendInvoice` below, deliberately
+ * separate: minting a link is what you do to read it down a phone, and a
+ * function that silently emailed as a side effect of that would be a second
+ * message to a client who is already on the call with you.
+ */
+export const reissueViewLink = ownerMutation({
+  args: { invoiceId: v.id("invoices"), now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const invoice = await ctx.db.get(args.invoiceId);
+    if (!invoice) throw bad("NO_SUCH_INVOICE", "No such invoice.");
+
+    const now = args.now ?? Date.now();
+    const token = newToken();
+
+    await ctx.db.patch(args.invoiceId, {
+      viewTokenHash: await hashToken(token),
+      /* A fresh link is not a revoked one. Clearing this is what re-opens it. */
+      viewTokenRevokedAt: undefined,
+    });
+
+    await ctx.db.insert("auditLog", {
+      actorUserId: ctx.platform.userId,
+      action: "invoice.reissueViewLink",
+      entityTable: "invoices",
+      entityId: args.invoiceId,
+      ventureId: invoice.ventureId,
+      clientId: invoice.clientId,
+      at: now,
+    });
+
+    return { number: invoice.number, viewUrl: invoiceViewUrl(token) };
+  },
+});
+
+/**
+ * Send the invoice again, on a fresh link.
+ *
+ * A NEW IDEMPOTENCY KEY, on purpose. `idempotencyKeyForClient` keys
+ * "invoice.issued" on the invoice id, so the original send can never be
+ * duplicated by a retry — which is right, and which also means a deliberate
+ * re-send has to be a different message. It carries the resend count so a
+ * third one is possible too.
+ *
+ * The standing preference settles what that costs: a client receiving one
+ * invoice twice is mildly annoying, and a client who never received it is a
+ * payment that does not arrive and nobody knows why.
+ */
+export const resendInvoice = ownerMutation({
+  args: { invoiceId: v.id("invoices"), now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const invoice = await ctx.db.get(args.invoiceId);
+    if (!invoice) throw bad("NO_SUCH_INVOICE", "No such invoice.");
+    if (invoice.status === "void") {
+      throw bad("VOID", `${invoice.number} was voided. Issue a new invoice instead.`);
+    }
+
+    const client = await ctx.db.get(invoice.clientId);
+    if (!client) throw bad("NO_SUCH_CLIENT", "No such client.");
+
+    const now = args.now ?? Date.now();
+    const token = newToken();
+    await ctx.db.patch(args.invoiceId, {
+      viewTokenHash: await hashToken(token),
+      viewTokenRevokedAt: undefined,
+    });
+
+    const delivery = await dispatchToClient(ctx, {
+      message: { kind: "invoice.resent", invoiceId: args.invoiceId, at: now },
+      clientId: invoice.clientId,
+      templateKey: "invoice_issued",
+      payload: {
+        number: invoice.number,
+        billToName: invoice.billToName ?? client.name,
+        issuerLegalName: invoice.issuerLegalName,
+        totalCents: String(invoice.totalCents),
+        currency: invoice.currency,
+        paymentReference: paymentReference(invoice.number),
+        dueAt: String(invoice.dueAt ?? now),
+        termsDays: String(invoice.paymentTermsDays),
+        viewUrl: invoiceViewUrl(token),
+      },
+      /*
+       * The RE-SEND is the event, not the original issue. Anchoring to
+       * `issuedAt` would make every re-send of a week-old invoice arrive
+       * stale, and therefore held until morning — which is exactly wrong when
+       * somebody has just asked for it on the phone.
+       */
+      triggeredAt: now,
+      now,
+    });
+
+    return { number: invoice.number, viewUrl: invoiceViewUrl(token), delivery: delivery.outcome };
   },
 });

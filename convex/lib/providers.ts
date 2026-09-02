@@ -27,6 +27,8 @@
  * whether a message is ALLOWED — that is settled before a driver is reached.
  */
 
+import { formatCents, type Currency } from "./money";
+
 export type MessageChannel = "whatsapp" | "email" | "sms";
 
 /** Everything a driver needs, already rendered. Drivers do not read the db. */
@@ -53,6 +55,13 @@ export type OutboundMessage = {
    * driver, so the copy cannot invite a reply the envelope will not deliver.
    */
   replyTo: string | null;
+  /**
+   * True when the recipient IS the client — our invoice, our invite — rather
+   * than one of their customers. It flips the From line from "<Client> via
+   * The Creative Current" to plain The Creative Current, which is the only
+   * accurate reading of a message we are sending them.
+   */
+  toClient: boolean;
 };
 
 /**
@@ -155,7 +164,13 @@ const resendEmail: MessageDriver = {
       };
     }
 
-    const sender = viaSender(message.clientName, from);
+    /*
+     * OUR OWN NAME ON OUR OWN MAIL. `viaSender` collapses to the platform
+     * name alone when there is no client to speak on behalf of, which is
+     * exactly the case here — we are not writing on the client's behalf, we
+     * are writing to them.
+     */
+    const sender = viaSender(message.toClient ? "" : message.clientName, from);
 
     let response: Response;
     try {
@@ -454,6 +469,8 @@ export type RenderInput = {
   clientName: string;
   /** The SITE timezone — the same one quiet hours use, for the same reason. */
   timezone: string;
+  /** See OutboundMessage. The copy addresses the client, not their customer. */
+  toClient: boolean;
   /**
    * The resolved reply-to, or null. The COPY changes on this: a message only
    * invites a reply when a reply has somewhere to land.
@@ -545,9 +562,115 @@ export function renderMessage(input: RenderInput): { subject: string; body: stri
         ].join("\n"),
       };
 
+
+    /* ------------------------------------------------- to the CLIENT, from us */
+
+    case "invoice_issued": {
+      /*
+       * THE LINK IS THE DOCUMENT. No attachment, and no PDF rendered
+       * anywhere: the page prints, so "save as PDF" in a browser covers the
+       * bookkeeping case without this codebase ever owning a PDF pipeline.
+       * If a real client asks for an attachment, that is the moment to build
+       * one — and they may never ask.
+       */
+      const amount = money(input.payload.totalCents, input.payload.currency);
+      const due = day(input.payload.dueAt);
+      const reference = input.payload.paymentReference;
+      if (!amount || !reference) return null;
+
+      return {
+        subject: `Invoice ${input.payload.number} from ${input.payload.issuerLegalName}`,
+        body: [
+          `Hi ${input.payload.billToName ?? "there"},`,
+          "",
+          `Invoice ${input.payload.number} for ${amount}.`,
+          "",
+          `  ${input.payload.viewUrl}`,
+          "",
+          "That opens in a browser and prints straight to PDF if you need one",
+          "for your records.",
+          "",
+          due ? `  Due          ${due}` : `  Terms        ${input.payload.termsDays} days`,
+          `  Reference    ${reference}`,
+          "",
+          /*
+           * Said plainly and given its own line, because it is the one thing
+           * on here that a person has to TYPE, into a banking app, from
+           * memory of a page they closed. A payment that arrives without it
+           * is money that reconciles to nothing.
+           */
+          `Please use ${reference} as the payment reference — it is how the payment`,
+          "gets matched to this invoice.",
+          "",
+          input.payload.issuerLegalName ?? PLATFORM_SENDER_NAME,
+        ].join("\n"),
+      };
+    }
+
+    case "client_invite": {
+      const business = input.payload.businessName ?? input.clientName;
+      const url = input.payload.signInUrl;
+      const email = input.payload.email;
+      if (!url || !email) return null;
+
+      return {
+        subject: `Your ${business} back office is ready`,
+        body: [
+          "Hi,",
+          "",
+          `The back office for ${business} is set up. It is where your bookings and`,
+          "your customers live, and it works on a phone — open it once and you can",
+          "add it to your home screen like an app.",
+          "",
+          `  ${url}`,
+          "",
+          /*
+           * THE ADDRESS, NOT A TOKEN, and the copy has to say so.
+           *
+           * Sign-in reconciles invites by email address (see resolveSignIn),
+           * so the ONE thing that can go wrong is signing in with a different
+           * address — a personal Gmail instead of the work one — which fails
+           * with "this platform is invite-only" and reads as a broken invite.
+           * Naming the address is what prevents the support call.
+           */
+          `Sign in with ${email}. That is the address we have given access to, and`,
+          "another one will not be recognised. You will get a code by email — there",
+          "is no password to remember.",
+          "",
+          PLATFORM_SENDER_NAME,
+        ].join("\n"),
+      };
+    }
+
     default:
       return null;
   }
+}
+
+/**
+ * Money for a person, from the strings a payload carries.
+ *
+ * Null rather than a guess: a total that will not parse is a bug in whatever
+ * queued the message, and `renderMessage` returning null puts that in the
+ * outbox instead of emailing somebody an invoice for "NaN".
+ */
+function money(cents: string | undefined, currency: string | undefined): string | null {
+  const value = Number(cents);
+  if (!cents || !Number.isFinite(value) || !currency) return null;
+  return formatCents(value, currency as Currency);
+}
+
+/** A date a person reads, in the platform timezone. Null if absent or unparseable. */
+function day(at: string | undefined): string | null {
+  const value = Number(at);
+  if (!at || !Number.isFinite(value)) return null;
+  return new Intl.DateTimeFormat("en-ZA", {
+    timeZone: "Africa/Johannesburg",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(value));
 }
 
 /**

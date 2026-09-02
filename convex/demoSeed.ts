@@ -162,6 +162,16 @@ export const run = platformMutation({
       status: "live",
       timezone: "Africa/Johannesburg",
       currency: "ZAR",
+      /*
+       * ON @example.com, RFC 2606 — reserved, unregisterable, never resolves.
+       * Same reasoning as the seeded customer's address: it means the seeder
+       * exercises the WHOLE invoice-delivery path, queue included, and stays
+       * safe on the day the send allowlist is widened to `*`. Without an
+       * address the two invoices below would queue as `no_destination`, and
+       * an outbox that is empty for a reason production never has is an
+       * outbox nobody can judge a screen against.
+       */
+      primaryContactEmail: "accounts@example.com",
       featureFlags: {},
       isDemo: false,
       isSeed: false,

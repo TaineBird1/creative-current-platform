@@ -68,8 +68,30 @@ describe("the booking behaves like a real one", () => {
      */
     const { h } = await seeded();
     const messages = await h.run((ctx) => ctx.db.query("messages").collect());
-    expect(messages).toHaveLength(1);
-    expect(messages[0]!.templateKey).toBe("booking_confirmation");
+    expect(messages.map((m) => m.templateKey)).toContain("booking_confirmation");
+  });
+
+  test("and so are the two invoices, which is the client-directed path", async () => {
+    /*
+     * Not incidental. These are the only rows in the seed that go to the
+     * CLIENT rather than to one of their customers, so they are what a
+     * screen showing "who have we written to" is judged against — and the
+     * only place the seeder exercises `dispatchToClient` at all.
+     */
+    const { h } = await seeded();
+    const messages = await h.run((ctx) => ctx.db.query("messages").collect());
+    const invoices = messages.filter((m) => m.templateKey === "invoice_issued");
+
+    expect(invoices).toHaveLength(2);
+    // No customer is what MAKES them client-directed — see ClaimedMessage.
+    expect(invoices.every((m) => m.customerId === undefined)).toBe(true);
+    expect(invoices.every((m) => m.to.endsWith("@example.com"))).toBe(true);
+    // Ours, never the client's own configured window.
+    expect(invoices.every((m) => m.quietHoursTimezone === "Africa/Johannesburg")).toBe(true);
+    // Every one carries a link, and every link is distinct.
+    const urls = invoices.map((m) => m.payload.viewUrl);
+    expect(urls.every((u) => u?.startsWith("http"))).toBe(true);
+    expect(new Set(urls).size).toBe(2);
   });
 
   test("addressed to an RFC-RESERVED domain that can never be a person", async () => {

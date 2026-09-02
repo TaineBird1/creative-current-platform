@@ -697,20 +697,38 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   variables. Today shows cancellations, the rest of the week does not: a job
   somebody saw an hour ago that is now off has to be visibly off or they drive
   to it, while a cancelled booking next Thursday is noise.
-- **`/preview/bookings` renders the real component against fixtures**, gated
-  off the production origin by `VERCEL_ENV` — not `NODE_ENV`, because a Vercel
-  preview build IS a production build and would refuse exactly the case it
-  exists for. Same reasoning as the sites `/preview`: the back office is
-  behind an emailed code, so without it the only way to look at the calendar
-  is to be a signed-in client who already has bookings, which is nobody until
-  the day it matters most.
+- **`/preview/bookings` RENDERS FIXTURES, AND CANNOT EXIST IN PRODUCTION.**
+  The back office is behind an emailed code, so without a harness the only way
+  to look at the calendar is to be a signed-in client who already has
+  bookings — nobody, until the day it matters most. It renders the REAL
+  component, not a mock, so what is reviewed is what ships.
+  **It is NOT the `apps/sites` preview case, and treating it as one was the
+  mistake.** That harness renders invented marketing copy on a public
+  template. This one renders the shape of a TENANT'S BOOKINGS — customer names
+  and phone numbers — so a runtime `VERCEL_ENV` comparison, which is what it
+  had first, is one bad environment variable away from publishing a client's
+  customer list, silently and publicly.
+  Three independent barriers, every default off:
+  1. **It is not a page.** The file is `page.preview.tsx`, which Next does not
+     route unless `preview.tsx` is in `pageExtensions`. Verified: a normal
+     production build lists ten routes and none of them is `/preview`.
+  2. **The build cannot see the flag.** `ALLOW_PREVIEW_ROUTES` is deliberately
+     absent from `turbo.json`, and Turborepo filters the environment to what a
+     task declares — so setting it in the Vercel dashboard does nothing. This
+     is the load-bearing one: it removes the mistake rather than guarding it.
+  3. **And it still refuses**, before rendering, unless the flag is exactly
+     `"1"`.
+  **Fixtures only, forever**: a guard bans any Convex read under `app/preview`,
+  because a harness that can be pointed at a real tenant is the thing all of
+  the above exists to prevent. Run it with
+  `ALLOW_PREVIEW_ROUTES=1 pnpm --filter @cc/office dev`.
 - Every screen goes through the `impeccable` skill. Tokens only.
 - Never mark anything done without a deployed preview URL and a human tapping
   it on a real phone.
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 668 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 674 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -990,7 +1008,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 668 tests
+pnpm test                        # 674 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

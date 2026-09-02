@@ -35,7 +35,7 @@ const COLOUR_ALLOWLIST = new Set([
   // The office preview does the same thing for the back office: a brand
   // colour arrives as a query parameter, goes through the AA-validated ramp,
   // and is never painted directly. The fallback is the same kind of data.
-  join("apps", "office", "app", "preview", "bookings", "page.tsx"),
+  join("apps", "office", "app", "preview", "bookings", "page.preview.tsx"),
   // Same seam: seed data supplies a client's brand colour, which is a hex by
   // definition. It is fed through the ramp, not painted.
   join("convex", "seed.ts"),

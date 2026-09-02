@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
 import { IMMUTABLE_TABLES } from "./schema";
@@ -589,6 +589,164 @@ describe("the send choke point", () => {
         "bookings.by_start reads across every client. It exists for the",
         "reminder cron, which has no tenant. A tenant-scoped function must use",
         "by_client_start, or it can read another client's calendar.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+});
+
+describe("the preview harness cannot exist in production", () => {
+  /**
+   * `apps/office/app/preview/**` renders the shape of a TENANT'S BOOKINGS —
+   * customer names and phone numbers. It is fixtures today, and it is the real
+   * component, which is exactly why the next person will point it at real data
+   * to check something.
+   *
+   * It was first gated by comparing VERCEL_ENV at runtime, by analogy with the
+   * sites preview. The analogy was wrong: that one renders invented marketing
+   * copy on a public template. A runtime string comparison here is one bad
+   * environment variable away from publishing a client's customer list, and
+   * the failure is silent and public.
+   *
+   * Three independent barriers, each defaulting to off, each checked here.
+   */
+  const OFFICE = join(CONVEX_DIR, "..", "apps", "office");
+  const PREVIEW = join(OFFICE, "app", "preview");
+
+  /*
+   * A WALKER OF ITS OWN, and the reason is a scar. The first version reused
+   * `walk` above, which collects only `.ts` — so it never saw a single .tsx
+   * file, `previewFiles()` returned an empty list, and every test below passed
+   * by examining nothing. Three of four negative controls came back GREEN
+   * against deliberately broken code before that was noticed.
+   *
+   * A guard that passes because it scanned nothing is worse than no guard at
+   * all: it reports safety it never checked.
+   */
+  const walkAll = (dir: string, acc: string[] = []): string[] => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walkAll(full, acc);
+      else acc.push(full);
+    }
+    return acc;
+  };
+
+  const previewFiles = (): string[] =>
+    existsSync(PREVIEW) ? walkAll(PREVIEW).map((f) => relative(OFFICE, f).replace(/\\/g, "/")) : [];
+
+  test("the guards below are looking at something", () => {
+    // The test that would have caught the empty scan. See walkAll.
+    expect(
+      previewFiles().length,
+      "no preview files found — the walker is broken and every guard below is vacuous",
+    ).toBeGreaterThan(0);
+  });
+
+  test("BARRIER 1: nothing under app/preview is a routable page", () => {
+    /*
+     * A file called `page.tsx` IS a route on every build. The harness is
+     * `page.preview.tsx`, which Next only routes when pageExtensions says so.
+     */
+    const routable = previewFiles().filter((f) => /\/(page|route)\.(tsx|ts|jsx|js)$/.test(f));
+
+    expect(
+      routable,
+      [
+        "A file named page.tsx under app/preview is a route on EVERY build,",
+        "including production. Name it page.preview.tsx — Next will not route",
+        "it unless pageExtensions opts in, which only a flagged build does.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("BARRIER 1: and the extension is opted into only behind the flag", () => {
+    /*
+     * COMMENTS STRIPPED FIRST. The version that did not strip them passed
+     * against a config whose gate had been deleted — the paragraph explaining
+     * the flag still contained its name, which was enough to satisfy the
+     * match. The most carefully documented code is the easiest to fool this
+     * way, which is the same trap the webhook guards hit.
+     */
+    const code = stripComments(readFileSync(join(OFFICE, "next.config.mjs"), "utf8"));
+    const extensions = code.match(/pageExtensions:\s*\[[^\]]*\]/)?.[0] ?? "";
+
+    expect(
+      /ALLOW_PREVIEW_ROUTES/.test(code),
+      "apps/office/next.config.mjs must read ALLOW_PREVIEW_ROUTES.",
+    ).toBe(true);
+    expect(
+      !extensions.includes("preview") || extensions.includes("?"),
+      [
+        "pageExtensions lists the preview extension UNCONDITIONALLY, which",
+        "routes the harness on every build including production. It has to sit",
+        "behind a conditional on ALLOW_PREVIEW_ROUTES — a flag the build cannot",
+        "even see, because turbo.json does not declare it.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  test("BARRIER 2: THE BUILD CANNOT SEE THE FLAG", () => {
+    /*
+     * The load-bearing one. Turborepo filters the environment to what a task
+     * declares, so a variable absent from turbo.json cannot reach a Vercel
+     * build even if somebody sets it in the dashboard — the mistake is not
+     * available to make.
+     */
+    const turbo = JSON.parse(readFileSync(join(CONVEX_DIR, "..", "turbo.json"), "utf8"));
+    const declared: string[] = turbo.tasks?.build?.env ?? [];
+
+    expect(
+      declared,
+      [
+        "ALLOW_PREVIEW_ROUTES must NOT be declared in turbo.json.",
+        "Declaring it lets a Vercel build see it, which turns a structural",
+        "guarantee back into an environment variable somebody can get wrong —",
+        "and what is behind it is a client's customer list.",
+      ].join("\n"),
+    ).not.toContain("ALLOW_PREVIEW_ROUTES");
+  });
+
+  test("BARRIER 3: it refuses to render without the flag", () => {
+    const offenders: string[] = [];
+    for (const file of previewFiles()) {
+      if (!/page\.preview\.tsx$/.test(file)) continue;
+      const code = stripComments(readFileSync(join(OFFICE, file), "utf8"));
+      const gated =
+        /ALLOW_PREVIEW_ROUTES\s*!==\s*"1"/.test(code) && /notFound\(\)/.test(code);
+      if (!gated) offenders.push(file);
+    }
+
+    expect(
+      offenders,
+      [
+        "Every preview page must refuse unless ALLOW_PREVIEW_ROUTES is exactly",
+        '"1", before it renders anything. Absent means no — the same direction',
+        "as every other default here, and the only one that is safe when",
+        "somebody is wrong.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("FIXTURES ONLY: the harness can never be pointed at a real tenant", () => {
+    /*
+     * The barriers above stop it being REACHABLE. This stops it being
+     * DANGEROUS if it ever is: a harness that cannot read the backend cannot
+     * show anybody's real customers, whatever else goes wrong.
+     */
+    const offenders: string[] = [];
+    for (const file of previewFiles()) {
+      const code = stripComments(readFileSync(join(OFFICE, file), "utf8"));
+      if (/fetchQuery|fetchMutation|useQuery|convex\/nextjs|convex\/react/.test(code)) {
+        offenders.push(file);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "A preview page must not read Convex. It exists to render the real",
+        "component against FIXTURES; the moment it can fetch, it is a way to",
+        "look at a real client's bookings from an unauthenticated route.",
       ].join("\n"),
     ).toEqual([]);
   });

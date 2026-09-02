@@ -17,11 +17,32 @@ import s from "../../c/[slug]/back-office.module.css";
  * It renders FIXTURES through the real component. Not a mock of the component:
  * the same file, the same stylesheet, so what is reviewed here is what ships.
  *
- * NEVER ON THE PRODUCTION ORIGIN. Vercel preview deployments and local dev
- * both get it — that is the point, it is how this gets onto a real phone
- * before a client exists — and `app.thecreativecurrent.co.za` 404s. The gate
- * is VERCEL_ENV rather than NODE_ENV because a preview build IS a production
- * build, so NODE_ENV would refuse exactly the case this exists for.
+ * IT CANNOT EXIST IN PRODUCTION, and that is a stronger claim than the one
+ * this file made first.
+ *
+ * The first version compared VERCEL_ENV at runtime, by analogy with the sites
+ * preview. The analogy was wrong: that harness renders invented marketing copy
+ * on a public template, and this one renders the shape of a TENANT'S BOOKINGS
+ * — customer names and phone numbers. A runtime string comparison is one bad
+ * environment variable away from publishing a client's customer list, and the
+ * failure is silent and public.
+ *
+ * So there are three independent barriers, and the default of every one is
+ * off:
+ *
+ *  1. THE FILE IS NOT A PAGE. It is named `page.preview.tsx`, which Next does
+ *     not route unless `preview.tsx` is in pageExtensions. Without the flag
+ *     the route is not in the manifest and not in the bundle.
+ *  2. THE BUILD CANNOT SEE THE FLAG. `ALLOW_PREVIEW_ROUTES` is deliberately
+ *     absent from turbo.json, and Turborepo filters the environment to what a
+ *     task declares — so setting it in the Vercel dashboard does nothing.
+ *  3. AND IT STILL REFUSES. The check below runs before anything renders, and
+ *     absent means no.
+ *
+ * FIXTURES ONLY, FOREVER. Nothing here may read the backend. A harness that
+ * can be pointed at a real tenant is the thing all of the above exists to
+ * prevent, so guards.test.ts fails on a Convex import anywhere under
+ * `app/preview`.
  */
 export const dynamic = "force-dynamic";
 
@@ -151,7 +172,9 @@ export default function BookingsPreview({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  if (process.env.VERCEL_ENV === "production") notFound();
+  // Barrier 3. Absent means no — the same direction as every other default in
+  // this codebase, and the only one that is safe when somebody is wrong.
+  if (process.env.ALLOW_PREVIEW_ROUTES !== "1") notFound();
   return <Preview searchParams={searchParams} />;
 }
 

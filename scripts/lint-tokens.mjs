@@ -44,6 +44,9 @@ const COLOUR_ALLOWLIST = new Set([
   // AA-validated like any other client colour -- it is data entering, not
   // style shipping.
   join("convex", "demos.ts"),
+  // And once more: the demo seeder supplies a client brand colour so the
+  // seeded site has one. Same seam, same ramp, same AA validation.
+  join("convex", "demoSeed.ts"),
 ]);
 
 const SKIP_DIRS = new Set([

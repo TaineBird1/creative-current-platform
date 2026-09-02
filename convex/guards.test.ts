@@ -281,7 +281,13 @@ describe("message keys", () => {
    * why here.
    */
   test("every caller books through createBooking, not around it", () => {
-    const CALLERS = new Set(["bookings.ts", "onboarding.ts"]);
+    /*
+     * `demoSeed.ts` is here because a seeded booking must behave like a real
+     * one — overlap-checked, revisioned, with its confirmation queued — or
+     * every screen judged against it is judged against data that does not
+     * behave like production.
+     */
+    const CALLERS = new Set(["bookings.ts", "onboarding.ts", "demoSeed.ts"]);
     const offenders: string[] = [];
 
     for (const file of sourceFiles) {

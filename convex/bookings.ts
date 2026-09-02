@@ -377,15 +377,30 @@ export async function createBooking(
      * reasoning as `reachable` on customers.upsertByPhone: the back end is the
      * only party that knows, so the back end says so.
      */
+    const takenAt = Date.now();
+
     await establishTransactionalConsent(ctx, {
       clientId: req.clientId,
       customerId: customer._id,
       channel: transactionalChannelFor(customer),
       source: "made a booking",
-      at: Date.now(),
+      at: takenAt,
     });
 
-    const confirmation = await queueBookingConfirmationFor(ctx, { bookingId });
+    /*
+     * `triggeredAt` is passed HERE and almost nowhere else, because this is
+     * the one place in the codebase that watched a booking being taken. It is
+     * what lets the confirmation interrupt quiet hours for an hour: somebody
+     * who booked at 21:00 is waiting to hear that it worked, and silence after
+     * an action reads as failure.
+     *
+     * It expires, so this is not a licence to send at 03:00 — see
+     * INTERRUPT_WINDOW_MS.
+     */
+    const confirmation = await queueBookingConfirmationFor(ctx, {
+      bookingId,
+      triggeredAt: takenAt,
+    });
 
     return { bookingId, startsAt, endsAt, confirmation: describe(confirmation) };
 }

@@ -99,6 +99,83 @@ const QUIET_FROM_HOUR = 20;
 const QUIET_UNTIL_HOUR = 8;
 
 /**
+ * THE MESSAGES THAT MAY INTERRUPT QUIET HOURS.
+ *
+ * A quiet-hours rule exists to stop a business intruding on somebody's
+ * evening. It is not intruding when the person picked up their phone ninety
+ * seconds ago, booked an appointment, and is waiting to be told it worked —
+ * they are the one who started the conversation. Holding that until 08:00 has
+ * a cost of its own and it is not a small one: silence after an action reads
+ * as failure, so they phone the business, or book again somewhere else.
+ *
+ * THE LIST IS THE WHOLE MECHANISM, and the default is that quiet hours apply.
+ * A message type added to `MessageKind` above is subject to quiet hours unless
+ * somebody deliberately writes it here, which is the right way round — the
+ * question "did the recipient just do something" has to be asked out loud
+ * about each type, and a type nobody thought about should be the polite one.
+ *
+ * NOT on the list, and none of them are close calls: reminders, review
+ * requests, quote follow-ups, win-backs. Every one of those is US deciding to
+ * start a conversation at a moment of our choosing, which is exactly what the
+ * quiet window is about.
+ */
+const INTERRUPTS_QUIET_HOURS: ReadonlySet<MessageKind["kind"]> = new Set([
+  // They just booked and are waiting to hear that it worked.
+  "booking.confirmation",
+  // They just asked for a price. Same shape: a reply to a thing they did.
+  "quote.sent",
+]);
+
+/**
+ * How long after the triggering event the exemption survives.
+ *
+ * WITHOUT THIS THE EXEMPTION IS A LOADED GUN. A drain that has been down
+ * — an outage, a bad deploy, a provider refusing for six hours — comes back at
+ * 03:00 and finds a hundred queued confirmations, every one of them still
+ * "exempt" by type, and sends the lot. That is not a customer being told their
+ * booking worked; it is a hundred phones lighting up in the middle of the
+ * night about yesterday. Precisely the intrusion the quiet window exists to
+ * prevent, arriving through the door built to allow one exception.
+ *
+ * So the exemption is anchored to WHEN THE THING HAPPENED, not to the type
+ * alone, and it expires. Past the window a confirmation is just another
+ * message and waits until morning, which is the correct answer for a
+ * confirmation nobody is still sitting up waiting for.
+ */
+const INTERRUPT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * The moment after which this message must wait for morning like any other, or
+ * null if it never had an exemption.
+ *
+ * `triggeredAt` is supplied by the caller that WITNESSED the event, and its
+ * absence means no exemption. That default is load-bearing: a bulk import of
+ * yesterday's bookings at 22:00 has no witness to the customer doing anything,
+ * so it passes nothing, so it interrupts nobody. `_creationTime` would have
+ * been the tempting anchor and is exactly wrong — for an import it is the
+ * order of a loop, and this is a decision about what a person did.
+ */
+export function interruptWindowFor(
+  message: MessageKind,
+  triggeredAt: number | undefined,
+): number | null {
+  if (triggeredAt === undefined) return null;
+  if (!INTERRUPTS_QUIET_HOURS.has(message.kind)) return null;
+  return triggeredAt + INTERRUPT_WINDOW_MS;
+}
+
+/**
+ * May this message go out right now, quiet hours notwithstanding?
+ *
+ * One helper, used at dispatch AND at claim, because the two must agree: a
+ * message exempt when it was written and re-evaluated hours later by the drain
+ * has to get the same answer from the same rule, or the window means nothing.
+ */
+export function mayInterrupt(now: number, exemptUntil: number | null | undefined): boolean {
+  return exemptUntil !== null && exemptUntil !== undefined && now <= exemptUntil;
+}
+
+/**
  * The local hour in a named timezone, without pulling in a date library.
  * Intl is present in the Convex runtime and is the only correct way to do
  * this — an offset arithmetic version is wrong twice a year.
@@ -143,6 +220,16 @@ export type DispatchInput = {
   payload: Record<string, string>;
   /** The SITE's timezone. Not the recipient's — none exists. */
   quietHoursTimezone: string;
+  /**
+   * When the thing this message is ABOUT actually happened, supplied only by a
+   * caller that witnessed it. It is what lets a transactional acknowledgement
+   * interrupt quiet hours for an hour and no longer — see interruptWindowFor.
+   *
+   * Absent means no exemption, which is the safe default and the reason it is
+   * optional rather than derived: a caller that cannot say when the event
+   * happened is a caller that must not claim it was a minute ago.
+   */
+  triggeredAt?: number;
   now?: number;
 };
 
@@ -402,8 +489,14 @@ export async function dispatch(ctx: MutationCtx, input: DispatchInput): Promise<
    * NEVER AT NIGHT — held, not dropped. A reminder that would land at 03:00
    * goes out at 08:00; dropping it would mean the customer is never reminded,
    * which is the failure this whole module exists to avoid.
+   *
+   * UNLESS the recipient did something in the last hour and is waiting to hear
+   * that it worked. See INTERRUPTS_QUIET_HOURS: the list is short, the default
+   * is that quiet hours apply, and the exemption expires.
    */
-  const held = isQuiet(now, input.quietHoursTimezone);
+  const quietHoursExemptUntil = interruptWindowFor(input.message, input.triggeredAt);
+  const held =
+    !mayInterrupt(now, quietHoursExemptUntil) && isQuiet(now, input.quietHoursTimezone);
   const scheduledFor = held ? nextSendableAt(now, input.quietHoursTimezone) : now;
 
   const messageId = await ctx.db.insert("messages", {
@@ -417,6 +510,7 @@ export async function dispatch(ctx: MutationCtx, input: DispatchInput): Promise<
     idempotencyKey,
     status: held ? "holding_quiet_hours" : "scheduled",
     quietHoursTimezone: input.quietHoursTimezone,
+    quietHoursExemptUntil: quietHoursExemptUntil ?? undefined,
     scheduledFor,
     attempts: 0,
     isDemo,
@@ -520,7 +614,17 @@ export async function claimForSend(
    * when the drain reaches it, and the customer whose phone lights up at
    * 20:01 does not care which side of the boundary the write happened on.
    */
-  if (isQuiet(args.now, message.quietHoursTimezone)) {
+  if (
+    !mayInterrupt(args.now, message.quietHoursExemptUntil) &&
+    isQuiet(args.now, message.quietHoursTimezone)
+  ) {
+    /*
+     * The same rule as dispatch, from the same helper, because the two must
+     * agree. This is also where the expiry earns its keep: a confirmation
+     * queued exempt at 20:30 and reached by a recovered drain at 03:00 is no
+     * longer within its window, so it holds until morning like everything
+     * else. Without that, an outage turns the exemption into a broadcast.
+     */
     await ctx.db.patch(args.messageId, {
       status: "holding_quiet_hours",
       scheduledFor: nextSendableAt(args.now, message.quietHoursTimezone),

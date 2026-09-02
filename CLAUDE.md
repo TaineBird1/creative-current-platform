@@ -114,7 +114,8 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   recipient timezone exists anywhere to populate. The field is named
   `quietHoursTimezone` for what it actually holds. This is an approximation:
   it is right for a customer in the same city and WRONG for one abroad, whose
-  message is held until the business's morning. Fixing it needs a real source
+  message is held until the business's morning. **A transactional
+  acknowledgement is EXEMPT** — see the next rule. Fixing it needs a real source
   for a recipient's timezone — not a field nothing can fill.
 - **INVOICE NUMBERING PREFERS A GAP.** A gap is recoverable: you explain it
   to an accountant once and the explanation is boring. A DUPLICATE is not —
@@ -403,6 +404,36 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   webhook and no inbound pipeline at all, so the only withdrawal path today is
   a staff member recording one by hand. The outbound half is real; the half
   that makes STOP automatic does not exist.
+- **A TRANSACTIONAL ACKNOWLEDGEMENT MAY INTERRUPT QUIET HOURS, FOR AN HOUR.**
+  Quiet hours exist to stop a business intruding on somebody's evening. It is
+  not intruding when the person booked ninety seconds ago and is waiting to
+  hear that it worked — they started the conversation, and silence after an
+  action reads to them as failure: they phone the business, or book somewhere
+  else. Two halves, and both are load-bearing.
+  **BY TYPE, from one list, default quiet.** `INTERRUPTS_QUIET_HOURS` in
+  `lib/messaging.ts` holds `booking.confirmation` and `quote.sent`. A type
+  added to `MessageKind` is subject to quiet hours unless somebody
+  deliberately writes it there, which is the right way round: "did the
+  recipient just do something" has to be asked out loud about each type, and a
+  type nobody thought about should be the polite one. NOT on it, and none are
+  close calls: reminders, review requests, quote follow-ups, win-backs — every
+  one is US choosing the moment.
+  **AND IT EXPIRES, one hour after the triggering event.** Without that the
+  exemption is a loaded gun: a drain that was down comes back at 03:00, finds
+  a hundred queued confirmations still exempt by type, and sends the lot —
+  a hundred phones lighting up about yesterday, exactly the intrusion the
+  window exists to prevent, arriving through the door built to allow one
+  exception. So the exemption is anchored to WHEN THE THING HAPPENED.
+  `triggeredAt` is passed only by a caller that WITNESSED the event —
+  `bookings.createBooking` and nothing else — and its absence means no
+  exemption. That default is what makes a bulk import of yesterday's bookings
+  at 22:00 safe: it witnessed nobody doing anything, so it wakes nobody.
+  `_creationTime` was the tempting anchor and is exactly wrong; for an import
+  it is the order of a loop, and this is a decision about what a person did.
+  Stored as `messages.quietHoursExemptUntil`, a DEADLINE not a flag, so the
+  drain re-evaluates it hours later and reaches the same answer the write did.
+  Checked at dispatch AND at claim, from one helper. Guard tests fail if a
+  second module sets the deadline, and if the window stops expiring.
 - **A PROSPECT IS NOT A CUSTOMER, AND `isDemo`/`isSeed` DO NOT COVER IT.**
   Those two are DESIGNATIONS applied to data we invented. A lead carries
   neither, and a lead is REAL — dev holds 39 actual KZN solar installers with
@@ -564,7 +595,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 620 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 631 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -844,7 +875,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 620 tests
+pnpm test                        # 631 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

@@ -128,7 +128,22 @@ async function contactPayload(
 
 export async function queueBookingConfirmationFor(
   ctx: MutationCtx,
-  args: { bookingId: Id<"bookings">; channel?: MessageChannel; now?: number },
+  args: {
+    bookingId: Id<"bookings">;
+    channel?: MessageChannel;
+    /**
+     * When the booking was actually TAKEN, passed only by a caller that saw it
+     * happen. It is what allows a confirmation to interrupt quiet hours for an
+     * hour — a customer who booked ninety seconds ago is waiting to hear that
+     * it worked, and silence reads to them as failure.
+     *
+     * Absent means no exemption, and that default is the safe one: a bulk
+     * import of yesterday bookings at 22:00 witnessed nobody doing anything,
+     * so it passes nothing, so it wakes nobody.
+     */
+    triggeredAt?: number;
+    now?: number;
+  },
 ): Promise<DispatchResult> {
   const booking = await ctx.db.get(args.bookingId);
   if (!booking) throw notFound("booking");
@@ -160,10 +175,17 @@ export async function queueBookingConfirmationFor(
      * comment in tables/messaging.ts.
      */
     quietHoursTimezone: client.timezone,
+    triggeredAt: args.triggeredAt,
     now: args.now,
   });
 }
 
+/*
+ * The reminder deliberately passes NO triggeredAt, and would be ignored if it
+ * did: a reminder is not on the interrupt list. Nobody is sitting up waiting
+ * for one — it is us choosing a moment to start a conversation, which is the
+ * thing quiet hours are about.
+ */
 export async function queueBookingReminderFor(
   ctx: MutationCtx,
   args: {
@@ -204,6 +226,8 @@ export const queueBookingConfirmation = internalMutation({
   args: {
     bookingId: v.id("bookings"),
     channel: v.optional(channel),
+    /** See the helper. Absent means quiet hours apply, which is the default. */
+    triggeredAt: v.optional(v.number()),
     /** Injectable so quiet-hours behaviour is testable without waiting. */
     now: v.optional(v.number()),
   },

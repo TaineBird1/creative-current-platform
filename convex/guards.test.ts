@@ -403,6 +403,69 @@ describe("the send choke point", () => {
   });
 
   /**
+   * THE QUIET-HOURS EXEMPTION IS DECLARED ONCE, AND EXPIRES.
+   *
+   * Two halves, and both have to hold or the exemption is worse than not
+   * having one.
+   *
+   * The LIST decides by message type and defaults to quiet, so a type nobody
+   * thought about is the polite one. A second list elsewhere — or a caller
+   * setting the deadline itself — is how "reminders are exempt too, just this
+   * once" happens.
+   *
+   * The WINDOW is what stops it being a licence. A drain that was down comes
+   * back at 03:00 and finds a hundred confirmations still exempt by type; only
+   * the expiry keeps them from all going out at once.
+   */
+  test("only lib/messaging.ts decides what may interrupt quiet hours", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === DISPATCH) continue;
+      // `quietHoursExemptUntil: v.optional(...)` in the schema DECLARES the
+      // column; it does not decide anything. Setting it to a value is the act
+      // this rule is about.
+      const sets = [...file.code.matchAll(/quietHoursExemptUntil:\s*(\w+)/g)].some(
+        (m) => m[1] !== "v",
+      );
+      if (sets || /INTERRUPTS_QUIET_HOURS/.test(file.code)) {
+        offenders.push(`${file.path}: sets or redeclares the quiet-hours exemption`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "The list of message types that may interrupt quiet hours, and the",
+        "deadline derived from it, live in convex/lib/messaging.ts and nowhere",
+        "else. A caller that can set its own exemption can exempt anything —",
+        "which is how a reminder ends up on somebody's phone at 03:00.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("and the exemption always expires", () => {
+    const messaging = sourceFiles.find((f) => f.path === DISPATCH);
+    const code = messaging?.code ?? "";
+
+    // A window constant, and a deadline built from the event rather than a
+    // bare boolean returned from the list.
+    expect(
+      /INTERRUPT_WINDOW_MS\s*=/.test(code),
+      "convex/lib/messaging.ts must define a window the exemption expires after.",
+    ).toBe(true);
+    expect(
+      /triggeredAt \+ INTERRUPT_WINDOW_MS/.test(code),
+      [
+        "The exemption must be anchored to WHEN THE EVENT HAPPENED, not to the",
+        "message type alone. Without that, a drain recovering at 03:00 sends",
+        "every queued confirmation at once — the exact intrusion quiet hours",
+        "exist to prevent, arriving through the door built to allow one",
+        "exception.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  /**
    * The other half of the choke point, added the day a real driver arrived.
    *
    * CREATING a message is guarded above. RESOLVING one — claiming it was sent,

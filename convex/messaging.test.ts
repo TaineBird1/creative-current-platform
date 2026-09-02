@@ -3,7 +3,13 @@ import { describe, expect, test } from "vitest";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { idempotencyKeyFor, isQuiet, nextSendableAt } from "./lib/messaging";
+import {
+  idempotencyKeyFor,
+  interruptWindowFor,
+  isQuiet,
+  mayInterrupt,
+  nextSendableAt,
+} from "./lib/messaging";
 
 /**
  * THE MESSAGING PIPELINE.
@@ -398,6 +404,199 @@ describe("the choke point", () => {
 
     const rows = await reminders(h);
     expect(rows[0]!.status).toBe("holding_quiet_hours");
+  });
+});
+
+describe("a transactional acknowledgement may interrupt quiet hours", () => {
+  /**
+   * A quiet-hours rule exists to stop a business intruding on somebody's
+   * evening. It is not intruding when the person booked ninety seconds ago and
+   * is waiting to hear that it worked — they started the conversation, and
+   * silence after an action reads to them as failure.
+   *
+   * Exempt BY TYPE, from one list, default quiet. And it EXPIRES, which is the
+   * half that keeps it from becoming a licence to send at 03:00.
+   */
+  const HOUR = 60 * 60 * 1000;
+  /** 21:00 in Johannesburg is 19:00 UTC — comfortably inside quiet hours. */
+  const NINE_PM = AT(19);
+  /** 03:00 the next morning, local. */
+  const THREE_AM = Date.UTC(2026, 8, 16, 1);
+
+  test("the list is by TYPE, and the default is that quiet hours apply", () => {
+    const booking = "k1" as Id<"bookings">;
+    const at = NINE_PM;
+
+    // On the list: the recipient just did something.
+    expect(
+      interruptWindowFor(
+        { kind: "booking.confirmation", bookingId: booking, startsAt: AT(9), revision: 1 },
+        at,
+      ),
+    ).toBe(at + HOUR);
+    expect(interruptWindowFor({ kind: "quote.sent", quoteId: "q1" as Id<"quotes"> }, at)).toBe(
+      at + HOUR,
+    );
+
+    // Not on it. Nobody is sitting up waiting for any of these.
+    for (const message of [
+      { kind: "booking.reminder24", bookingId: booking, startsAt: AT(9), revision: 1 },
+      { kind: "booking.reminder1", bookingId: booking, startsAt: AT(9), revision: 1 },
+      { kind: "review.request", bookingId: booking },
+      { kind: "quote.followup", quoteId: "q1" as Id<"quotes">, day: 2 },
+    ] as const) {
+      expect(interruptWindowFor(message, at)).toBeNull();
+    }
+  });
+
+  test("A CALLER THAT CANNOT SAY WHEN GETS NO EXEMPTION", () => {
+    /*
+     * The default that makes a bulk import of yesterday's bookings at 22:00
+     * safe: it witnessed nobody doing anything, so it passes nothing, so it
+     * wakes nobody. `_creationTime` would have been the tempting anchor and is
+     * exactly wrong — for an import it is the order of a loop.
+     */
+    expect(
+      interruptWindowFor(
+        { kind: "booking.confirmation", bookingId: "k1" as Id<"bookings">, startsAt: AT(9), revision: 1 },
+        undefined,
+      ),
+    ).toBeNull();
+    expect(mayInterrupt(NINE_PM, null)).toBe(false);
+  });
+
+  test("the window is an hour, and the edge is inclusive", () => {
+    expect(mayInterrupt(NINE_PM + HOUR, NINE_PM + HOUR)).toBe(true);
+    expect(mayInterrupt(NINE_PM + HOUR + 1, NINE_PM + HOUR)).toBe(false);
+  });
+
+  test("a booking stamps the window, a reminder does not", async () => {
+    const h = harness();
+    const s = await seed(h);
+    await grantWhatsapp(s);
+
+    // `book` is the one caller that witnessed a person taking a booking.
+    const confirmation = (await messagesIn(h, "booking_confirmation"))[0]!;
+    expect(confirmation.quietHoursExemptUntil).toBeDefined();
+
+    await send(s, { now: AT(8) });
+    const reminder = (await reminders(h))[0]!;
+    expect(reminder.quietHoursExemptUntil).toBeUndefined();
+  });
+
+  test("A 21:00 BOOKING IS CONFIRMED AT 21:00, NOT AT 08:00", async () => {
+    const h = harness();
+    const s = await seed(h);
+    await grantWhatsapp(s);
+
+    const row = (await messagesIn(h, "booking_confirmation"))[0]!;
+    // Taken at 21:00, so exempt until 22:00, and due now.
+    await h.run((ctx) =>
+      ctx.db.patch(row._id, {
+        status: "scheduled",
+        scheduledFor: NINE_PM,
+        quietHoursExemptUntil: NINE_PM + HOUR,
+      }),
+    );
+
+    expect(isQuiet(NINE_PM, JHB)).toBe(true);
+    const claimed = await h.mutation(internal.outbox.claim, {
+      messageId: row._id,
+      now: NINE_PM,
+    });
+
+    // Claimed rather than held: it goes out into the evening, as intended.
+    expect(claimed).not.toBeNull();
+    expect((await h.run((ctx) => ctx.db.get(row._id)))!.status).toBe("sending");
+  });
+
+  test("A CONFIRMATION FOR A BOOKING TAKEN 6 HOURS AGO HOLDS UNTIL MORNING", async () => {
+    /*
+     * Why the exemption is anchored to the EVENT and not to the type alone.
+     * Nobody is sitting up at 21:00 waiting to hear about something they did
+     * at 15:00.
+     */
+    const h = harness();
+    const s = await seed(h);
+    await grantWhatsapp(s);
+
+    const row = (await messagesIn(h, "booking_confirmation"))[0]!;
+    const takenAt = NINE_PM - 6 * HOUR;
+    await h.run((ctx) =>
+      ctx.db.patch(row._id, {
+        status: "scheduled",
+        scheduledFor: NINE_PM,
+        quietHoursExemptUntil: takenAt + HOUR,
+      }),
+    );
+
+    const claimed = await h.mutation(internal.outbox.claim, {
+      messageId: row._id,
+      now: NINE_PM,
+    });
+    expect(claimed).toBeNull();
+
+    const after = (await h.run((ctx) => ctx.db.get(row._id)))!;
+    expect(after.status).toBe("holding_quiet_hours");
+    // 08:00, in the site's timezone.
+    expect(after.scheduledFor).toBeGreaterThan(NINE_PM);
+    expect(isQuiet(after.scheduledFor, JHB)).toBe(false);
+  });
+
+  test("A RECOVERED DRAIN DOES NOT BROADCAST AT 03:00", async () => {
+    /*
+     * The failure the window exists for. Without an expiry, a drain that was
+     * down for six hours comes back at 03:00, finds every queued confirmation
+     * still exempt BY TYPE, and sends the lot — a hundred phones lighting up
+     * about yesterday, which is exactly the intrusion the quiet window is for.
+     */
+    const h = harness();
+    const s = await seed(h);
+    await grantWhatsapp(s);
+
+    const row = (await messagesIn(h, "booking_confirmation"))[0]!;
+    await h.run((ctx) =>
+      ctx.db.patch(row._id, {
+        status: "scheduled",
+        scheduledFor: NINE_PM,
+        // Queued at 21:00 and genuinely fresh THEN.
+        quietHoursExemptUntil: NINE_PM + HOUR,
+      }),
+    );
+
+    expect(
+      await h.mutation(internal.outbox.claim, { messageId: row._id, now: THREE_AM }),
+    ).toBeNull();
+    expect((await h.run((ctx) => ctx.db.get(row._id)))!.status).toBe("holding_quiet_hours");
+  });
+
+  test("A REMINDER AT 21:00 STILL HOLDS — it is not on the list", async () => {
+    // Nobody is waiting for a reminder. It is us choosing the moment, which is
+    // exactly what the quiet window is about.
+    const h = harness();
+    const s = await seed(h);
+    await grantWhatsapp(s);
+
+    const result = await send(s, { now: NINE_PM });
+    expect(result.outcome).toBe("queued");
+    if (result.outcome !== "queued") throw new Error("unreachable");
+    expect(result.held).toBe(true);
+
+    const row = (await reminders(h))[0]!;
+    expect(row.status).toBe("holding_quiet_hours");
+    expect(row.quietHoursExemptUntil).toBeUndefined();
+  });
+
+  test("and daytime is unaffected either way", async () => {
+    // The exemption must not be the only reason anything ever sends.
+    const h = harness();
+    const s = await seed(h);
+    await grantWhatsapp(s);
+
+    const result = await send(s, { now: AT(8) }); // 10:00 local
+    expect(result.outcome).toBe("queued");
+    if (result.outcome !== "queued") throw new Error("unreachable");
+    expect(result.held).toBe(false);
   });
 });
 

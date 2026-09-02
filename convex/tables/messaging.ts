@@ -53,6 +53,22 @@ export const messagingTables = {
      * timezone, not a field nothing can fill.
      */
     quietHoursTimezone: v.string(),
+    /**
+     * Until when this message may go out DURING quiet hours, or absent if it
+     * never may.
+     *
+     * A transactional acknowledgement — a booking confirmation, a quote —
+     * answers something the recipient did seconds ago, and holding it until
+     * 08:00 reads to them as failure. But the exemption expires, because a
+     * drain that was down and comes back at 03:00 would otherwise send a
+     * hundred "confirmations" about yesterday. See INTERRUPTS_QUIET_HOURS and
+     * INTERRUPT_WINDOW_MS in lib/messaging.ts, which are the only things that
+     * set this.
+     *
+     * A DEADLINE, not a flag, so the drain can re-evaluate it hours later and
+     * reach the same answer the write did.
+     */
+    quietHoursExemptUntil: v.optional(v.number()),
     scheduledFor: v.number(),
     sentAt: v.optional(v.number()),
     providerMessageId: v.optional(v.string()),

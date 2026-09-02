@@ -726,9 +726,57 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 - Never mark anything done without a deployed preview URL and a human tapping
   it on a real phone.
 
+## How the guards are built, and three ways they have been fooled
+
+- **PREFER A BARRIER THAT REMOVES THE CAPABILITY OVER ONE THAT REFUSES TO USE
+  IT.** Nothing has to run correctly for the first kind. `ALLOW_PREVIEW_ROUTES`
+  is the worked example: the runtime check (`if flag !== "1" notFound()`) has
+  to execute, on the right build, with the right value, every time — and one
+  wrong environment variable defeats it. Leaving the variable out of
+  `turbo.json` means a Vercel build **cannot see it at all**, because Turborepo
+  filters the environment to what a task declares. That is not a stronger
+  check; it is the absence of the thing a check would have to get right.
+  Same shape elsewhere: `page.preview.tsx` is not a route because Next never
+  looks at it, not because something decided to hide it. Reach for capability
+  removal first, and keep the refusal as the second layer rather than the only
+  one.
+- **COMMENT-STRIPPING IS THE DEFAULT IN THE GUARD HELPERS, AND THE NAMES
+  ENFORCE IT.** `sourceFiles` exposes `code` (stripped) and `raw` (not), and
+  deliberately no `text` — so scanning prose is something somebody has to type
+  the word `raw` to do. It has caught us three times, and it is structural
+  rather than unlucky: the prose most likely to sit next to a rule is the
+  paragraph explaining that rule, so **the most carefully documented code is
+  the easiest to fool with a text scan.**
+  1. the webhook rule that fired on its own comment saying `request.json()`
+     never appears in that file
+  2. the one that fired on the comment showing the banned
+     `if (!secret) return true` shape
+  3. the next-config gate that **passed against a deleted check**, because the
+     paragraph explaining the flag still contained the flag's name
+  `raw` is right only where over-eagerness is wanted — the `startsAt` guards,
+  where a false positive costs one comment and a false negative costs a
+  customer standing outside a locked door.
+- **EVERY WALKER ASSERTS IT FOUND SOMETHING, AND NAMES WHAT.** A guard that
+  scanned nothing reports safety it never checked, and it does it in green.
+  The shared `walk` in `convex/guards.test.ts` collects only `.ts`, which is
+  correct for `convex/` and silently wrong anywhere else: reused over a tree of
+  `.tsx` it returned an empty list, every rule built on it passed, and **three
+  of four negative controls came back green against deliberately broken code.**
+  So `convex/guards.test.ts`, `apps/sites/demo-guard.test.ts` and
+  `scripts/lint-tokens.mjs` each assert a floor AND name files they must have
+  found — a count alone survives a walker pointed at the wrong tree. The token
+  linter exits 1 rather than printing "0 files clean", which reads as a pass.
+  Audited 2 Sep 2026: no existing guard was blind. `demo-guard` matches
+  `/\.tsx?$/` and the token linter covers `.css/.ts/.tsx/.jsx/.js`, both
+  correct. The trap was latent, not live.
+- **NEGATIVE CONTROLS, ALWAYS.** Break the thing on purpose, watch the guard
+  fail, restore it, watch it pass. Every one of the failures above was found
+  that way and none of them by reading. A guard that has never been seen to
+  fail is a guard nobody has tested.
+
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 674 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 678 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -1008,7 +1056,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 674 tests
+pnpm test                        # 678 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

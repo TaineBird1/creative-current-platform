@@ -110,6 +110,30 @@ const RULES = [
 let failures = 0;
 const files = walk(ROOT);
 
+/*
+ * A LINTER THAT SCANNED NOTHING PRINTS A TICK.
+ *
+ * "0 files clean" exits 0 and reads as a pass in CI. That is the same failure
+ * a guard walker hit in convex/guards.test.ts — it collected only .ts, was
+ * pointed at a tree of .tsx, and every rule built on it passed against an
+ * empty list.
+ *
+ * So the walk has to prove it found this repo. A floor alone would survive a
+ * walker pointed at node_modules, which is why it also names a file it must
+ * have seen.
+ */
+const MUST_EXIST = join("packages", "tokens", "src", "tokens.css");
+const found = files.map((f) => relative(ROOT, f));
+if (found.length < 50 || !found.includes(MUST_EXIST)) {
+  console.error(
+    `✖ the token walk found ${found.length} files and ${
+      found.includes(MUST_EXIST) ? "did" : "did NOT"
+    } find ${MUST_EXIST}.`,
+  );
+  console.error("It is scanning the wrong tree, so every rule below checked nothing.");
+  process.exit(1);
+}
+
 for (const file of files) {
   const rel = relative(ROOT, file);
   const text = readFileSync(file, "utf8");

@@ -41,13 +41,60 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
+/**
+ * COMMENT-STRIPPING IS THE DEFAULT HERE TOO. `code` is what a rule scans; the
+ * raw text is called `raw`, so reaching for it is a decision somebody typed.
+ * There is deliberately no `text` — see convex/guards.test.ts for the three
+ * separate occasions a rule was satisfied by the paragraph explaining it.
+ *
+ * It matters as much for the POSITIVE assertions below as for the negative
+ * ones: "the disclosure says it is a proposal" must not be satisfied by a
+ * comment saying the disclosure says it is a proposal.
+ */
 const files = walk(SITES_DIR).map((f) => {
-  const text = readFileSync(f, "utf8");
+  const raw = readFileSync(f, "utf8");
   return {
     path: relative(SITES_DIR, f).replace(/\\/g, "/"),
-    text,
-    code: stripComments(text),
+    /** WITH comments. Deliberate over-eagerness only. */
+    raw,
+    /** Comments removed. The default, and what a rule should scan. */
+    code: stripComments(raw),
   };
+});
+
+/**
+ * A GUARD THAT SCANNED NOTHING REPORTS SAFETY IT NEVER CHECKED.
+ *
+ * A walker that collected only `.ts` was once reused over a directory of
+ * `.tsx`, returned an empty list, and every rule built on it passed — three of
+ * four negative controls came back green against deliberately broken code.
+ *
+ * Naming files it MUST have found beats a bare count, which would survive a
+ * walker pointed at the wrong tree entirely.
+ */
+describe("the guards are looking at something", () => {
+  test("the walk found this app, including its .tsx", () => {
+    expect(files.length).toBeGreaterThan(10);
+    expect(
+      files.some((f) => f.path.endsWith(".tsx")),
+      "no .tsx found — every rule below is about .tsx files",
+    ).toBe(true);
+    for (const expected of [RENDERER, DISCLOSURE]) {
+      expect(
+        files.some((f) => f.path === expected),
+        `${expected} was not found — the walker is scanning the wrong tree`,
+      ).toBe(true);
+    }
+  });
+
+  test("and it found the section components these rules are about", () => {
+    // The rule banning `isDemo` in sections is worth nothing if the sections
+    // were never in the list.
+    expect(
+      files.filter((f) => f.path.startsWith("components/sections/")).length,
+      "no section components found",
+    ).toBeGreaterThan(0);
+  });
 });
 
 const renderer = files.find((f) => f.path === RENDERER);
@@ -56,7 +103,7 @@ const disclosure = files.find((f) => f.path === DISCLOSURE);
 describe("the disclosure is the renderer's job, not a template's", () => {
   test("SiteRenderer renders the disclosure for every demo", () => {
     expect(renderer, `${RENDERER} is missing`).toBeTruthy();
-    expect(renderer!.text).toMatch(/<DemoDisclosure/);
+    expect(renderer!.code).toMatch(/<DemoDisclosure/);
   });
 
   test("SiteRenderer refuses to render a demo without its context", () => {
@@ -65,12 +112,12 @@ describe("the disclosure is the renderer's job, not a template's", () => {
      * it is not rendered at all — because the plain version is precisely the
      * indistinguishable fake.
      */
-    expect(renderer!.text).toMatch(/if\s*\(\s*isDemo\s*&&\s*!\s*demo\s*\)/);
-    expect(renderer!.text).toMatch(/throw new Error\(/);
+    expect(renderer!.code).toMatch(/if\s*\(\s*isDemo\s*&&\s*!\s*demo\s*\)/);
+    expect(renderer!.code).toMatch(/throw new Error\(/);
   });
 
   test("SiteRenderer refuses to render an expired demo", () => {
-    expect(renderer!.text).toMatch(/expiresAt\s*<=\s*Date\.now\(\)/);
+    expect(renderer!.code).toMatch(/expiresAt\s*<=\s*Date\.now\(\)/);
   });
 
   test("no section or template component decides any of this", () => {
@@ -105,21 +152,21 @@ describe("the disclosure is the renderer's job, not a template's", () => {
     // All three, because any two of them still read as the business's own
     // page built by an agency they hired.
     expect(disclosure, `${DISCLOSURE} is missing`).toBeTruthy();
-    expect(disclosure!.text).toMatch(/The Creative Current/);
-    expect(disclosure!.text).toMatch(/proposal/i);
-    expect(disclosure!.text).toMatch(/not affiliated/i);
+    expect(disclosure!.code).toMatch(/The Creative Current/);
+    expect(disclosure!.code).toMatch(/proposal/i);
+    expect(disclosure!.code).toMatch(/not affiliated/i);
   });
 
   test("it states the expiry date and that imagery is not their work", () => {
-    expect(disclosure!.text).toMatch(/expires|comes down on/i);
-    expect(disclosure!.text).toMatch(/illustrative|does not depict/i);
+    expect(disclosure!.code).toMatch(/expires|comes down on/i);
+    expect(disclosure!.code).toMatch(/illustrative|does not depict/i);
   });
 
   test("the disclosure cannot be dismissed or scrolled out of the way", () => {
     // A bar that can be closed is a bar that can be screenshotted away, and
     // the screenshot is what gets forwarded.
     const css = files.find((f) => f.path === "components/DemoDisclosure.module.css");
-    const style = css?.text ?? readFileSync(join(SITES_DIR, "components/DemoDisclosure.module.css"), "utf8");
+    const style = css?.code ?? readFileSync(join(SITES_DIR, "components/DemoDisclosure.module.css"), "utf8");
     expect(style).not.toMatch(/position:\s*fixed/);
     expect(disclosure!.code).not.toMatch(/onClick|useState|dismiss/i);
   });
@@ -136,19 +183,19 @@ describe("a demo is never indexable", () => {
 
   test("robots.txt denies everything on a demo host", () => {
     const robots = files.find((f) => f.path === "app/robots.txt/route.ts");
-    expect(robots!.text).toMatch(/isDemo/);
-    expect(robots!.text).toMatch(/DISALLOW_ALL/);
+    expect(robots!.code).toMatch(/isDemo/);
+    expect(robots!.code).toMatch(/DISALLOW_ALL/);
   });
 
   test("a demo is never in a sitemap", () => {
     const sitemap = files.find((f) => f.path === "app/sitemap.xml/route.ts");
-    expect(sitemap!.text).toMatch(/isDemo/);
+    expect(sitemap!.code).toMatch(/isDemo/);
   });
 
   test("an expired demo serves the notice, not the site", () => {
     const page = files.find((f) => f.path === "app/[[...slug]]/page.tsx");
-    expect(page!.text).toMatch(/demo_expired/);
-    expect(page!.text).toMatch(/<DemoExpired\s*\/>/);
+    expect(page!.code).toMatch(/demo_expired/);
+    expect(page!.code).toMatch(/<DemoExpired\s*\/>/);
   });
 });
 
@@ -186,8 +233,8 @@ describe("the link preview carries the framing too", () => {
   test("the demo card names the agency and denies the affiliation", () => {
     const safety = files.find((f) => f.path === "lib/demo-safety.ts");
     expect(safety, "lib/demo-safety.ts is missing").toBeTruthy();
-    expect(safety!.text).toMatch(/Proposal for/);
-    expect(safety!.text).toMatch(/not affiliated/i);
+    expect(safety!.code).toMatch(/Proposal for/);
+    expect(safety!.code).toMatch(/not affiliated/i);
   });
 });
 

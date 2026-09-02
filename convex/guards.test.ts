@@ -66,14 +66,64 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
+/**
+ * COMMENT-STRIPPING IS THE DEFAULT, AND THE NAMES ENFORCE IT.
+ *
+ * `code` is the stripped text and is what every guard should scan. The raw
+ * text is called `raw`, so reaching for it is a decision somebody typed rather
+ * than the thing they got by accident — there is deliberately no `text`.
+ *
+ * This has caught us three times: the webhook rule that fired on the comment
+ * saying `request.json()` never appears, the one that fired on the comment
+ * showing the banned `if (!secret) return true` shape, and the next-config
+ * gate that PASSED against a deleted check because the paragraph explaining
+ * the flag still contained its name. It is structural rather than bad luck —
+ * the prose most likely to sit near a rule is the prose describing it, so the
+ * most carefully documented code is the easiest to fool with a text scan.
+ *
+ * `raw` is right where over-eagerness is wanted: a false positive on
+ * `startsAt` costs one comment, a false negative costs a customer standing
+ * outside a locked door.
+ */
 const sourceFiles = walk(CONVEX_DIR).map((f) => {
-  const text = readFileSync(f, "utf8");
+  const raw = readFileSync(f, "utf8");
   return {
     path: relative(CONVEX_DIR, f).replace(/\\/g, "/"),
-    text,
-    /** Same file with comments removed. See stripComments. */
-    code: stripComments(text),
+    /** WITH comments. Deliberate over-eagerness only — see the note above. */
+    raw,
+    /** Comments removed. The default, and what a guard should scan. */
+    code: stripComments(raw),
   };
+});
+
+/**
+ * A GUARD THAT SCANNED NOTHING REPORTS SAFETY IT NEVER CHECKED.
+ *
+ * Learned the expensive way: a walker that collected only `.ts` was reused
+ * over a directory of `.tsx`, returned an empty list, and every rule built on
+ * it passed. Three of four negative controls came back GREEN against
+ * deliberately broken code before anyone noticed.
+ *
+ * So every walker in this codebase asserts it found something, and names
+ * files it must have found — a count alone would survive a walker that picked
+ * up the wrong tree.
+ */
+describe("the guards are looking at something", () => {
+  test("the source walk found this codebase", () => {
+    expect(sourceFiles.length).toBeGreaterThan(30);
+    for (const expected of ["schema.ts", "lib/messaging.ts", "lib/ledger.ts", "http.ts"]) {
+      expect(
+        sourceFiles.some((f) => f.path === expected),
+        `${expected} was not found — the walker is scanning the wrong tree`,
+      ).toBe(true);
+    }
+  });
+
+  test("and it is reading them, not just listing them", () => {
+    const schema = sourceFiles.find((f) => f.path === "schema.ts");
+    expect(schema!.raw.length).toBeGreaterThan(100);
+    expect(schema!.code.length).toBeGreaterThan(100);
+  });
 });
 
 describe("tenancy", () => {
@@ -86,7 +136,7 @@ describe("tenancy", () => {
     for (const file of sourceFiles) {
       if (PUBLIC_ALLOWLIST.has(file.path)) continue;
       if (file.path.startsWith("lib/")) continue; // lib defines the constructors
-      for (const m of file.text.matchAll(bare)) {
+      for (const m of file.code.matchAll(bare)) {
         offenders.push(`${file.path}: uses bare ${m[1]}()`);
       }
     }
@@ -120,7 +170,7 @@ describe("tenancy", () => {
       if (file.path === "schema.ts" || PUBLIC_ALLOWLIST.has(file.path)) continue;
 
       // Each exported function, with its constructor and its args together.
-      for (const chunk of file.text.split(/export const /).slice(1)) {
+      for (const chunk of file.code.split(/export const /).slice(1)) {
         const body = chunk.split(/\nexport /)[0]!;
         const isTenantScoped = /=\s*tenant(Query|Mutation)\s*\(/.test(body);
         if (!isTenantScoped) continue;
@@ -146,7 +196,7 @@ describe("tenancy", () => {
     for (const file of sourceFiles) {
       for (const table of IMMUTABLE_TABLES) {
         const pattern = new RegExp(`db\\.(patch|delete|replace)\\([^)]*${table}`, "g");
-        if (pattern.test(file.text)) offenders.push(`${file.path}: mutates ${table}`);
+        if (pattern.test(file.code)) offenders.push(`${file.path}: mutates ${table}`);
       }
     }
     expect(
@@ -184,7 +234,7 @@ describe("message keys", () => {
       if (file.path === STARTS_AT_WRITER) continue;
 
       // An insert into bookings anywhere else necessarily sets startsAt.
-      if (/db\.insert\(\s*"bookings"/.test(file.text)) {
+      if (/db\.insert\(\s*"bookings"/.test(file.raw)) {
         offenders.push(`${file.path}: inserts into bookings`);
       }
 
@@ -193,7 +243,7 @@ describe("message keys", () => {
        * positive here costs one comment, and a false negative costs a
        * customer standing outside a locked door.
        */
-      for (const m of file.text.matchAll(/db\.patch\([^)]*\{[^}]*startsAt/gs)) {
+      for (const m of file.raw.matchAll(/db\.patch\([^)]*\{[^}]*startsAt/gs)) {
         void m;
         offenders.push(`${file.path}: patches startsAt`);
       }
@@ -216,7 +266,7 @@ describe("message keys", () => {
   test("book sets messageRevision, so the key has something to vary on", () => {
     // Guards against the counter being quietly dropped from the insert.
     const bookings = sourceFiles.find((f) => f.path === STARTS_AT_WRITER);
-    expect(bookings?.text).toMatch(/messageRevision:\s*1/);
+    expect(bookings?.raw).toMatch(/messageRevision:\s*1/);
   });
 
   /**
@@ -275,7 +325,7 @@ describe("the send choke point", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === DISPATCH) continue;
-      if (/db\.insert\(\s*"messages"/.test(file.text)) {
+      if (/db\.insert\(\s*"messages"/.test(file.code)) {
         offenders.push(`${file.path}: inserts into messages`);
       }
     }
@@ -893,7 +943,7 @@ describe("the ledger", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === LEDGER_WRITER) continue;
-      if (/db\.insert\(\s*"ledgerEntries"/.test(file.text)) {
+      if (/db\.insert\(\s*"ledgerEntries"/.test(file.code)) {
         offenders.push(`${file.path}: inserts into ledgerEntries`);
       }
     }
@@ -919,7 +969,7 @@ describe("the ledger", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === LEDGER_WRITER) continue;
-      if (/(INCOME_TYPES|REVENUE_TYPES)\s*[:=]\s*\[/.test(file.text)) {
+      if (/(INCOME_TYPES|REVENUE_TYPES)\s*[:=]\s*\[/.test(file.code)) {
         offenders.push(`${file.path}: redefines the revenue types`);
       }
     }
@@ -1713,7 +1763,7 @@ describe("single writers", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === RESELLER_WRITER) continue;
-      for (const m of file.text.matchAll(/db\.(patch|replace|insert)\([^;]*?resellerId/gs)) {
+      for (const m of file.code.matchAll(/db\.(patch|replace|insert)\([^;]*?resellerId/gs)) {
         offenders.push(`${file.path}: writes resellerId directly (${m[1]})`);
       }
     }
@@ -1728,7 +1778,7 @@ describe("money rules", () => {
   test("no financial field is stored as bigint", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
-      for (const m of file.text.matchAll(/(\w*[Cc]ents)\s*:\s*v\.int64\(\)/g)) {
+      for (const m of file.code.matchAll(/(\w*[Cc]ents)\s*:\s*v\.int64\(\)/g)) {
         offenders.push(`${file.path}: ${m[1]} is v.int64()`);
       }
     }
@@ -1742,7 +1792,7 @@ describe("money rules", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (!file.path.startsWith("tables/")) continue;
-      for (const block of file.text.split(/defineTable\(/).slice(1)) {
+      for (const block of file.code.split(/defineTable\(/).slice(1)) {
         const table = block.split("defineTable(")[0]!;
         if (/Cents/.test(table) && !/currency/.test(table)) {
           const name = table.match(/\.index\("([^"]+)"/)?.[1] ?? "unknown";
@@ -1769,7 +1819,7 @@ describe("the pipeline", () => {
   test("probability is never taken from a caller", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
-      for (const m of file.text.matchAll(/args:\s*\{([\s\S]*?)\n {2}\},/g)) {
+      for (const m of file.code.matchAll(/args:\s*\{([\s\S]*?)\n {2}\},/g)) {
         if (/probability:\s*v\./.test(m[1]!)) {
           offenders.push(`${file.path}: accepts probability as an argument`);
         }
@@ -1790,7 +1840,7 @@ describe("the pipeline", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === "deals.ts") continue;
-      if (/db\.insert\(\s*"deals"/.test(file.text)) {
+      if (/db\.insert\(\s*"deals"/.test(file.code)) {
         offenders.push(`${file.path}: inserts a deal directly`);
       }
     }
@@ -1811,7 +1861,7 @@ describe("the pipeline", () => {
       // Line by line, so a COMMENT explaining why we do not do this is not
       // itself reported as doing it — which is exactly what caught deals.ts
       // when this guard was first written.
-      const lines = file.text.split("\n");
+      const lines = file.code.split("\n");
       lines.forEach((line, i) => {
         if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
         if (!/status:\s*"converted"/.test(line)) return;

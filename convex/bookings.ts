@@ -1,7 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { byAsc } from "./lib/ordering";
-import type { Id } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, assertLocationAllowed, auditWrite } from "./lib/tenancy";
 import {
@@ -9,7 +9,8 @@ import {
   queueBookingConfirmationFor,
   transactionalChannelFor,
 } from "./messages";
-import type { DispatchResult } from "./lib/messaging";
+import { idempotencyKeyFor, type DispatchResult } from "./lib/messaging";
+import { localDayKey, startOfLocalDay, startOfLocalDayPlus } from "./lib/localDay";
 
 /**
  * BOOKINGS — overlap-safe by construction.
@@ -548,3 +549,201 @@ export const blockOut = tenantMutation("manager")({
     return { blockoutId };
   },
 });
+
+/**
+ * THE CLIENT'S OWN CALENDAR — what is on today, and what is coming.
+ *
+ * The hole this closes: bookings arrive and confirmations go out, and until
+ * now the person paying for the platform had no way to see either. That is
+ * invisible on the day they go live, in front of them.
+ *
+ * TWO QUESTIONS, ONE SCREEN, because they are the same question to the person
+ * asking. "What am I doing today" and "was the customer actually told" are
+ * separated only in our heads — a booking whose confirmation silently failed
+ * looks exactly like one that went out, and the customer is the one who finds
+ * the difference.
+ *
+ * The confirmation lookup is EXACT, not a guess: `idempotencyKeyFor` is the
+ * function that wrote the key, so asking it for the key again and reading the
+ * index is the same join dispatch would make. Parsing keys or matching on
+ * customer and time would drift the first time either changes.
+ *
+ * TODAY SHOWS CANCELLATIONS; the rest of the week does not. A job somebody saw
+ * on this screen an hour ago that has since been called off has to be visibly
+ * off, or they drive to it. A cancelled booking next Thursday is just noise.
+ */
+export const upcoming = tenantQuery("staff")({
+  args: {
+    /** Injectable so the day boundary is testable without waiting for midnight. */
+    now: v.optional(v.number()),
+    /** Days beyond today. Seven is a week of work; more is a planning tool. */
+    days: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<UpcomingBookings> => {
+    const now = args.now ?? Date.now();
+    const timezone = ctx.tenant.client.timezone;
+    const horizon = Math.min(Math.max(args.days ?? 6, 0), 30);
+
+    const from = startOfLocalDay(now, timezone);
+    const to = startOfLocalDayPlus(now, timezone, horizon + 1);
+    const todayKey = localDayKey(now, timezone);
+
+    const rows = await ctx.db
+      .query("bookings")
+      .withIndex("by_client_start", (q) =>
+        q.eq("clientId", ctx.tenant.clientId).gte("startsAt", from).lt("startsAt", to),
+      )
+      .collect();
+
+    const services = new Map(
+      (
+        await ctx.db
+          .query("services")
+          .withIndex("by_client", (q) => q.eq("clientId", ctx.tenant.clientId))
+          .collect()
+      ).map((doc) => [doc._id, doc]),
+    );
+    const locations = new Map(
+      (
+        await ctx.db
+          .query("locations")
+          .withIndex("by_client", (q) => q.eq("clientId", ctx.tenant.clientId).eq("active", true))
+          .collect()
+      ).map((doc) => [doc._id, doc]),
+    );
+
+    const customers = new Map<string, Doc<"customers">>();
+    for (const row of rows) {
+      if (customers.has(row.customerId)) continue;
+      const customer = await ctx.db.get(row.customerId);
+      if (customer) customers.set(row.customerId, customer);
+    }
+
+    const ordered = rows.sort(byAsc((row) => row.startsAt));
+    const built: UpcomingBooking[] = [];
+
+    for (const row of ordered) {
+      const dayKey = localDayKey(row.startsAt, timezone);
+      const isToday = dayKey === todayKey;
+
+      // A cancellation is news today and clutter next week. See the note above.
+      if (!isToday && !HOLDS_A_SLOT_TODAY.includes(row.status)) continue;
+
+      const customer = customers.get(row.customerId);
+      built.push({
+        _id: row._id,
+        dayKey,
+        startsAt: row.startsAt,
+        endsAt: row.endsAt,
+        status: row.status,
+        serviceName: services.get(row.serviceId)?.name ?? "Appointment",
+        locationName: locations.get(row.locationId)?.name ?? null,
+        customerName: customer?.name ?? "Unknown customer",
+        /*
+         * E.164, which is what `tel:` wants and what a phone dials without
+         * guessing at a country. `phoneDisplay` does not exist on a customer —
+         * see lib/phone.ts on why the stored form is the key.
+         */
+        customerPhone: customer?.phone ?? null,
+        notes: row.notes ?? null,
+        confirmation: await confirmationFor(ctx, row),
+      });
+    }
+
+    return {
+      timezone,
+      todayKey,
+      today: built.filter((b) => b.dayKey === todayKey),
+      /*
+       * Grouped by DAY rather than handed over flat, because the grouping is a
+       * fact about the client's timezone and doing it in the browser would be
+       * doing it against the phone's.
+       */
+      days: groupByDay(built.filter((b) => b.dayKey !== todayKey)),
+    };
+  },
+});
+
+/** Statuses that still mean somebody is expected. */
+const HOLDS_A_SLOT_TODAY: readonly string[] = ["pending", "confirmed", "in_progress", "completed"];
+
+/**
+ * Did the customer hear about it?
+ *
+ * `none` is not `not_sent`: no row at all means nothing was ever queued, which
+ * is a different fault from a message that was queued and refused. The screen
+ * says which, because the fixes are different — one is a bug, the other is
+ * usually a missing email address.
+ */
+async function confirmationFor(
+  ctx: QueryCtx,
+  booking: Doc<"bookings">,
+): Promise<UpcomingBooking["confirmation"]> {
+  const key = idempotencyKeyFor({
+    kind: "booking.confirmation",
+    bookingId: booking._id,
+    startsAt: booking.startsAt,
+    revision: booking.messageRevision,
+  });
+
+  const message = await ctx.db
+    .query("messages")
+    .withIndex("by_idempotencyKey", (q) => q.eq("idempotencyKey", key))
+    .unique();
+
+  if (!message) return { state: "none", detail: null, channel: null };
+
+  switch (message.status) {
+    case "sent":
+    case "delivered":
+      return { state: "sent", detail: null, channel: message.channel };
+    case "scheduled":
+    case "holding_quiet_hours":
+    case "sending":
+      return { state: "queued", detail: null, channel: message.channel };
+    default:
+      return {
+        state: "not_sent",
+        detail: message.error ?? "It was not sent.",
+        channel: message.channel,
+      };
+  }
+}
+
+function groupByDay(bookings: UpcomingBooking[]): UpcomingDay[] {
+  const days = new Map<string, UpcomingBooking[]>();
+  for (const booking of bookings) {
+    const list = days.get(booking.dayKey);
+    if (list) list.push(booking);
+    else days.set(booking.dayKey, [booking]);
+  }
+  return [...days.entries()].map(([dayKey, list]) => ({ dayKey, bookings: list }));
+}
+
+export type UpcomingBooking = {
+  _id: Id<"bookings">;
+  dayKey: string;
+  startsAt: number;
+  endsAt: number;
+  status: "pending" | "confirmed" | "in_progress" | "completed" | "cancelled" | "no_show";
+  serviceName: string;
+  locationName: string | null;
+  customerName: string;
+  customerPhone: string | null;
+  notes: string | null;
+  confirmation: {
+    state: "sent" | "queued" | "not_sent" | "none";
+    detail: string | null;
+    channel: "whatsapp" | "email" | "sms" | null;
+  };
+};
+
+export type UpcomingDay = { dayKey: string; bookings: UpcomingBooking[] };
+
+export type UpcomingBookings = {
+  /** The CLIENT's timezone. Every label on the screen is rendered in it. */
+  timezone: string;
+  todayKey: string;
+  today: UpcomingBooking[];
+  days: UpcomingDay[];
+};

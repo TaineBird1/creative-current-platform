@@ -677,13 +677,40 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   not. And the person who just took the booking is told NOW if nothing will
   reach this customer — while they can still ask for an email address — the
   same reasoning as `reachable` on `customers.upsertByPhone`.
+- **"TODAY" MEANS TODAY WHERE THE CLIENT IS.** The server runs in UTC and the
+  Vercel functions in Dublin, so a day boundary computed on the running clock
+  shows a Durban client yesterday at 01:00 and tomorrow at 23:00 — on the
+  screen they use to decide where to drive. `lib/localDay.ts` does the
+  arithmetic once, against the client own `timezone` column, and the calendar
+  query hands the grouping to the browser already done rather than letting the
+  phone regroup it in its own zone. DST needed TWO passes: sampling the offset
+  at midday and applying it to midnight is an hour out in a zone that shifted
+  overnight, which a New York fall-back test caught.
+- **THE CLIENT CALENDAR ANSWERS BOTH HALVES: what is on, and whether the
+  customer was told.** They are one question to the person asking — a booking
+  whose confirmation quietly failed looks exactly like one that went out, and
+  the customer is who finds the difference. The join is EXACT rather than a
+  guess: `idempotencyKeyFor` wrote the key, so asking it for the key again and
+  reading the index is the same join dispatch would make.
+  The screen shows the STATE and never the underlying error — those sentences
+  are written for whoever runs the platform and some of them name environment
+  variables. Today shows cancellations, the rest of the week does not: a job
+  somebody saw an hour ago that is now off has to be visibly off or they drive
+  to it, while a cancelled booking next Thursday is noise.
+- **`/preview/bookings` renders the real component against fixtures**, gated
+  off the production origin by `VERCEL_ENV` — not `NODE_ENV`, because a Vercel
+  preview build IS a production build and would refuse exactly the case it
+  exists for. Same reasoning as the sites `/preview`: the back office is
+  behind an emailed code, so without it the only way to look at the calendar
+  is to be a signed-in client who already has bookings, which is nobody until
+  the day it matters most.
 - Every screen goes through the `impeccable` skill. Tokens only.
 - Never mark anything done without a deployed preview URL and a human tapping
   it on a real phone.
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 652 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 668 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -963,7 +990,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 652 tests
+pnpm test                        # 668 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

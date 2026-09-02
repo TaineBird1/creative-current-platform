@@ -32,6 +32,10 @@ const COLOUR_ALLOWLIST = new Set([
   // the preview route exists to feed one through the ramp. The rule is about
   // colour that ships as style, and this is the seam where data enters.
   join("apps", "sites", "app", "preview", "page.tsx"),
+  // The office preview does the same thing for the back office: a brand
+  // colour arrives as a query parameter, goes through the AA-validated ramp,
+  // and is never painted directly. The fallback is the same kind of data.
+  join("apps", "office", "app", "preview", "bookings", "page.tsx"),
   // Same seam: seed data supplies a client's brand colour, which is a hex by
   // definition. It is fed through the ramp, not painted.
   join("convex", "seed.ts"),

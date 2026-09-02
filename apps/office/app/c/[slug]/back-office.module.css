@@ -23,10 +23,12 @@
   max-width: 42ch;
 }
 
-.eyebrow {
-  margin: 0 0 var(--space-3xs);
+/* The date under the business name. text-muted, not text-faint: it is
+   information, not a label, and it is read at arm's length in sunlight. */
+.today {
+  margin: var(--space-3xs) 0 0;
   font-size: var(--step--1);
-  color: var(--text-faint);
+  color: var(--text-muted);
 }
 
 .heading {
@@ -39,6 +41,7 @@
 
 .subheading {
   margin: 0 0 var(--space-2xs);
+  letter-spacing: var(--tracking-tight);
   font-family: var(--font-display);
   font-size: var(--step-1);
   font-weight: 600;

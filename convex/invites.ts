@@ -1,6 +1,8 @@
 import { v, ConvexError } from "convex/values";
 import { platformMutation, tenantMutation, tenantQuery } from "./lib/functions";
 import { auditWrite } from "./lib/tenancy";
+import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import {
   INVITE_TTL_MS,
   hashToken,
@@ -159,23 +161,38 @@ export const inviteToPlatform = platformMutation({
   },
 });
 
-/** Onboarding: the platform mints the FIRST owner of a client. */
+/**
+ * Onboarding: the platform mints the FIRST owner of a client.
+ *
+ * The helper exists so the onboarding transaction can mint this invite in the
+ * SAME transaction that creates the client. A client that committed without
+ * its owner invite is a back office nobody can open, and the person it was
+ * built for has no way to tell that from a broken product.
+ *
+ * The plaintext token is returned and never stored — see the module note.
+ */
+export async function mintClientOwnerInvite(
+  ctx: MutationCtx,
+  args: { clientId: Id<"clients">; email: string; createdBy: Id<"users"> },
+): Promise<{ inviteId: Id<"invites">; token: string }> {
+  const client = await ctx.db.get(args.clientId);
+  if (!client) throw new ConvexError({ code: "NOT_FOUND", message: "Not found" });
+
+  const token = newInviteToken();
+  const inviteId = await ctx.db.insert("invites", {
+    clientId: args.clientId,
+    tenantRole: "owner",
+    email: normaliseEmail(args.email),
+    channel: "whatsapp",
+    tokenHash: await hashToken(token),
+    expiresAt: Date.now() + INVITE_TTL_MS,
+    createdBy: args.createdBy,
+  });
+  return { inviteId, token };
+}
+
 export const inviteClientOwner = platformMutation({
   args: { clientId: v.id("clients"), email: v.string() },
-  handler: async (ctx, args) => {
-    const client = await ctx.db.get(args.clientId);
-    if (!client) throw new ConvexError({ code: "NOT_FOUND", message: "Not found" });
-
-    const token = newInviteToken();
-    const inviteId = await ctx.db.insert("invites", {
-      clientId: args.clientId,
-      tenantRole: "owner",
-      email: normaliseEmail(args.email),
-      channel: "whatsapp",
-      tokenHash: await hashToken(token),
-      expiresAt: Date.now() + INVITE_TTL_MS,
-      createdBy: ctx.platform.userId,
-    });
-    return { inviteId, token };
-  },
+  handler: (ctx, args) =>
+    mintClientOwnerInvite(ctx, { ...args, createdBy: ctx.platform.userId }),
 });

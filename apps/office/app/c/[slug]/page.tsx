@@ -4,6 +4,8 @@ import { convexAuthNextjsToken } from "@convex-dev/auth/nextjs/server";
 import { api } from "@cc/convex/api";
 import { accentStyle } from "@/lib/accent-css";
 import { SignOut } from "@/components/SignOut";
+import { Bookings } from "./Bookings";
+import type { UpcomingBookings } from "@cc/convex-src/bookings";
 import s from "./back-office.module.css";
 
 /**
@@ -32,11 +34,21 @@ export default async function BackOffice({
   // FunctionReturnType, not Awaited<ReturnType<typeof fetchQuery<...>>> — the
   // latter resolves loosely and silently gives up type safety on every row.
   let requests: QuoteRequestRow[] | null = null;
+  let bookings: UpcomingBookings | null = null;
   let denied = false;
   let expired = false;
 
   try {
-    requests = await fetchQuery(api.quoteRequests.list, { clientSlug: slug }, { token });
+    /*
+     * Both, in parallel. The calendar is the reason this screen exists now, so
+     * it must not wait on the quote list — and a failure in either has to
+     * reach the same handling below rather than one of them silently
+     * rendering empty.
+     */
+    [requests, bookings] = await Promise.all([
+      fetchQuery(api.quoteRequests.list, { clientSlug: slug }, { token }),
+      fetchQuery(api.bookings.upcoming, { clientSlug: slug }, { token }),
+    ]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -75,7 +87,7 @@ export default async function BackOffice({
 
   // Refusal is the correct outcome for someone with no membership on this
   // tenant, and it is indistinguishable from an unknown slug by design.
-  if (denied || requests === null) {
+  if (denied || requests === null || bookings === null) {
     return (
       <div className="world-client">
         <main className={s.empty}>
@@ -91,22 +103,28 @@ export default async function BackOffice({
 
   return (
     <div className="world-client" style={brand?.accent ? accentStyle(brand.accent) : undefined}>
+      {/*
+        * The business name IS the heading. It was an eyebrow over "Quote
+        * requests", which stacked a kicker above a heading — banned by
+        * DESIGN.md and by the craft floor — and it was also wrong now: this
+        * screen is their day, and quote requests are one part of it.
+        */}
       <header className={s.bar}>
         <div>
-          <p className={s.eyebrow}>{brand?.name ?? slug}</p>
-          <h1 className={s.heading}>Quote requests</h1>
+          <h1 className={s.heading}>{brand?.name ?? slug}</h1>
+          <p className={s.today}>{longDate(bookings.timezone)}</p>
         </div>
         <SignOut />
       </header>
 
+      <Bookings data={bookings} />
+
       <main className={s.main}>
+        <h2 className={s.subheading}>Quote requests</h2>
         {requests.length === 0 ? (
-          <div className={s.emptyState}>
-            <h2 className={s.subheading}>Nothing yet.</h2>
-            <p className={s.body}>
-              Requests from your website land here the moment someone sends one.
-            </p>
-          </div>
+          <p className={s.body}>
+            Requests from your website land here the moment someone sends one.
+          </p>
         ) : (
           <ol className={s.list}>
             {requests.map((request) => (
@@ -152,4 +170,14 @@ export default async function BackOffice({
 function humanise(key: string): string {
   const spaced = key.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/** Today, in the CLIENT's timezone — never the server's, and never the phone's. */
+function longDate(timeZone: string): string {
+  return new Intl.DateTimeFormat("en-ZA", {
+    timeZone,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(new Date());
 }

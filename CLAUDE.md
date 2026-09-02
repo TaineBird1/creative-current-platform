@@ -404,6 +404,43 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   webhook and no inbound pipeline at all, so the only withdrawal path today is
   a staff member recording one by hand. The outbound half is real; the half
   that makes STOP automatic does not exist.
+- **WON MEANS THEY SAID YES. CONVERTED MEANS THEY EXIST.**
+  `deals.advance` records the win and returns `conversionOwed: true`; it
+  refuses to mark the lead converted, because a lead in the funnel's last
+  column with no client behind it makes every count downstream wrong in the
+  direction that flatters us. `onboarding.convertWonDeal` is the one thing
+  that pays that debt, and it does the whole of it in ONE serializable
+  mutation: client, site, owner invite, checklist, build invoice, lead
+  converted. **The value is entirely in the atomicity** — every partial state
+  is its own quiet disaster (a back office pointing at nothing; access granted
+  to somebody never told; a client live and paying nothing, which is the one
+  nobody notices for a month; a converted-but-not-really lead that reappears
+  in the pipeline so somebody phones a customer to sell them a website).
+  Guard tests hold it: only `onboarding.ts` may mark a lead converted or write
+  the checklist.
+  **THE DEMO IS PROMOTED, NOT REPLACED.** The prospect has had that URL in a
+  WhatsApp thread for a fortnight, and the slug is made from their own
+  business name. A fresh site would take a second slug because the first is
+  held by the demo, so the address they were sold on would quietly become
+  somebody else's, and the demo client would linger as a duplicate of a
+  business that is now a customer. `promoteSiteToLive` in `siteConfigs.ts`
+  (the sites-table owner) flips `isDemo` and **clears `demoExpiresAt`** — that
+  clearing is load-bearing and has its own guard, because `public/site`
+  refuses to serve a site past its expiry, so a promoted site that kept one
+  goes dark thirty days after the client starts paying.
+  `isDemo` comes off the client HERE and only here. Anywhere else that would
+  be turning off a guard; here it is the event the flag was waiting for.
+  **The issuer is checked BEFORE anything is written**, with its own guard on
+  the ordering: `issueInvoiceFor` refuses an unconfirmed issuer and runs last,
+  so without the early check the whole transaction rolls back at the final
+  step and reports an invoicing problem for what looked like an onboarding
+  one. Refusing to onboard over an admin detail is the right way round — it
+  forces the issuer to exist before the first client does, which is the order
+  those two things have to happen in anyway.
+  **NOT DONE: the invite is not emailed.** The plaintext token is returned
+  once and stored nowhere, so it has to be carried out of the response and
+  given to the client by hand. Wiring it to the outbox is the obvious next
+  step and is deliberately not in this change.
 - **A TRANSACTIONAL ACKNOWLEDGEMENT MAY INTERRUPT QUIET HOURS, FOR AN HOUR.**
   Quiet hours exist to stop a business intruding on somebody's evening. It is
   not intruding when the person booked ninety seconds ago and is waiting to
@@ -541,6 +578,24 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   Nothing here can check MX from the Convex runtime, so nothing guesses:
   `dig MX thecreativecurrent.co.za +short` is the check, and
   `health:messagingConfig` reports the fallback.
+- **MEASURED, 2 Sep 2026: the pipeline sent a real email to a real inbox.** A
+  real client (`renu-solar-live`, neither demo nor seed), a booking through
+  `createBooking`, one `outbox:drain`, and the row reached `sent` with Resend
+  id `8891e0a2-89b5-4585-aa35-84fc208f9573`. It arrived in the Gmail INBOX,
+  not spam. The `via` From line, the `reply_to`, the branch phone in the body
+  and the quiet-hours exemption stamp were all correct on the row.
+  **WHAT THAT DOES NOT PROVE, and the distinction matters more than the
+  result.** It was one send to an address that had already received sign-in
+  codes from the same domain — a warm recipient at a provider that has seen us
+  before, which is the most favourable case there is. It says nothing about a
+  COLD recipient at a provider with no history of us, which is what every one
+  of a client's customers will be. Re-measure against a cold address before
+  claiming deliverability; treat this as "the pipeline works", not "the mail
+  arrives".
+  At the time of measuring, the sending domain had DKIM (`resend._domainkey`)
+  and SPF (on `send.`) but **no MX and no DMARC record at all** — both
+  outstanding. That it landed in the inbox anyway is a fact about Gmail's
+  tolerance for a warm sender, not evidence the records are unnecessary.
 - **EMAIL SENDS. WHATSAPP DOES NOT, AND SAYS SO.** `lib/providers.ts` is the
   provider seam: one interface, one driver per channel, chosen by `driverFor`.
   Email is live over Resend. WhatsApp and SMS get a **logging no-op that
@@ -622,13 +677,106 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   not. And the person who just took the booking is told NOW if nothing will
   reach this customer — while they can still ask for an email address — the
   same reasoning as `reachable` on `customers.upsertByPhone`.
+- **"TODAY" MEANS TODAY WHERE THE CLIENT IS.** The server runs in UTC and the
+  Vercel functions in Dublin, so a day boundary computed on the running clock
+  shows a Durban client yesterday at 01:00 and tomorrow at 23:00 — on the
+  screen they use to decide where to drive. `lib/localDay.ts` does the
+  arithmetic once, against the client own `timezone` column, and the calendar
+  query hands the grouping to the browser already done rather than letting the
+  phone regroup it in its own zone. DST needed TWO passes: sampling the offset
+  at midday and applying it to midnight is an hour out in a zone that shifted
+  overnight, which a New York fall-back test caught.
+- **THE CLIENT CALENDAR ANSWERS BOTH HALVES: what is on, and whether the
+  customer was told.** They are one question to the person asking — a booking
+  whose confirmation quietly failed looks exactly like one that went out, and
+  the customer is who finds the difference. The join is EXACT rather than a
+  guess: `idempotencyKeyFor` wrote the key, so asking it for the key again and
+  reading the index is the same join dispatch would make.
+  The screen shows the STATE and never the underlying error — those sentences
+  are written for whoever runs the platform and some of them name environment
+  variables. Today shows cancellations, the rest of the week does not: a job
+  somebody saw an hour ago that is now off has to be visibly off or they drive
+  to it, while a cancelled booking next Thursday is noise.
+- **`/preview/bookings` RENDERS FIXTURES, AND CANNOT EXIST IN PRODUCTION.**
+  The back office is behind an emailed code, so without a harness the only way
+  to look at the calendar is to be a signed-in client who already has
+  bookings — nobody, until the day it matters most. It renders the REAL
+  component, not a mock, so what is reviewed is what ships.
+  **It is NOT the `apps/sites` preview case, and treating it as one was the
+  mistake.** That harness renders invented marketing copy on a public
+  template. This one renders the shape of a TENANT'S BOOKINGS — customer names
+  and phone numbers — so a runtime `VERCEL_ENV` comparison, which is what it
+  had first, is one bad environment variable away from publishing a client's
+  customer list, silently and publicly.
+  Three independent barriers, every default off:
+  1. **It is not a page.** The file is `page.preview.tsx`, which Next does not
+     route unless `preview.tsx` is in `pageExtensions`. Verified: a normal
+     production build lists ten routes and none of them is `/preview`.
+  2. **The build cannot see the flag.** `ALLOW_PREVIEW_ROUTES` is deliberately
+     absent from `turbo.json`, and Turborepo filters the environment to what a
+     task declares — so setting it in the Vercel dashboard does nothing. This
+     is the load-bearing one: it removes the mistake rather than guarding it.
+  3. **And it still refuses**, before rendering, unless the flag is exactly
+     `"1"`.
+  **Fixtures only, forever**: a guard bans any Convex read under `app/preview`,
+  because a harness that can be pointed at a real tenant is the thing all of
+  the above exists to prevent. Run it with
+  `ALLOW_PREVIEW_ROUTES=1 pnpm --filter @cc/office dev`.
 - Every screen goes through the `impeccable` skill. Tokens only.
 - Never mark anything done without a deployed preview URL and a human tapping
   it on a real phone.
 
+## How the guards are built, and three ways they have been fooled
+
+- **PREFER A BARRIER THAT REMOVES THE CAPABILITY OVER ONE THAT REFUSES TO USE
+  IT.** Nothing has to run correctly for the first kind. `ALLOW_PREVIEW_ROUTES`
+  is the worked example: the runtime check (`if flag !== "1" notFound()`) has
+  to execute, on the right build, with the right value, every time — and one
+  wrong environment variable defeats it. Leaving the variable out of
+  `turbo.json` means a Vercel build **cannot see it at all**, because Turborepo
+  filters the environment to what a task declares. That is not a stronger
+  check; it is the absence of the thing a check would have to get right.
+  Same shape elsewhere: `page.preview.tsx` is not a route because Next never
+  looks at it, not because something decided to hide it. Reach for capability
+  removal first, and keep the refusal as the second layer rather than the only
+  one.
+- **COMMENT-STRIPPING IS THE DEFAULT IN THE GUARD HELPERS, AND THE NAMES
+  ENFORCE IT.** `sourceFiles` exposes `code` (stripped) and `raw` (not), and
+  deliberately no `text` — so scanning prose is something somebody has to type
+  the word `raw` to do. It has caught us three times, and it is structural
+  rather than unlucky: the prose most likely to sit next to a rule is the
+  paragraph explaining that rule, so **the most carefully documented code is
+  the easiest to fool with a text scan.**
+  1. the webhook rule that fired on its own comment saying `request.json()`
+     never appears in that file
+  2. the one that fired on the comment showing the banned
+     `if (!secret) return true` shape
+  3. the next-config gate that **passed against a deleted check**, because the
+     paragraph explaining the flag still contained the flag's name
+  `raw` is right only where over-eagerness is wanted — the `startsAt` guards,
+  where a false positive costs one comment and a false negative costs a
+  customer standing outside a locked door.
+- **EVERY WALKER ASSERTS IT FOUND SOMETHING, AND NAMES WHAT.** A guard that
+  scanned nothing reports safety it never checked, and it does it in green.
+  The shared `walk` in `convex/guards.test.ts` collects only `.ts`, which is
+  correct for `convex/` and silently wrong anywhere else: reused over a tree of
+  `.tsx` it returned an empty list, every rule built on it passed, and **three
+  of four negative controls came back green against deliberately broken code.**
+  So `convex/guards.test.ts`, `apps/sites/demo-guard.test.ts` and
+  `scripts/lint-tokens.mjs` each assert a floor AND name files they must have
+  found — a count alone survives a walker pointed at the wrong tree. The token
+  linter exits 1 rather than printing "0 files clean", which reads as a pass.
+  Audited 2 Sep 2026: no existing guard was blind. `demo-guard` matches
+  `/\.tsx?$/` and the token linter covers `.css/.ts/.tsx/.jsx/.js`, both
+  correct. The trap was latent, not live.
+- **NEGATIVE CONTROLS, ALWAYS.** Break the thing on purpose, watch the guard
+  fail, restore it, watch it pass. Every one of the failures above was found
+  that way and none of them by reading. A guard that has never been seen to
+  fail is a guard nobody has tested.
+
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 631 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 678 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -908,7 +1056,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 631 tests
+pnpm test                        # 678 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

@@ -1,4 +1,4 @@
-import { v, ConvexError } from "convex/values";
+import { v, ConvexError, type Infer } from "convex/values";
 import { ownerMutation, platformQuery } from "./lib/functions";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -169,16 +169,31 @@ const lineItem = v.object({
  * disagrees with the lines printed above it is the version a client queries,
  * and the one that costs an afternoon to explain.
  */
-export const issue = ownerMutation({
-  args: {
-    clientId: v.id("clients"),
-    lineItems: v.array(lineItem),
-    /** Payment terms in days. Defaults to 7; 0 means on receipt. */
-    paymentTermsDays: v.optional(v.number()),
-    notes: v.optional(v.string()),
-    now: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
+/**
+ * ISSUING, WITHOUT AN OPINION ABOUT WHO IS ASKING.
+ *
+ * Split out of `issue` below when onboarding needed to raise the build
+ * invoice inside the same transaction that creates the client. The number
+ * allocation, the issuer snapshot, the per-line rounding and the ledger post
+ * all stay HERE — which is what keeps the invoice-numbering guard meaningful:
+ * a number is allocated and its invoice inserted in one mutation, and there is
+ * exactly one function that can do it.
+ *
+ * The actor is passed in rather than read off a platform context, because this
+ * runs under both `ownerMutation` (a person clicking issue) and onboarding
+ * (the same person, converting a won deal). An invoice always names who
+ * raised it.
+ */
+export type IssueInvoiceArgs = {
+  clientId: Id<"clients">;
+  lineItems: Infer<typeof lineItem>[];
+  paymentTermsDays?: number;
+  notes?: string;
+  now?: number;
+  actorUserId: Id<"users">;
+};
+
+export async function issueInvoiceFor(ctx: MutationCtx, args: IssueInvoiceArgs) {
     const now = args.now ?? Date.now();
 
     const client = await ctx.db.get(args.clientId);
@@ -313,11 +328,11 @@ export const issue = ownerMutation({
       currency,
       occurredAt: now,
       description: `${number} — ${client.name}`,
-      createdBy: ctx.platform.userId,
+      createdBy: args.actorUserId,
     });
 
     await ctx.db.insert("auditLog", {
-      actorUserId: ctx.platform.userId,
+      actorUserId: args.actorUserId,
       action: "invoice.issue",
       entityTable: "invoices",
       entityId: invoiceId,
@@ -340,7 +355,18 @@ export const issue = ownerMutation({
        */
       paymentReference: paymentReference(number),
     };
+}
+
+export const issue = ownerMutation({
+  args: {
+    clientId: v.id("clients"),
+    lineItems: v.array(lineItem),
+    /** Payment terms in days. Defaults to 7; 0 means on receipt. */
+    paymentTermsDays: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    now: v.optional(v.number()),
   },
+  handler: (ctx, args) => issueInvoiceFor(ctx, { ...args, actorUserId: ctx.platform.userId }),
 });
 
 /**

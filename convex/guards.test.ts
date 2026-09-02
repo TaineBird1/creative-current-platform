@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
 import { IMMUTABLE_TABLES } from "./schema";
@@ -66,14 +66,64 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
+/**
+ * COMMENT-STRIPPING IS THE DEFAULT, AND THE NAMES ENFORCE IT.
+ *
+ * `code` is the stripped text and is what every guard should scan. The raw
+ * text is called `raw`, so reaching for it is a decision somebody typed rather
+ * than the thing they got by accident — there is deliberately no `text`.
+ *
+ * This has caught us three times: the webhook rule that fired on the comment
+ * saying `request.json()` never appears, the one that fired on the comment
+ * showing the banned `if (!secret) return true` shape, and the next-config
+ * gate that PASSED against a deleted check because the paragraph explaining
+ * the flag still contained its name. It is structural rather than bad luck —
+ * the prose most likely to sit near a rule is the prose describing it, so the
+ * most carefully documented code is the easiest to fool with a text scan.
+ *
+ * `raw` is right where over-eagerness is wanted: a false positive on
+ * `startsAt` costs one comment, a false negative costs a customer standing
+ * outside a locked door.
+ */
 const sourceFiles = walk(CONVEX_DIR).map((f) => {
-  const text = readFileSync(f, "utf8");
+  const raw = readFileSync(f, "utf8");
   return {
     path: relative(CONVEX_DIR, f).replace(/\\/g, "/"),
-    text,
-    /** Same file with comments removed. See stripComments. */
-    code: stripComments(text),
+    /** WITH comments. Deliberate over-eagerness only — see the note above. */
+    raw,
+    /** Comments removed. The default, and what a guard should scan. */
+    code: stripComments(raw),
   };
+});
+
+/**
+ * A GUARD THAT SCANNED NOTHING REPORTS SAFETY IT NEVER CHECKED.
+ *
+ * Learned the expensive way: a walker that collected only `.ts` was reused
+ * over a directory of `.tsx`, returned an empty list, and every rule built on
+ * it passed. Three of four negative controls came back GREEN against
+ * deliberately broken code before anyone noticed.
+ *
+ * So every walker in this codebase asserts it found something, and names
+ * files it must have found — a count alone would survive a walker that picked
+ * up the wrong tree.
+ */
+describe("the guards are looking at something", () => {
+  test("the source walk found this codebase", () => {
+    expect(sourceFiles.length).toBeGreaterThan(30);
+    for (const expected of ["schema.ts", "lib/messaging.ts", "lib/ledger.ts", "http.ts"]) {
+      expect(
+        sourceFiles.some((f) => f.path === expected),
+        `${expected} was not found — the walker is scanning the wrong tree`,
+      ).toBe(true);
+    }
+  });
+
+  test("and it is reading them, not just listing them", () => {
+    const schema = sourceFiles.find((f) => f.path === "schema.ts");
+    expect(schema!.raw.length).toBeGreaterThan(100);
+    expect(schema!.code.length).toBeGreaterThan(100);
+  });
 });
 
 describe("tenancy", () => {
@@ -86,7 +136,7 @@ describe("tenancy", () => {
     for (const file of sourceFiles) {
       if (PUBLIC_ALLOWLIST.has(file.path)) continue;
       if (file.path.startsWith("lib/")) continue; // lib defines the constructors
-      for (const m of file.text.matchAll(bare)) {
+      for (const m of file.code.matchAll(bare)) {
         offenders.push(`${file.path}: uses bare ${m[1]}()`);
       }
     }
@@ -120,7 +170,7 @@ describe("tenancy", () => {
       if (file.path === "schema.ts" || PUBLIC_ALLOWLIST.has(file.path)) continue;
 
       // Each exported function, with its constructor and its args together.
-      for (const chunk of file.text.split(/export const /).slice(1)) {
+      for (const chunk of file.code.split(/export const /).slice(1)) {
         const body = chunk.split(/\nexport /)[0]!;
         const isTenantScoped = /=\s*tenant(Query|Mutation)\s*\(/.test(body);
         if (!isTenantScoped) continue;
@@ -146,7 +196,7 @@ describe("tenancy", () => {
     for (const file of sourceFiles) {
       for (const table of IMMUTABLE_TABLES) {
         const pattern = new RegExp(`db\\.(patch|delete|replace)\\([^)]*${table}`, "g");
-        if (pattern.test(file.text)) offenders.push(`${file.path}: mutates ${table}`);
+        if (pattern.test(file.code)) offenders.push(`${file.path}: mutates ${table}`);
       }
     }
     expect(
@@ -184,7 +234,7 @@ describe("message keys", () => {
       if (file.path === STARTS_AT_WRITER) continue;
 
       // An insert into bookings anywhere else necessarily sets startsAt.
-      if (/db\.insert\(\s*"bookings"/.test(file.text)) {
+      if (/db\.insert\(\s*"bookings"/.test(file.raw)) {
         offenders.push(`${file.path}: inserts into bookings`);
       }
 
@@ -193,7 +243,7 @@ describe("message keys", () => {
        * positive here costs one comment, and a false negative costs a
        * customer standing outside a locked door.
        */
-      for (const m of file.text.matchAll(/db\.patch\([^)]*\{[^}]*startsAt/gs)) {
+      for (const m of file.raw.matchAll(/db\.patch\([^)]*\{[^}]*startsAt/gs)) {
         void m;
         offenders.push(`${file.path}: patches startsAt`);
       }
@@ -216,7 +266,7 @@ describe("message keys", () => {
   test("book sets messageRevision, so the key has something to vary on", () => {
     // Guards against the counter being quietly dropped from the insert.
     const bookings = sourceFiles.find((f) => f.path === STARTS_AT_WRITER);
-    expect(bookings?.text).toMatch(/messageRevision:\s*1/);
+    expect(bookings?.raw).toMatch(/messageRevision:\s*1/);
   });
 
   /**
@@ -275,7 +325,7 @@ describe("the send choke point", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === DISPATCH) continue;
-      if (/db\.insert\(\s*"messages"/.test(file.text)) {
+      if (/db\.insert\(\s*"messages"/.test(file.code)) {
         offenders.push(`${file.path}: inserts into messages`);
       }
     }
@@ -594,6 +644,290 @@ describe("the send choke point", () => {
   });
 });
 
+describe("the preview harness cannot exist in production", () => {
+  /**
+   * `apps/office/app/preview/**` renders the shape of a TENANT'S BOOKINGS —
+   * customer names and phone numbers. It is fixtures today, and it is the real
+   * component, which is exactly why the next person will point it at real data
+   * to check something.
+   *
+   * It was first gated by comparing VERCEL_ENV at runtime, by analogy with the
+   * sites preview. The analogy was wrong: that one renders invented marketing
+   * copy on a public template. A runtime string comparison here is one bad
+   * environment variable away from publishing a client's customer list, and
+   * the failure is silent and public.
+   *
+   * Three independent barriers, each defaulting to off, each checked here.
+   */
+  const OFFICE = join(CONVEX_DIR, "..", "apps", "office");
+  const PREVIEW = join(OFFICE, "app", "preview");
+
+  /*
+   * A WALKER OF ITS OWN, and the reason is a scar. The first version reused
+   * `walk` above, which collects only `.ts` — so it never saw a single .tsx
+   * file, `previewFiles()` returned an empty list, and every test below passed
+   * by examining nothing. Three of four negative controls came back GREEN
+   * against deliberately broken code before that was noticed.
+   *
+   * A guard that passes because it scanned nothing is worse than no guard at
+   * all: it reports safety it never checked.
+   */
+  const walkAll = (dir: string, acc: string[] = []): string[] => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walkAll(full, acc);
+      else acc.push(full);
+    }
+    return acc;
+  };
+
+  const previewFiles = (): string[] =>
+    existsSync(PREVIEW) ? walkAll(PREVIEW).map((f) => relative(OFFICE, f).replace(/\\/g, "/")) : [];
+
+  test("the guards below are looking at something", () => {
+    // The test that would have caught the empty scan. See walkAll.
+    expect(
+      previewFiles().length,
+      "no preview files found — the walker is broken and every guard below is vacuous",
+    ).toBeGreaterThan(0);
+  });
+
+  test("BARRIER 1: nothing under app/preview is a routable page", () => {
+    /*
+     * A file called `page.tsx` IS a route on every build. The harness is
+     * `page.preview.tsx`, which Next only routes when pageExtensions says so.
+     */
+    const routable = previewFiles().filter((f) => /\/(page|route)\.(tsx|ts|jsx|js)$/.test(f));
+
+    expect(
+      routable,
+      [
+        "A file named page.tsx under app/preview is a route on EVERY build,",
+        "including production. Name it page.preview.tsx — Next will not route",
+        "it unless pageExtensions opts in, which only a flagged build does.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("BARRIER 1: and the extension is opted into only behind the flag", () => {
+    /*
+     * COMMENTS STRIPPED FIRST. The version that did not strip them passed
+     * against a config whose gate had been deleted — the paragraph explaining
+     * the flag still contained its name, which was enough to satisfy the
+     * match. The most carefully documented code is the easiest to fool this
+     * way, which is the same trap the webhook guards hit.
+     */
+    const code = stripComments(readFileSync(join(OFFICE, "next.config.mjs"), "utf8"));
+    const extensions = code.match(/pageExtensions:\s*\[[^\]]*\]/)?.[0] ?? "";
+
+    expect(
+      /ALLOW_PREVIEW_ROUTES/.test(code),
+      "apps/office/next.config.mjs must read ALLOW_PREVIEW_ROUTES.",
+    ).toBe(true);
+    expect(
+      !extensions.includes("preview") || extensions.includes("?"),
+      [
+        "pageExtensions lists the preview extension UNCONDITIONALLY, which",
+        "routes the harness on every build including production. It has to sit",
+        "behind a conditional on ALLOW_PREVIEW_ROUTES — a flag the build cannot",
+        "even see, because turbo.json does not declare it.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  test("BARRIER 2: THE BUILD CANNOT SEE THE FLAG", () => {
+    /*
+     * The load-bearing one. Turborepo filters the environment to what a task
+     * declares, so a variable absent from turbo.json cannot reach a Vercel
+     * build even if somebody sets it in the dashboard — the mistake is not
+     * available to make.
+     */
+    const turbo = JSON.parse(readFileSync(join(CONVEX_DIR, "..", "turbo.json"), "utf8"));
+    const declared: string[] = turbo.tasks?.build?.env ?? [];
+
+    expect(
+      declared,
+      [
+        "ALLOW_PREVIEW_ROUTES must NOT be declared in turbo.json.",
+        "Declaring it lets a Vercel build see it, which turns a structural",
+        "guarantee back into an environment variable somebody can get wrong —",
+        "and what is behind it is a client's customer list.",
+      ].join("\n"),
+    ).not.toContain("ALLOW_PREVIEW_ROUTES");
+  });
+
+  test("BARRIER 3: it refuses to render without the flag", () => {
+    const offenders: string[] = [];
+    for (const file of previewFiles()) {
+      if (!/page\.preview\.tsx$/.test(file)) continue;
+      const code = stripComments(readFileSync(join(OFFICE, file), "utf8"));
+      const gated =
+        /ALLOW_PREVIEW_ROUTES\s*!==\s*"1"/.test(code) && /notFound\(\)/.test(code);
+      if (!gated) offenders.push(file);
+    }
+
+    expect(
+      offenders,
+      [
+        "Every preview page must refuse unless ALLOW_PREVIEW_ROUTES is exactly",
+        '"1", before it renders anything. Absent means no — the same direction',
+        "as every other default here, and the only one that is safe when",
+        "somebody is wrong.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("FIXTURES ONLY: the harness can never be pointed at a real tenant", () => {
+    /*
+     * The barriers above stop it being REACHABLE. This stops it being
+     * DANGEROUS if it ever is: a harness that cannot read the backend cannot
+     * show anybody's real customers, whatever else goes wrong.
+     */
+    const offenders: string[] = [];
+    for (const file of previewFiles()) {
+      const code = stripComments(readFileSync(join(OFFICE, file), "utf8"));
+      if (/fetchQuery|fetchMutation|useQuery|convex\/nextjs|convex\/react/.test(code)) {
+        offenders.push(file);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "A preview page must not read Convex. It exists to render the real",
+        "component against FIXTURES; the moment it can fetch, it is a way to",
+        "look at a real client's bookings from an unauthenticated route.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+});
+
+describe("conversion is one transaction", () => {
+  /**
+   * WON MEANS THEY SAID YES. CONVERTED MEANS THEY EXIST.
+   *
+   * `deals.advance` refuses to mark a lead converted, because a lead in the
+   * funnel's last column with no client behind it makes every count
+   * downstream wrong. `onboarding.convertWonDeal` is the one thing allowed to
+   * pay that debt, and it does client, site, membership, invite, checklist,
+   * invoice and lead-conversion in ONE serializable mutation.
+   *
+   * The value is entirely in the atomicity, so the rule is that nothing else
+   * may write the pieces. A second path that mints a client and forgets the
+   * invoice produces a customer live and paying nothing, which is the partial
+   * state nobody notices for a month.
+   */
+  const CONVERTER = "onboarding.ts";
+
+  test("only onboarding.ts marks a lead converted", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === CONVERTER) continue;
+      // `convertedClientId: v.optional(...)` in the schema DECLARES the
+      // column. Setting it to a value is the act this rule is about.
+      const sets = [...file.code.matchAll(/convertedClientId:\s*(\w+)/g)].some(
+        (m) => m[1] !== "v",
+      );
+      if (sets || /status:\s*"converted"/.test(file.code)) {
+        offenders.push(`${file.path}: converts a lead`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "A lead is marked converted by onboarding.convertWonDeal and nowhere",
+        "else, because that is the only place a client, a site, an invite and",
+        "a build invoice all come into existence together. Setting it anywhere",
+        "else claims a customer exists that nobody has billed.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the invite, the invoice and the checklist are minted in that one place", () => {
+    /*
+     * Each of these has a legitimate standalone caller — an operator inviting
+     * a second owner, an owner raising an ad-hoc invoice. What must not exist
+     * is a SECOND path that does the onboarding set, partially.
+     */
+    const CHECKLIST_WRITERS = new Set([CONVERTER]);
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      if (CHECKLIST_WRITERS.has(file.path)) continue;
+      if (/db\.insert\(\s*"onboardingItems"/.test(file.code)) {
+        offenders.push(`${file.path}: writes the onboarding checklist`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "The onboarding checklist is written by convertWonDeal, in the same",
+        "transaction as the client it belongs to. A checklist created",
+        "separately is one that can exist for a client that does not, or be",
+        "missing for one that does.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("and the issuer is checked BEFORE anything is written", () => {
+    /*
+     * issueInvoiceFor refuses an unconfirmed issuer and runs last. Without an
+     * early check the whole transaction rolls back at the final step and
+     * reports an invoicing error for what looked like an onboarding action —
+     * correct, but unreadable.
+     */
+    const onboarding = sourceFiles.find((f) => f.path === CONVERTER);
+    // Only convertWonDeal. createFirstClient lives earlier in the same file
+    // and inserts a client of its own, which would make every offset lie.
+    const whole = onboarding?.code ?? "";
+    const code = whole.slice(whole.indexOf("export const convertWonDeal"));
+    const issuerAt = code.indexOf("ISSUER_UNCONFIRMED");
+    const firstWrite = Math.min(
+      ...[
+        code.indexOf('db.insert("clients"'),
+        code.indexOf("db.patch(clientId"),
+        code.indexOf("mintClientOwnerInvite("),
+      ].filter((i) => i > -1),
+    );
+
+    expect(issuerAt, "convertWonDeal must check the issuer").toBeGreaterThan(-1);
+    expect(
+      issuerAt < firstWrite,
+      [
+        "The issuer check has to come before the first write in convertWonDeal.",
+        "It refuses at the END otherwise, rolling the whole thing back and",
+        "reporting an invoicing problem for what looked like an onboarding one.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  test("A PROMOTED DEMO LOSES ITS EXPIRY", () => {
+    /*
+     * public/site refuses to serve a site whose expiry has passed, and treats
+     * a missing expiry on a demo as a refusal too. A promoted site that kept
+     * its demo expiry is a client whose website vanishes thirty days into the
+     * relationship — silently, and a month after anybody was watching.
+     */
+    const siteConfigs = sourceFiles.find((f) => f.path === "siteConfigs.ts");
+    const code = siteConfigs?.code ?? "";
+    const from = code.indexOf("export async function promoteSiteToLive");
+
+    expect(from, "promoteSiteToLive has moved or been renamed").toBeGreaterThan(-1);
+    const body = code.slice(from).split("\n}")[0]!;
+
+    expect(
+      /demoExpiresAt:\s*undefined/.test(body),
+      "promoteSiteToLive must clear demoExpiresAt, or the site goes dark 30 days after they pay.",
+    ).toBe(true);
+    expect(
+      /isDemo:\s*false/.test(body),
+      "promoteSiteToLive must clear isDemo, or the renderer keeps drawing the demo disclosure.",
+    ).toBe(true);
+  });
+});
+
 describe("the ledger", () => {
   /**
    * Money has the same shape of problem as messages: several rules that are
@@ -609,7 +943,7 @@ describe("the ledger", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === LEDGER_WRITER) continue;
-      if (/db\.insert\(\s*"ledgerEntries"/.test(file.text)) {
+      if (/db\.insert\(\s*"ledgerEntries"/.test(file.code)) {
         offenders.push(`${file.path}: inserts into ledgerEntries`);
       }
     }
@@ -635,7 +969,7 @@ describe("the ledger", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === LEDGER_WRITER) continue;
-      if (/(INCOME_TYPES|REVENUE_TYPES)\s*[:=]\s*\[/.test(file.text)) {
+      if (/(INCOME_TYPES|REVENUE_TYPES)\s*[:=]\s*\[/.test(file.code)) {
         offenders.push(`${file.path}: redefines the revenue types`);
       }
     }
@@ -1429,7 +1763,7 @@ describe("single writers", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === RESELLER_WRITER) continue;
-      for (const m of file.text.matchAll(/db\.(patch|replace|insert)\([^;]*?resellerId/gs)) {
+      for (const m of file.code.matchAll(/db\.(patch|replace|insert)\([^;]*?resellerId/gs)) {
         offenders.push(`${file.path}: writes resellerId directly (${m[1]})`);
       }
     }
@@ -1444,7 +1778,7 @@ describe("money rules", () => {
   test("no financial field is stored as bigint", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
-      for (const m of file.text.matchAll(/(\w*[Cc]ents)\s*:\s*v\.int64\(\)/g)) {
+      for (const m of file.code.matchAll(/(\w*[Cc]ents)\s*:\s*v\.int64\(\)/g)) {
         offenders.push(`${file.path}: ${m[1]} is v.int64()`);
       }
     }
@@ -1458,7 +1792,7 @@ describe("money rules", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (!file.path.startsWith("tables/")) continue;
-      for (const block of file.text.split(/defineTable\(/).slice(1)) {
+      for (const block of file.code.split(/defineTable\(/).slice(1)) {
         const table = block.split("defineTable(")[0]!;
         if (/Cents/.test(table) && !/currency/.test(table)) {
           const name = table.match(/\.index\("([^"]+)"/)?.[1] ?? "unknown";
@@ -1485,7 +1819,7 @@ describe("the pipeline", () => {
   test("probability is never taken from a caller", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
-      for (const m of file.text.matchAll(/args:\s*\{([\s\S]*?)\n {2}\},/g)) {
+      for (const m of file.code.matchAll(/args:\s*\{([\s\S]*?)\n {2}\},/g)) {
         if (/probability:\s*v\./.test(m[1]!)) {
           offenders.push(`${file.path}: accepts probability as an argument`);
         }
@@ -1506,7 +1840,7 @@ describe("the pipeline", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === "deals.ts") continue;
-      if (/db\.insert\(\s*"deals"/.test(file.text)) {
+      if (/db\.insert\(\s*"deals"/.test(file.code)) {
         offenders.push(`${file.path}: inserts a deal directly`);
       }
     }
@@ -1527,7 +1861,7 @@ describe("the pipeline", () => {
       // Line by line, so a COMMENT explaining why we do not do this is not
       // itself reported as doing it — which is exactly what caught deals.ts
       // when this guard was first written.
-      const lines = file.text.split("\n");
+      const lines = file.code.split("\n");
       lines.forEach((line, i) => {
         if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
         if (!/status:\s*"converted"/.test(line)) return;

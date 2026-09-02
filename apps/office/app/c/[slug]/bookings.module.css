@@ -1,0 +1,276 @@
+/*
+ * THE CLIENT'S DAY. Operate mode, phone first.
+ *
+ * The usage scene is doing the deciding: 06:40, beside a bakkie, one hand, in
+ * sunlight. So the time is the biggest thing on the row and sits in a fixed
+ * left rail, which is what makes a column of them scannable without reading
+ * any of the names — and the call target is sized to be hit while walking.
+ *
+ * Bordered rows, never cards. The back office already made that decision and
+ * this section inherits it: a dense list is read once, a grid of cards is
+ * scanned and then re-read.
+ */
+
+.wrap {
+  padding: var(--space-m) var(--space-m) var(--space-l);
+  background: var(--bg);
+  /*
+   * Capped, because these rows are short and a name stranded three inches
+   * from its time on a laptop is harder to read than the same row on a phone.
+   * The screen is designed for the phone; the desktop just stops stretching.
+   */
+  max-width: 46rem;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-s);
+  /* More above than below: the heading belongs to what follows it. */
+  margin-block: var(--space-l) var(--space-2xs);
+}
+
+.sectionHead:first-child {
+  margin-block-start: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.count {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+.quiet {
+  margin: 0;
+  padding-block: var(--space-s);
+  max-width: var(--measure);
+  color: var(--text-muted);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.day {
+  margin-block-start: var(--space-m);
+}
+
+.dayTitle {
+  margin: 0 0 var(--space-3xs);
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+/*
+ * A fixed time rail. 4.25rem holds "08:00" over "09:00" at the largest step
+ * without wrapping, and holding it FIXED is the whole point — the times line
+ * up down the page, so the shape of the day is legible before a single name
+ * is read.
+ */
+.row {
+  display: grid;
+  grid-template-columns: 4.25rem minmax(0, 1fr);
+  gap: var(--space-s);
+  padding-block: var(--space-s);
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.time {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  margin: 0;
+  line-height: var(--leading-tight);
+}
+
+.start {
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.end {
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  font-size: var(--step-0);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.service {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.notes {
+  margin: var(--space-3xs) 0 0;
+  padding-inline-start: var(--space-2xs);
+  border-inline-start: var(--border-hairline) solid var(--border-strong);
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  max-width: var(--measure);
+}
+
+/*
+ * THE CALL TARGET.
+ *
+ * Sized to be hit without aiming, and wide enough that the number itself is
+ * readable at arm's length — it gets read aloud as often as it gets tapped.
+ * The accent earns its one appearance on the row here, because this is the
+ * only thing on the screen that DOES something.
+ */
+.call {
+  display: inline-flex;
+  align-items: baseline;
+  align-self: flex-start;
+  gap: var(--space-2xs);
+  /* 44px, hit without aiming. The height comes from padding rather than a
+     fill, so the target is generous and the row stays quiet. */
+  min-height: 2.75rem;
+  padding-block: var(--space-2xs);
+  padding-inline: var(--space-xs);
+  margin-block-start: var(--space-3xs);
+  margin-inline-start: calc(var(--space-xs) * -1);
+  border-radius: var(--radius-s);
+  color: var(--accent-700);
+  font-size: var(--step-0);
+  font-weight: 600;
+  text-decoration: none;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+/*
+ * A FILLED BOX WAS WRONG HERE, and the screen said so before the reasoning
+ * did. Four tinted blocks down the page out-shouted the times, which are what
+ * the day is actually read by — and on a cancelled row the button carried on
+ * shouting CALL under a struck-through name.
+ *
+ * The number is already the loudest thing it needs to be: mono, accent, and
+ * the only coloured text on the row. The box was decorating an affordance
+ * that was doing its job.
+ */
+.call > span:last-child {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.call:hover {
+  background: var(--accent-50);
+}
+
+/* The one authored moment: the press. Nothing on this screen animates on
+   load, because content that is already there beats content that arrives. */
+.call:active {
+  background: var(--accent-100);
+  transform: translateY(1px);
+}
+
+/*
+ * A cancelled row must not shout CALL. It is still callable — that is often
+ * exactly why you are looking at it — but it stops competing with the
+ * bookings that are still on.
+ */
+.rowOff .call {
+  color: var(--text-muted);
+}
+
+.rowOff .service,
+.rowOff .end {
+  color: var(--text-faint);
+}
+
+.noPhone {
+  margin: var(--space-3xs) 0 0;
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+/*
+ * A cancelled booking stays on TODAY and says so in words. Strikethrough
+ * alone is easy to miss in sunlight, and the cost of missing it is a drive.
+ */
+.rowOff .start,
+.rowOff .name {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.cancelled {
+  margin: var(--space-3xs) 0 0;
+  align-self: flex-start;
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--signal-danger);
+}
+
+/*
+ * DID THEY HEAR FROM US. The other half of the hole this screen closes — a
+ * booking whose confirmation quietly failed looks exactly like one that went
+ * out, and the customer is the person who finds the difference.
+ */
+.confirmed,
+.pending,
+.unconfirmed {
+  margin: var(--space-3xs) 0 0;
+  font-size: var(--step--1);
+}
+
+.confirmed {
+  color: var(--signal-positive);
+}
+
+.pending {
+  color: var(--text-muted);
+}
+
+.unconfirmed {
+  color: var(--signal-warning);
+  font-weight: 600;
+}
+
+/*
+ * WIDER SCREENS GET A WIDER GUTTER AND NOTHING ELSE.
+ *
+ * The first version put the start and end times on ONE line here, and the
+ * desktop render showed why that was wrong within a second: "08:00 –09:00"
+ * does not fit a 5rem rail, so the end time wrapped and landed indented under
+ * the start, breaking the one alignment the rail exists to provide. Stacked
+ * reads correctly at every width, so it stays stacked at every width.
+ */
+@media (min-width: 40rem) {
+  .row {
+    grid-template-columns: 5rem minmax(0, 1fr);
+    gap: var(--space-m);
+  }
+}

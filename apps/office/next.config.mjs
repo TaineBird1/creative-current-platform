@@ -44,9 +44,33 @@ if (process.env.NODE_ENV === "production" && !process.env.CONVEX_URL) {
   );
 }
 
+/*
+ * THE PREVIEW HARNESS IS NOT A ROUTE UNLESS THIS BUILD SAYS SO.
+ *
+ * `app/preview/**` renders the shape of a TENANT'S BOOKINGS — customer names
+ * and phone numbers. It is fixtures today, and it is the real component, which
+ * is exactly why the next person points it at real data to check something.
+ *
+ * So it is not conditionally hidden, it is conditionally COMPILED. The files
+ * are named `page.preview.tsx`, which Next does not recognise as a page
+ * unless `preview.tsx` is in pageExtensions — so on any build without the
+ * flag the route does not exist, is not in the manifest, and is not in the
+ * bundle. A runtime check is one env mistake away from publishing a client's
+ * customer list; an absent route is not.
+ *
+ * THE LOAD-BEARING PART IS THAT turbo.json DOES NOT DECLARE
+ * ALLOW_PREVIEW_ROUTES. Turborepo filters the environment to what a task
+ * names, so a Vercel build cannot see this variable even if somebody sets it
+ * in the dashboard — the mistake is not available to make. Local `next dev`
+ * runs outside turbo and sees it, which is the only place it is wanted.
+ * guards.test.ts fails if it ever appears in turbo.json.
+ */
+const PREVIEW_ROUTES = process.env.ALLOW_PREVIEW_ROUTES === "1";
+
 /** @type {import('next').NextConfig} */
 export default {
   reactStrictMode: true,
+  pageExtensions: ["tsx", "ts", "jsx", "js", ...(PREVIEW_ROUTES ? ["preview.tsx"] : [])],
   transpilePackages: ["@cc/site-config", "@cc/tokens"],
   experimental: {
     optimizePackageImports: ["@cc/site-config"],

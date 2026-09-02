@@ -1,5 +1,10 @@
 import { v, ConvexError } from "convex/values";
 import { internalMutation } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
+import { ownerMutation } from "./lib/functions";
+import { promoteSiteToLive } from "./siteConfigs";
+import { mintClientOwnerInvite } from "./invites";
+import { issueInvoiceFor } from "./invoices";
 import type { Id } from "./_generated/dataModel";
 import { createBooking } from "./bookings";
 import { toE164, toStorageKey } from "./lib/phone";
@@ -302,3 +307,306 @@ export const takeFirstBooking = internalMutation({
     };
   },
 });
+
+/* ==========================================================================
+ * THE ONBOARDING TRANSACTION
+ * ======================================================================= */
+
+/**
+ * WON MEANS THEY SAID YES. CONVERTED MEANS THEY EXIST.
+ *
+ * `deals.advance` deliberately stops at the first: it records the outcome and
+ * returns `conversionOwed: true`, because marking a lead converted with no
+ * client behind it puts a row in the funnel's last column that every count
+ * downstream then gets wrong, in the direction that flatters us. This is the
+ * function that pays that debt.
+ *
+ * ONE TRANSACTION, AND THAT IS THE ENTIRE POINT. Every half of this is useless
+ * without the others, and each partial state is its own quiet disaster:
+ *
+ *   client, no site        — a back office pointing at nothing
+ *   site, no membership    — a page nobody who owns it can edit
+ *   membership, no invite  — access granted to somebody never told
+ *   all of it, no invoice  — a client live and paying nothing, which is the
+ *                            one nobody notices for a month
+ *   any of it, lead open   — the deal reappears in the pipeline, and somebody
+ *                            phones a customer to sell them a website
+ *
+ * Convex mutations are serializable, so this either all commits or none of it
+ * does. That is the whole reason it is one function and not a checklist.
+ *
+ * THE DEMO IS PROMOTED, NOT REPLACED. See `promoteSiteToLive`.
+ */
+
+/**
+ * The first-week checklist. Data, not a wiki page, because what actually goes
+ * wrong in week one is a client waiting on us while we wait on them — so every
+ * row says WHO it is on.
+ *
+ * Deliberately short. A twenty-item checklist is one nobody opens.
+ */
+const CHECKLIST: {
+  key: string;
+  label: string;
+  phase: "intake" | "content" | "build" | "review" | "launch";
+  owner: "client" | "us";
+}[] = [
+  { key: "logo", label: "Logo and brand colours", phase: "intake", owner: "client" },
+  { key: "photos", label: "Photos of real work", phase: "intake", owner: "client" },
+  { key: "services", label: "Services and prices confirmed", phase: "content", owner: "client" },
+  { key: "copy", label: "Homepage copy from the demo, corrected", phase: "content", owner: "us" },
+  { key: "domain", label: "Domain pointed at the site", phase: "build", owner: "us" },
+  { key: "review", label: "Client walks the site and signs off", phase: "review", owner: "client" },
+  { key: "handover", label: "Back office walkthrough", phase: "launch", owner: "us" },
+];
+
+export const convertWonDeal = ownerMutation({
+  args: {
+    dealId: v.id("deals"),
+    /** The person who will own the back office. An invite is minted for them. */
+    ownerEmail: v.string(),
+    /**
+     * The build fee, in whole cents. Defaults to the deal's own value, which
+     * is the price that was actually presented — see deals.ts.
+     */
+    buildFeeCents: v.optional(v.number()),
+    paymentTermsDays: v.optional(v.number()),
+    now: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const ownerEmail = required(args.ownerEmail, "The owner's email").toLowerCase();
+
+    const deal = await ctx.db.get(args.dealId);
+    if (!deal) throw bad("NOT_FOUND", "No such deal.");
+    if (deal.stage !== "won") {
+      throw bad(
+        "DEAL_NOT_WON",
+        `That deal is at "${deal.stage}". Only a won deal converts — and winning it records ` +
+          "what the customer actually said, so do that first rather than around it.",
+      );
+    }
+
+    const lead = await ctx.db.get(deal.leadId);
+    if (!lead) throw bad("NOT_FOUND", "No such lead.");
+
+    /*
+     * IDEMPOTENT, and not by accident. A double click, a retried mutation, or
+     * somebody converting the same deal twice must not mint a second client, a
+     * second invite and a second invoice for one customer. The lead's
+     * `convertedClientId` is the record that this already happened, and it is
+     * written in this same transaction.
+     *
+     * Returned rather than thrown: converting twice is an ordinary thing for a
+     * person to attempt, not an error they should have to catch.
+     */
+    if (lead.convertedClientId) {
+      return {
+        clientId: lead.convertedClientId,
+        alreadyConverted: true,
+        notice: `${lead.businessName} was already converted. Nothing was changed.`,
+      };
+    }
+
+    const venture = await ctx.db.get(lead.ventureId);
+    if (!venture) throw bad("NOT_FOUND", "No such venture.");
+
+    /*
+     * THE ISSUER IS CHECKED BEFORE ANYTHING IS WRITTEN.
+     *
+     * `issueInvoiceFor` refuses an unconfirmed issuer, and it runs last — so
+     * without this the whole transaction would roll back at the final step and
+     * report an invoicing problem for what looked like an onboarding action.
+     * Checking here turns that into one sentence, before any work.
+     *
+     * Refusing to onboard over an admin detail is the right way round: it
+     * forces the issuer to exist before the first client does, which is the
+     * order those two things have to happen in anyway.
+     */
+    const issuer = await ctx.db
+      .query("issuers")
+      .withIndex("by_venture", (q) => q.eq("ventureId", lead.ventureId))
+      .unique();
+    if (!issuer || issuer.confirmedAt === undefined) {
+      throw bad(
+        "ISSUER_UNCONFIRMED",
+        "Confirm the issuer for this venture first. The build invoice carries a legal name " +
+          "forever, and a client cannot be onboarded that cannot be billed.",
+      );
+    }
+
+    /* ----------------------------------------------- the client and the site */
+
+    const demoSite = await ctx.db
+      .query("sites")
+      .filter((q) => q.eq(q.field("leadId"), deal.leadId))
+      .first();
+
+    let clientId: Id<"clients">;
+    let siteId: Id<"sites"> | null = null;
+    let slug: string;
+    let promotedDemo = false;
+
+    if (demoSite) {
+      /*
+       * The URL they were sold on stays theirs. A second site would take a
+       * second slug, because the first one is occupied by the demo.
+       */
+      const demoClient = await ctx.db.get(demoSite.clientId);
+      if (!demoClient) throw bad("NOT_FOUND", "The demo's client is missing.");
+
+      clientId = demoClient._id;
+      siteId = demoSite._id;
+      slug = demoSite.slug;
+      promotedDemo = true;
+
+      await ctx.db.patch(clientId, {
+        status: "live",
+        /*
+         * The flag every money and messaging path checks. It comes off HERE
+         * and only here — they have signed, which is the event it was waiting
+         * for. Anywhere else this would be turning off a guard.
+         */
+        isDemo: false,
+        name: lead.businessName,
+        primaryContactEmail: ownerEmail,
+        primaryContactPhone: lead.phone ?? undefined,
+        goLiveAt: now,
+      });
+
+      await promoteSiteToLive(ctx, demoSite._id);
+    } else {
+      /*
+       * No demo — a referral, an inbound enquiry. It gets a client and a back
+       * office and NO site, because a site needs a template, a brand colour
+       * and copy, and inventing those is the demo builder's job rather than
+       * this one's. The extra checklist row below says so out loud, rather
+       * than leaving somebody to notice.
+       */
+      slug = await freeSlug(ctx, lead.businessName);
+      clientId = await ctx.db.insert("clients", {
+        ventureId: lead.ventureId,
+        kind: "platform",
+        name: lead.businessName,
+        slug,
+        status: "onboarding",
+        timezone: "Africa/Johannesburg",
+        currency: venture.currency,
+        primaryContactEmail: ownerEmail,
+        primaryContactPhone: lead.phone ?? undefined,
+        featureFlags: { quotes: true },
+        isDemo: false,
+        isSeed: false,
+        goLiveAt: now,
+      });
+    }
+
+    /* ------------------------------------------------------ access and work */
+
+    const invite = await mintClientOwnerInvite(ctx, {
+      clientId,
+      email: ownerEmail,
+      createdBy: ctx.platform.userId,
+    });
+
+    for (const item of CHECKLIST) {
+      await ctx.db.insert("onboardingItems", {
+        clientId,
+        key: item.key,
+        label: item.label,
+        phase: item.phase,
+        owner: item.owner,
+        status: "pending",
+      });
+    }
+    if (!demoSite) {
+      await ctx.db.insert("onboardingItems", {
+        clientId,
+        key: "build-site",
+        label: "Build the site — this client came in without a demo",
+        phase: "build",
+        owner: "us",
+        status: "pending",
+      });
+    }
+
+    /* --------------------------------------------------------- the invoice */
+
+    const buildFeeCents = args.buildFeeCents ?? deal.valueCents;
+    const invoice = await issueInvoiceFor(ctx, {
+      clientId,
+      lineItems: [
+        {
+          description: `Website build — ${lead.businessName}`,
+          quantity: 1,
+          unitPriceCents: buildFeeCents,
+        },
+      ],
+      paymentTermsDays: args.paymentTermsDays,
+      now,
+      actorUserId: ctx.platform.userId,
+    });
+
+    /* ------------------------------------------------------ the lead closes */
+
+    /*
+     * LAST, and only now. This is the write `deals.advance` refused to make,
+     * and it is only true once everything above it committed — which, in one
+     * transaction, it has.
+     */
+    await ctx.db.patch(deal.leadId, {
+      status: "converted",
+      convertedClientId: clientId,
+    });
+
+    await ctx.db.insert("auditLog", {
+      actorUserId: ctx.platform.userId,
+      clientId,
+      ventureId: lead.ventureId,
+      at: now,
+      action: "onboarding.convertWonDeal",
+      entityTable: "clients",
+      entityId: clientId,
+      after: { dealId: args.dealId, leadId: deal.leadId, slug, invoice: invoice.number },
+    });
+
+    return {
+      clientId,
+      siteId,
+      slug,
+      alreadyConverted: false,
+      promotedDemo,
+      backOffice: `/c/${slug}`,
+      inviteId: invite.inviteId,
+      /**
+       * THE ONLY TIME THE PLAINTEXT EXISTS. Nothing stores it, and no email
+       * sender is wired to this path — so if it is not carried out of here and
+       * given to the client, the invite is unusable and they cannot sign in.
+       */
+      inviteToken: invite.token,
+      invoiceNumber: invoice.number,
+      paymentReference: invoice.paymentReference,
+      totalCents: invoice.totalCents,
+    };
+  },
+});
+
+/** A slug nobody holds. Same shape as the demo builder's, same reasoning. */
+async function freeSlug(ctx: MutationCtx, businessName: string): Promise<string> {
+  const base =
+    businessName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "client";
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const candidate = attempt === 0 ? base : `${base}-${attempt + 1}`;
+    const taken = await ctx.db
+      .query("clients")
+      .withIndex("by_slug", (q) => q.eq("slug", candidate))
+      .first();
+    if (!taken) return candidate;
+  }
+  throw bad("SLUG_EXHAUSTED", `Could not find a free slug for "${businessName}".`);
+}

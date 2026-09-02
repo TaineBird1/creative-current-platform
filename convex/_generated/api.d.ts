@@ -34,6 +34,7 @@ import type * as lib_functions from "../lib/functions.js";
 import type * as lib_invites from "../lib/invites.js";
 import type * as lib_leadAccess from "../lib/leadAccess.js";
 import type * as lib_ledger from "../lib/ledger.js";
+import type * as lib_localDay from "../lib/localDay.js";
 import type * as lib_messaging from "../lib/messaging.js";
 import type * as lib_money from "../lib/money.js";
 import type * as lib_ordering from "../lib/ordering.js";
@@ -107,6 +108,7 @@ declare const fullApi: ApiFromModules<{
   "lib/invites": typeof lib_invites;
   "lib/leadAccess": typeof lib_leadAccess;
   "lib/ledger": typeof lib_ledger;
+  "lib/localDay": typeof lib_localDay;
   "lib/messaging": typeof lib_messaging;
   "lib/money": typeof lib_money;
   "lib/ordering": typeof lib_ordering;

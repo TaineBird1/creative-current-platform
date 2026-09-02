@@ -594,6 +594,132 @@ describe("the send choke point", () => {
   });
 });
 
+describe("conversion is one transaction", () => {
+  /**
+   * WON MEANS THEY SAID YES. CONVERTED MEANS THEY EXIST.
+   *
+   * `deals.advance` refuses to mark a lead converted, because a lead in the
+   * funnel's last column with no client behind it makes every count
+   * downstream wrong. `onboarding.convertWonDeal` is the one thing allowed to
+   * pay that debt, and it does client, site, membership, invite, checklist,
+   * invoice and lead-conversion in ONE serializable mutation.
+   *
+   * The value is entirely in the atomicity, so the rule is that nothing else
+   * may write the pieces. A second path that mints a client and forgets the
+   * invoice produces a customer live and paying nothing, which is the partial
+   * state nobody notices for a month.
+   */
+  const CONVERTER = "onboarding.ts";
+
+  test("only onboarding.ts marks a lead converted", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === CONVERTER) continue;
+      // `convertedClientId: v.optional(...)` in the schema DECLARES the
+      // column. Setting it to a value is the act this rule is about.
+      const sets = [...file.code.matchAll(/convertedClientId:\s*(\w+)/g)].some(
+        (m) => m[1] !== "v",
+      );
+      if (sets || /status:\s*"converted"/.test(file.code)) {
+        offenders.push(`${file.path}: converts a lead`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "A lead is marked converted by onboarding.convertWonDeal and nowhere",
+        "else, because that is the only place a client, a site, an invite and",
+        "a build invoice all come into existence together. Setting it anywhere",
+        "else claims a customer exists that nobody has billed.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("the invite, the invoice and the checklist are minted in that one place", () => {
+    /*
+     * Each of these has a legitimate standalone caller — an operator inviting
+     * a second owner, an owner raising an ad-hoc invoice. What must not exist
+     * is a SECOND path that does the onboarding set, partially.
+     */
+    const CHECKLIST_WRITERS = new Set([CONVERTER]);
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles) {
+      if (CHECKLIST_WRITERS.has(file.path)) continue;
+      if (/db\.insert\(\s*"onboardingItems"/.test(file.code)) {
+        offenders.push(`${file.path}: writes the onboarding checklist`);
+      }
+    }
+
+    expect(
+      offenders,
+      [
+        "The onboarding checklist is written by convertWonDeal, in the same",
+        "transaction as the client it belongs to. A checklist created",
+        "separately is one that can exist for a client that does not, or be",
+        "missing for one that does.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("and the issuer is checked BEFORE anything is written", () => {
+    /*
+     * issueInvoiceFor refuses an unconfirmed issuer and runs last. Without an
+     * early check the whole transaction rolls back at the final step and
+     * reports an invoicing error for what looked like an onboarding action —
+     * correct, but unreadable.
+     */
+    const onboarding = sourceFiles.find((f) => f.path === CONVERTER);
+    // Only convertWonDeal. createFirstClient lives earlier in the same file
+    // and inserts a client of its own, which would make every offset lie.
+    const whole = onboarding?.code ?? "";
+    const code = whole.slice(whole.indexOf("export const convertWonDeal"));
+    const issuerAt = code.indexOf("ISSUER_UNCONFIRMED");
+    const firstWrite = Math.min(
+      ...[
+        code.indexOf('db.insert("clients"'),
+        code.indexOf("db.patch(clientId"),
+        code.indexOf("mintClientOwnerInvite("),
+      ].filter((i) => i > -1),
+    );
+
+    expect(issuerAt, "convertWonDeal must check the issuer").toBeGreaterThan(-1);
+    expect(
+      issuerAt < firstWrite,
+      [
+        "The issuer check has to come before the first write in convertWonDeal.",
+        "It refuses at the END otherwise, rolling the whole thing back and",
+        "reporting an invoicing problem for what looked like an onboarding one.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  test("A PROMOTED DEMO LOSES ITS EXPIRY", () => {
+    /*
+     * public/site refuses to serve a site whose expiry has passed, and treats
+     * a missing expiry on a demo as a refusal too. A promoted site that kept
+     * its demo expiry is a client whose website vanishes thirty days into the
+     * relationship — silently, and a month after anybody was watching.
+     */
+    const siteConfigs = sourceFiles.find((f) => f.path === "siteConfigs.ts");
+    const code = siteConfigs?.code ?? "";
+    const from = code.indexOf("export async function promoteSiteToLive");
+
+    expect(from, "promoteSiteToLive has moved or been renamed").toBeGreaterThan(-1);
+    const body = code.slice(from).split("\n}")[0]!;
+
+    expect(
+      /demoExpiresAt:\s*undefined/.test(body),
+      "promoteSiteToLive must clear demoExpiresAt, or the site goes dark 30 days after they pay.",
+    ).toBe(true);
+    expect(
+      /isDemo:\s*false/.test(body),
+      "promoteSiteToLive must clear isDemo, or the renderer keeps drawing the demo disclosure.",
+    ).toBe(true);
+  });
+});
+
 describe("the ledger", () => {
   /**
    * Money has the same shape of problem as messages: several rules that are

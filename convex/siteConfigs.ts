@@ -53,6 +53,46 @@ export async function insertSite(
   });
 }
 
+/**
+ * A DEMO BECOMES THE REAL SITE. It is not replaced by one.
+ *
+ * When a deal is won, the prospect has already SEEN a page — at a slug made
+ * from their own business name, with their brand colour on it, and that URL
+ * has been in a WhatsApp thread for two weeks. Creating a fresh site would
+ * take a second slug (the first is occupied), so the address they were sold
+ * on would quietly become someone else's, and the demo client would linger as
+ * a duplicate of a business that is now a customer.
+ *
+ * So the demo IS the site, promoted. The config is untouched — this changes
+ * only what the row CLAIMS about itself — which is also why it needs no Zod
+ * parse and why it can live beside the writers that do.
+ *
+ * `demoExpiresAt` is CLEARED, and that is the load-bearing line. `public/site`
+ * refuses to serve a site whose expiry has passed, and treats a missing expiry
+ * on a demo as a refusal too. A promoted site that kept its expiry would go
+ * dark thirty days after the client started paying.
+ */
+export async function promoteSiteToLive(
+  ctx: MutationCtx,
+  siteId: Id<"sites">,
+): Promise<void> {
+  const site = await ctx.db.get(siteId);
+  if (!site) throw new ConvexError({ code: "NOT_FOUND", message: "No such site." });
+
+  await ctx.db.patch(siteId, {
+    status: "live",
+    isDemo: false,
+    demoExpiresAt: undefined,
+    /*
+     * Published from whatever the demo was showing. A client whose site went
+     * live blank, because the config was only ever in `config` and never in
+     * `publishedConfig`, is a worse first day than any amount of stale copy.
+     */
+    publishedConfig: site.publishedConfig ?? site.config,
+    publishedAt: site.publishedAt ?? Date.now(),
+  });
+}
+
 export const get = tenantQuery("staff")({
   args: {},
   handler: async (ctx) => {

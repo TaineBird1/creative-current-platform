@@ -404,6 +404,43 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   webhook and no inbound pipeline at all, so the only withdrawal path today is
   a staff member recording one by hand. The outbound half is real; the half
   that makes STOP automatic does not exist.
+- **WON MEANS THEY SAID YES. CONVERTED MEANS THEY EXIST.**
+  `deals.advance` records the win and returns `conversionOwed: true`; it
+  refuses to mark the lead converted, because a lead in the funnel's last
+  column with no client behind it makes every count downstream wrong in the
+  direction that flatters us. `onboarding.convertWonDeal` is the one thing
+  that pays that debt, and it does the whole of it in ONE serializable
+  mutation: client, site, owner invite, checklist, build invoice, lead
+  converted. **The value is entirely in the atomicity** — every partial state
+  is its own quiet disaster (a back office pointing at nothing; access granted
+  to somebody never told; a client live and paying nothing, which is the one
+  nobody notices for a month; a converted-but-not-really lead that reappears
+  in the pipeline so somebody phones a customer to sell them a website).
+  Guard tests hold it: only `onboarding.ts` may mark a lead converted or write
+  the checklist.
+  **THE DEMO IS PROMOTED, NOT REPLACED.** The prospect has had that URL in a
+  WhatsApp thread for a fortnight, and the slug is made from their own
+  business name. A fresh site would take a second slug because the first is
+  held by the demo, so the address they were sold on would quietly become
+  somebody else's, and the demo client would linger as a duplicate of a
+  business that is now a customer. `promoteSiteToLive` in `siteConfigs.ts`
+  (the sites-table owner) flips `isDemo` and **clears `demoExpiresAt`** — that
+  clearing is load-bearing and has its own guard, because `public/site`
+  refuses to serve a site past its expiry, so a promoted site that kept one
+  goes dark thirty days after the client starts paying.
+  `isDemo` comes off the client HERE and only here. Anywhere else that would
+  be turning off a guard; here it is the event the flag was waiting for.
+  **The issuer is checked BEFORE anything is written**, with its own guard on
+  the ordering: `issueInvoiceFor` refuses an unconfirmed issuer and runs last,
+  so without the early check the whole transaction rolls back at the final
+  step and reports an invoicing problem for what looked like an onboarding
+  one. Refusing to onboard over an admin detail is the right way round — it
+  forces the issuer to exist before the first client does, which is the order
+  those two things have to happen in anyway.
+  **NOT DONE: the invite is not emailed.** The plaintext token is returned
+  once and stored nowhere, so it has to be carried out of the response and
+  given to the client by hand. Wiring it to the outbox is the obvious next
+  step and is deliberately not in this change.
 - **A TRANSACTIONAL ACKNOWLEDGEMENT MAY INTERRUPT QUIET HOURS, FOR AN HOUR.**
   Quiet hours exist to stop a business intruding on somebody's evening. It is
   not intruding when the person booked ninety seconds ago and is waiting to
@@ -541,6 +578,24 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   Nothing here can check MX from the Convex runtime, so nothing guesses:
   `dig MX thecreativecurrent.co.za +short` is the check, and
   `health:messagingConfig` reports the fallback.
+- **MEASURED, 2 Sep 2026: the pipeline sent a real email to a real inbox.** A
+  real client (`renu-solar-live`, neither demo nor seed), a booking through
+  `createBooking`, one `outbox:drain`, and the row reached `sent` with Resend
+  id `8891e0a2-89b5-4585-aa35-84fc208f9573`. It arrived in the Gmail INBOX,
+  not spam. The `via` From line, the `reply_to`, the branch phone in the body
+  and the quiet-hours exemption stamp were all correct on the row.
+  **WHAT THAT DOES NOT PROVE, and the distinction matters more than the
+  result.** It was one send to an address that had already received sign-in
+  codes from the same domain — a warm recipient at a provider that has seen us
+  before, which is the most favourable case there is. It says nothing about a
+  COLD recipient at a provider with no history of us, which is what every one
+  of a client's customers will be. Re-measure against a cold address before
+  claiming deliverability; treat this as "the pipeline works", not "the mail
+  arrives".
+  At the time of measuring, the sending domain had DKIM (`resend._domainkey`)
+  and SPF (on `send.`) but **no MX and no DMARC record at all** — both
+  outstanding. That it landed in the inbox anyway is a fact about Gmail's
+  tolerance for a warm sender, not evidence the records are unnecessary.
 - **EMAIL SENDS. WHATSAPP DOES NOT, AND SAYS SO.** `lib/providers.ts` is the
   provider seam: one interface, one driver per channel, chosen by `driverFor`.
   Email is live over Resend. WhatsApp and SMS get a **logging no-op that
@@ -628,7 +683,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 631 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 652 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -908,7 +963,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 631 tests
+pnpm test                        # 652 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

@@ -411,3 +411,172 @@ describe("the ledger sees webhook money like any other", () => {
     expect(summary.find((row) => row.currency === "ZAR")?.totalCents).toBe(95000);
   });
 });
+
+describe("a first payment can find its subscription", () => {
+  /**
+   * THE GAP THAT MADE ALL OF THIS UNUSABLE.
+   *
+   * Attribution was by `providerRef` alone — the PROVIDER's subscription code.
+   * That code does not exist until the customer has paid, so the very first
+   * `charge.success` had nothing to match against and parked as unattributed.
+   * Forever, for every client, silently: the money arrived, the ledger stayed
+   * empty, and the only trace was a row somebody had to go and read.
+   *
+   * So a checkout now carries OUR reference, generated before the customer
+   * sees anything, and the provider's code is learned the first time it shows
+   * up. Nothing is guessed — anything unmatched still parks.
+   */
+  const pending = async (h: Harness, ventureId: Id<"ventures">, clientId: Id<"clients">) =>
+    h.run((ctx) =>
+      ctx.db.insert("subscriptions", {
+        ventureId,
+        clientId,
+        plan: "care",
+        amountCents: 95000,
+        currency: "ZAR",
+        provider: "paystack" as const,
+        startReference: "cc_sub_deadbeef",
+        status: "pending" as const,
+      }),
+    );
+
+  /** A first charge: our reference, and no subscription code yet. */
+  const firstCharge = {
+    event: "charge.success",
+    id: "evt_first_charge",
+    data: {
+      id: 9001,
+      reference: "cc_sub_deadbeef",
+      amount: 95000,
+      currency: "ZAR",
+      paid_at: "2026-09-01T10:00:00.000Z",
+    },
+  };
+
+  test("OUR REFERENCE ATTRIBUTES THE FIRST PAYMENT", async () => {
+    const s = await setup();
+    const subscriptionId = await pending(s.h, s.ventureId, s.clientId);
+
+    await paystackPost(s.h, firstCharge);
+
+    const events = await eventsOf(s.h);
+    expect(events[0]!.status).not.toBe("unattributed");
+    expect(events[0]!.subscriptionId).toBe(subscriptionId);
+
+    // And the money actually landed, which is the point.
+    const ledger = await ledgerOf(s.h);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]!.type).toBe("payment_received");
+  });
+
+  test("THE PROVIDER'S CODE IS LEARNED THE FIRST TIME IT APPEARS", async () => {
+    /*
+     * Without this the subscription is only ever reachable through the
+     * reference on the original checkout — and a renewal twelve months later
+     * carries a completely different transaction reference.
+     */
+    const s = await setup();
+    const subscriptionId = await pending(s.h, s.ventureId, s.clientId);
+
+    await paystackPost(s.h, {
+      ...firstCharge,
+      data: { ...firstCharge.data, subscription_code: "SUB_new_001" },
+    });
+
+    expect((await subOf(s.h, subscriptionId))!.providerRef).toBe("SUB_new_001");
+  });
+
+  test("and a later renewal, carrying only that code, still attributes", async () => {
+    const s = await setup();
+    const subscriptionId = await pending(s.h, s.ventureId, s.clientId);
+
+    await paystackPost(s.h, {
+      ...firstCharge,
+      data: { ...firstCharge.data, subscription_code: "SUB_new_001" },
+    });
+    // A year later: a different transaction reference, same subscription.
+    await paystackPost(s.h, {
+      event: "charge.success",
+      id: "evt_renewal",
+      data: {
+        id: 9002,
+        reference: "some_other_reference",
+        subscription_code: "SUB_new_001",
+        amount: 95000,
+        currency: "ZAR",
+        paid_at: "2027-09-01T10:00:00.000Z",
+      },
+    });
+
+    const events = await eventsOf(s.h);
+    expect(events.every((e) => e.status !== "unattributed")).toBe(true);
+    expect(events.filter((e) => e.subscriptionId === subscriptionId)).toHaveLength(2);
+    expect(await ledgerOf(s.h)).toHaveLength(2);
+  });
+
+  test("METADATA IS A SECOND ROUTE TO THE SAME FACT", async () => {
+    // If a payload ever arrives without the reference, the ids we attached at
+    // checkout still say whose it is.
+    const s = await setup();
+    const subscriptionId = await pending(s.h, s.ventureId, s.clientId);
+
+    await paystackPost(s.h, {
+      event: "charge.success",
+      id: "evt_meta_only",
+      data: {
+        id: 9003,
+        amount: 95000,
+        currency: "ZAR",
+        paid_at: "2026-09-01T10:00:00.000Z",
+        metadata: { clientId: s.clientId, subscriptionId },
+      },
+    });
+
+    const events = await eventsOf(s.h);
+    expect(events[0]!.subscriptionId).toBe(subscriptionId);
+  });
+
+  test("NOTHING IS GUESSED — an unmatchable event still parks", async () => {
+    /*
+     * The rule the three routes must not erode. Crediting the wrong client is
+     * not recoverable; a row waiting for a human is.
+     */
+    const s = await setup();
+    await pending(s.h, s.ventureId, s.clientId);
+
+    await paystackPost(s.h, {
+      event: "charge.success",
+      id: "evt_stranger",
+      data: {
+        id: 9004,
+        reference: "someone_elses_reference",
+        amount: 95000,
+        currency: "ZAR",
+        paid_at: "2026-09-01T10:00:00.000Z",
+      },
+    });
+
+    const events = await eventsOf(s.h);
+    expect(events[0]!.status).toBe("unattributed");
+    expect(await ledgerOf(s.h)).toEqual([]);
+  });
+
+  test("a subscription.create activates the pending row it belongs to", async () => {
+    const s = await setup();
+    const subscriptionId = await pending(s.h, s.ventureId, s.clientId);
+
+    await paystackPost(s.h, {
+      event: "subscription.create",
+      id: "evt_sub_create",
+      created_at: "2026-09-01T10:00:00.000Z",
+      data: {
+        subscription_code: "SUB_new_001",
+        metadata: { clientId: s.clientId, subscriptionId },
+      },
+    });
+
+    const row = (await subOf(s.h, subscriptionId))!;
+    expect(row.status).toBe("active");
+    expect(row.providerRef).toBe("SUB_new_001");
+  });
+});

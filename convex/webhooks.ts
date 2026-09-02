@@ -137,14 +137,57 @@ export const ingest = internalMutation({
     const payload = (args.payload ?? {}) as Record<string, unknown>;
     const data = (payload.data ?? {}) as Record<string, unknown>;
 
-    // --- attribution -------------------------------------------------------
+    /* --- attribution -------------------------------------------------------
+     *
+     * THREE ROUTES, TRIED IN ORDER OF HOW MUCH THEY PROVE, because no single
+     * one covers the whole life of a subscription.
+     *
+     *   1. The PROVIDER's subscription code. Certain, and useless at the
+     *      start: it does not exist until the customer has paid, so the very
+     *      first `charge.success` has nothing to match on.
+     *   2. OUR reference, handed to Paystack when the checkout was opened and
+     *      echoed on every transaction event for it. This is what links that
+     *      first payment.
+     *   3. The metadata we attached. A second route for the same fact, and
+     *      the one that survives if a payload ever drops the reference.
+     *
+     * Whatever is learned is written back, so the next event has route 1.
+     * Nothing is guessed: anything unmatched still parks.
+     */
     const subscriptionRef = refFrom(data, ["subscription_code", "subscription_id", "id"]);
-    const subscription = subscriptionRef
-      ? await ctx.db
-          .query("subscriptions")
-          .filter((q) => q.eq(q.field("providerRef"), subscriptionRef))
-          .first()
-      : null;
+    const startReference = refFrom(data, ["reference"]);
+    const metadata = (data.metadata ?? {}) as Record<string, unknown>;
+    const metaSubscriptionId =
+      typeof metadata.subscriptionId === "string" ? metadata.subscriptionId : null;
+
+    let subscription: Doc<"subscriptions"> | null = null;
+
+    if (subscriptionRef) {
+      subscription = await ctx.db
+        .query("subscriptions")
+        .withIndex("by_providerRef", (q) => q.eq("providerRef", subscriptionRef))
+        .first();
+    }
+    if (!subscription && startReference) {
+      subscription = await ctx.db
+        .query("subscriptions")
+        .withIndex("by_startReference", (q) => q.eq("startReference", startReference))
+        .first();
+    }
+    if (!subscription && metaSubscriptionId) {
+      subscription = await ctx.db.get(metaSubscriptionId as Id<"subscriptions">).catch(() => null);
+    }
+
+    /*
+     * LEARN THE PROVIDER'S CODE THE FIRST TIME IT APPEARS. Without this the
+     * subscription is only ever reachable through the reference on the
+     * original checkout, and a renewal twelve months later carries a
+     * different transaction reference entirely.
+     */
+    if (subscription && subscriptionRef && !subscription.providerRef) {
+      await ctx.db.patch(subscription._id, { providerRef: subscriptionRef });
+      subscription = { ...subscription, providerRef: subscriptionRef };
+    }
 
     if (!subscription) {
       /*

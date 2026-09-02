@@ -78,6 +78,48 @@ export type MessageDriver = {
   send(message: OutboundMessage): Promise<SendResult>;
 };
 
+/* ----------------------------------------------------------------- sender */
+
+/** Used only when `MESSAGING_EMAIL_FROM` carries a bare address and no name. */
+const PLATFORM_SENDER_NAME = "The Creative Current";
+
+/**
+ * "Renu Solar via The Creative Current <hello@thecreativecurrent.co.za>".
+ *
+ * NOT A DELIVERABILITY WORKAROUND, though it helps with one. It is the
+ * accurate description of what is happening: every client's mail goes out from
+ * our domain, on their behalf, and a From line reading "Renu Solar
+ * <hello@thecreativecurrent.co.za>" says something that is not true of either
+ * party. A display name that does not match its domain is also the shape of a
+ * phishing attempt, which is why receivers weigh it — so stating the
+ * relationship costs nothing and removes the ambiguity for a person and a
+ * filter at the same time. It is the pattern mailing lists use, for exactly
+ * this reason.
+ *
+ * The display name is ALWAYS quoted. Real client names carry commas, full
+ * stops and parentheses — "Renu Solar (Pty) Ltd" — and every one of those is
+ * a special character in an address header. An unquoted name containing one is
+ * not a formatting nitpick; it is a 422 from the provider, or worse, a header
+ * that parses into something other than what was meant.
+ */
+export function viaSender(clientName: string, from: string): string {
+  const match = from.match(/^(.*)<([^>]+)>\s*$/);
+  const address = (match ? match[2]! : from).trim();
+
+  const configuredName = match?.[1]?.trim().replace(/^"(.*)"$/, "$1").trim();
+  const platform = configuredName || PLATFORM_SENDER_NAME;
+
+  const client = clientName.trim();
+  // Our own mail, or a client that shares our name: "X via X" is silly, and
+  // the relationship it would be stating is not one.
+  const display = !client || client === platform ? platform : `${client} via ${platform}`;
+
+  return `${quoted(display)} <${address}>`;
+}
+
+/** RFC 5322 quoted-string. Always quoting is valid and sidesteps atom rules. */
+const quoted = (name: string) => `"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
 /* ------------------------------------------------------------------ email */
 
 /**
@@ -113,13 +155,7 @@ const resendEmail: MessageDriver = {
       };
     }
 
-    /*
-     * The business name in the display name, on OUR verified domain. A client
-     * own domain is not verified with Resend and would be rejected or filed as
-     * spam, so their address belongs in a reply-to once there is one to put
-     * there — not in the envelope sender.
-     */
-    const sender = from.includes("<") ? from : `${message.clientName} <${from}>`;
+    const sender = viaSender(message.clientName, from);
 
     let response: Response;
     try {

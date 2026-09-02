@@ -552,7 +552,17 @@ describe("a prospect is not a customer", () => {
 
     expect(s.booking.confirmation.queued).toBe(true);
     const rows = await messagesIn(h, "booking_confirmation");
-    expect(rows[0]!.status).toBe("scheduled");
+    /*
+     * "scheduled OR holding" rather than "scheduled", because `book` stamps
+     * the real clock and quiet hours are a fact about the wall time the suite
+     * happens to run at. The first version asserted `scheduled` and passed all
+     * day until 20:00 local, which is the worst kind of test: green on every
+     * machine that runs it in working hours.
+     *
+     * What this test is about is the row NOT being suppressed_lead, so that is
+     * what it says.
+     */
+    expect(["scheduled", "holding_quiet_hours"]).toContain(rows[0]!.status);
   });
 
   test("a lookalike domain is not a match", async () => {

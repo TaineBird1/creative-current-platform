@@ -452,6 +452,41 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   dropped. It gates at the DRIVER, not at dispatch, so a held message is still
   queued, claimed, counted and visible — refusing at queue time would hide the
   very rows you turned it on to look at.
+- **THE FROM LINE IS "CLIENT via THE CREATIVE CURRENT", ALWAYS.** Not a
+  deliverability workaround, though it helps with one: every client's mail
+  goes out from OUR domain on their behalf, and a From reading "Renu Solar
+  <hello@thecreativecurrent.co.za>" states something untrue of both parties.
+  A display name that does not match its domain is also the shape of a
+  phishing attempt, which is why receivers weigh it — so saying the
+  relationship out loud settles the ambiguity for a person and a filter at
+  once. It is the pattern mailing lists use, for the same reason.
+  **The display name is always QUOTED.** Real client names carry commas, full
+  stops and parentheses — "Renu Solar (Pty) Ltd" — and every one is a special
+  character in an address header. Unquoted, that is a 422 from the provider or
+  a header that parses into something other than what was meant.
+- **CLIENT #1 IS MADE BY `onboarding.createFirstClient`, WHICH DISARMS
+  ITSELF.** The messaging pipeline cannot be verified against seeded data —
+  `dispatch` refuses it, deliberately — so testing it needs one real client.
+  The tempting shortcut is flipping `isSeed` on the seeded client, which is
+  turning off a guard to pass a test, and a guard turned off for a test stays
+  off because nothing ever reminds anyone. So there is a real-client path
+  instead, and it **refuses once a real client exists**, the same shape as
+  `bootstrap:claimPlatformOwner`: a convenient back door is how the onboarding
+  transaction stays unbuilt. It writes no site, sends no invite and touches no
+  deal — onboarding is still owed.
+  `onboarding.takeFirstBooking` exists because there is no booking screen yet,
+  so without it the pipeline has no reachable entry point outside the test
+  suite — and a pipeline verified only by its own tests is one nobody has
+  watched work. It goes through `createBooking`, not around it.
+- **ONE FUNCTION CREATES A BOOKING: `createBooking` in `bookings.ts`.** `book`
+  is the tenant wrapper over it — it re-derives the tenant and applies
+  `assertLocationAllowed`, which are the parts that are about who is asking.
+  Everything else (overlap, the 24-hour cap, buffers, the confirmation queued
+  in the same transaction) is in the one function, so a second caller gets the
+  identical rules rather than a second implementation that drifts. The insert
+  stays in `bookings.ts`, which is what keeps the `startsAt` guard meaningful.
+  A guard test fails on a caller outside the named allowlist, and on a second
+  `db.insert("bookings")` appearing in the file.
 - **A REPLY HAS SOMEWHERE TO LAND, OR THE COPY DOES NOT ASK FOR ONE.** The
   From address is on a SENDING domain, which may have no MX record — and a
   domain with no MX swallows every reply in silence. A booking confirmation is
@@ -529,7 +564,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 599 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 620 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -809,7 +844,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 599 tests
+pnpm test                        # 620 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

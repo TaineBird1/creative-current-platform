@@ -571,6 +571,39 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   missed cron run recoverable rather than a reminder nobody ever gets.
   `bookings.by_start` exists for this and spans every client; a guard test
   keeps tenant-scoped code off it.
+- **THE DRAIN POLLS, AND POLLING IS THE WRONG SHAPE. NOT A CADENCE KNOB.**
+  *Decided 2 Sep 2026. Deliberately NOT built yet — trigger below.*
+  Every rule in this file says Convex spend must scale with **bookings and
+  admin usage, not with time**. The drain cron is the first thing that does
+  not: at two minutes it runs 720 times a day whether or not a single message
+  exists. With its two internal reads that is ~65k function calls a month per
+  deployment, ~142k across dev and production once the reminder sweeps are
+  counted — a FIXED FLOOR, paid on an empty table. (Arithmetic from the
+  cadence, not an observed bill.)
+  **The fix is architectural: `ctx.scheduler.runAt(scheduledFor, …)` when a
+  message is queued, plus an HOURLY safety sweep.** Then calls scale with
+  MESSAGES, which is the shape everything else here has — and latency
+  *improves*, because a confirmation goes out when it is queued instead of up
+  to two minutes later.
+  **Slowing the poll to five minutes is the tempting fix and it is wrong.** It
+  trades latency for cost, buys a 60% cut in the one direction that does not
+  matter, and leaves calls still scaling with time. Cheaper-but-still-wrong is
+  worse than wrong, because it removes the pressure to fix the shape.
+  The hourly sweep is not belt-and-braces, it is the recoverable half: a
+  scheduled job lost to a deploy, a retry that needs re-scheduling, a message
+  held for quiet hours whose window opens later. Without it a lost schedule is
+  a message nobody ever sends and nobody ever hears about — the exact silent
+  failure this pipeline exists to prevent. Hourly is enough precisely because
+  it is a backstop and not the mechanism.
+  **The REMINDER sweeps stay crons and are not part of this.** They scan
+  BOOKINGS, not messages, and the rule above is why: a scheduled reminder
+  fires for a booking that has since moved or been cancelled. Their cost is
+  ~6k calls a month, which is not the problem.
+  **Trigger: the month we move off the free plan.** Free-plan usage covers
+  this at no cost, and EU deployments bill on demand from the first call with
+  no included usage — so the day the plan changes is the day this stops being
+  free, and it is worth exactly one afternoon then. Two minutes stands until
+  then.
 - **A BOOKING ESTABLISHES A CONTRACT BASIS, NOT A CONSENT ONE.** Before this,
   every confirmation was suppressed for want of consent — a pipeline that ran
   end to end and reached nobody, because the only consent writer was a staff

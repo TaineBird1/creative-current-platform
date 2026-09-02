@@ -371,6 +371,44 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   issue from the CLI until the client half exists. Building the admin table
   first is the tempting order because it is easier and more visible to the
   person building it, which is exactly why it is the wrong one.
+- **PAYSTACK CREATES THE SUBSCRIPTION. WE OPEN A CHECKOUT AND THEN LISTEN.**
+  `subscriptions.start` writes a **pending** row and returns a link;
+  `webhooks.ingest` is the only thing that may say a subscription is active.
+  A row we activate ourselves is a second record of whether money is actually
+  being collected, and the provider's is the one that is true. A guard fails on
+  `status: "active"` in `subscriptions.ts`.
+  **THE AMOUNT COMES FROM THE PLAN, NEVER FROM THE CALLER** — same rule as a
+  quote's total and a deal's probability, with higher stakes: a price a caller
+  can pass is one that eventually gets passed wrongly and then charged monthly
+  to a real card. `plans` is the template; the subscription **snapshots** the
+  amount at start, so editing a plan never re-prices an existing client, the
+  same way an invoice snapshots its issuer. No `amount` is sent to Paystack
+  either — the plan code overrides it, so a number in that request would be a
+  number that is not what gets charged.
+  **DEMO AND SEED CLIENTS ARE NEVER CHARGED.** The same flag the ledger and
+  the messaging pipeline check, checked on the one path that reaches a card.
+- **ATTRIBUTION HAS THREE ROUTES BECAUSE ONE CANNOT COVER THE WHOLE LIFE.**
+  The gap that made the webhook ingest unusable: it matched only on the
+  PROVIDER's subscription code, which does not exist until the customer has
+  paid — so the very first `charge.success` parked as unattributed, for every
+  client, silently, with the money arriving and the ledger staying empty.
+  So a checkout now carries `startReference`, ours, generated before the
+  customer sees anything and echoed on every transaction event; `metadata`
+  carries our ids as a second route; and the provider's code is **learned and
+  written back** the first time it appears, because a renewal a year later
+  carries a completely different transaction reference. Nothing is guessed —
+  anything unmatched still parks, since crediting the wrong client is not
+  recoverable and a row waiting for a human is.
+- **CANCELLING IS LOCAL, AND SAYS SO.** Disabling a Paystack subscription
+  needs an email token fetched from their API. Doing half of it — marking ours
+  cancelled while theirs keeps billing — is the worst outcome available: the
+  client still pays, the screen says they do not, and nobody looks again. So
+  `markCancelled` records the intent and returns a notice naming the
+  subscription to disable in the dashboard.
+  **DUNNING IS NOT BUILT.** `invoice.payment_failed` moves a subscription to
+  `past_due` and stops. Suspension stays explicit-only, because a card
+  declining once is not a decision to cancel and an automatic suspension is a
+  client whose site goes dark over a bank glitch.
 - **THE LEDGER STOPS AT THE DOCUMENT.** The ledger records money that
   actually moved and needs no registered entity to be true — payments,
   refunds, adjustments, reversals, per-client and per-venture totals, all
@@ -776,7 +814,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 678 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 708 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -844,6 +882,7 @@ path locally you need a public tunnel to :3100, not a localhost URL.
 | `MESSAGING_RESEND_KEY` | Resend, Sending access. **Optional but wanted.** Customer-facing mail — confirmations and reminders. Separate from the auth key for the same reason the auth key is separate: "last used" then answers a question. Unset, the outbox falls back to `AUTH_RESEND_KEY`; unset with no fallback either, every email retries five times and lands in the outbox saying so, which is deliberate — an unconfigured deployment must fail visibly rather than decide the message was handled. |
 | `MESSAGING_EMAIL_FROM` | Same shape as `AUTH_EMAIL_FROM`, on a verified domain. A bare address gets the CLIENT's name as its display name; the client's own domain is never the envelope sender, because it is not verified with Resend and would be rejected or filed as spam. |
 | `MESSAGING_REPLY_TO` | A mailbox that actually RECEIVES. Fallback for clients with no `primaryContactEmail`; the client's own address wins where it exists. Unset is survivable and honest — those messages carry no `reply_to` and drop the "reply to this message" line rather than pointing a customer at a domain with no MX. Not the same as `MESSAGING_EMAIL_FROM`, which is a sending address and need not receive anything. |
+| `PAYSTACK_SECRET_KEY` | **Required before anything can be charged.** A `sk_test_` key exercises the whole flow end to end and charges nobody; `sk_live_` needs a bank account on the Paystack account. Unset, `subscriptions.start` refuses with a readable reason and rolls its pending row back — a plausible-looking success here is a checkout link handed to a paying client that goes nowhere. `subscriptions.all` reports the mode, so a screen showing no subscriptions is legible rather than ambiguous. Not the same key as `PAYSTACK_WEBHOOK_SECRET`. |
 | `MESSAGING_ALLOWLIST` | **Required for anything to send at all.** Comma- or space-separated: full addresses, `@domain` entries, or the single token `*` for everybody. **Unset means NOBODY** — see the rule above for why that inversion is deliberate. Check it with `npx convex run health:messagingConfig`, which answers "who does this deployment actually send to" in one line. |
 | `SITES_REVALIDATE_URL` | `https://<sites-origin>/api/revalidate`. Where a config write pushes cache invalidation. Unset is survivable — writes still succeed and sites self-heal within the hour — but every publish looks broken for that hour. |
 | `REVALIDATE_SECRET` | A shared secret, set on BOTH the Convex deployment and the sites Vercel project. The route fails closed if it is unset there, so an unset secret means no revalidation at all rather than an open endpoint. |
@@ -1056,7 +1095,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 678 tests
+pnpm test                        # 708 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

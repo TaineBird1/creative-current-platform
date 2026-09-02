@@ -193,13 +193,55 @@ export const moneyTables = {
     .index("by_providerRef", ["provider", "providerRef"])
     .index("by_webhookEventId", ["webhookEventId"]),
 
+  /**
+   * WHAT A MONTHLY FEE IS, ONCE.
+   *
+   * `subscriptions.plan` was a free string and `clients.packagePreset` another
+   * one, which is two opinions about what a client pays and no source for
+   * either. A plan is the template; the subscription SNAPSHOTS its amount at
+   * the moment it starts, the same way an invoice snapshots the issuer — a
+   * price rise must not silently rewrite what an existing client agreed to.
+   *
+   * `providerPlanCode` mirrors a plan created in Paystack's own dashboard.
+   * Paystack owns the billing schedule, so the code here is a pointer to
+   * theirs rather than a second definition of it: an interval stored here and
+   * a different one there would bill on a cadence nobody chose.
+   */
+  plans: defineTable({
+    ventureId: v.id("ventures"),
+    /** Stable, ours, and never shown to a client. */
+    key: v.string(),
+    name: v.string(),
+    amountCents: v.number(),
+    currency,
+    interval: v.union(v.literal("monthly"), v.literal("annually")),
+    provider: v.union(v.literal("paystack"), v.literal("paddle")),
+    /** The plan code from the provider's dashboard. Absent = cannot be sold. */
+    providerPlanCode: v.optional(v.string()),
+    active: v.boolean(),
+  })
+    .index("by_key", ["key"])
+    .index("by_venture_active", ["ventureId", "active"]),
+
   subscriptions: defineTable({
     ventureId: v.id("ventures"),
     clientId: v.id("clients"),
+    planId: v.optional(v.id("plans")),
     plan: v.string(),
     amountCents: v.number(),
     currency,
     provider: v.union(v.literal("paystack"), v.literal("paddle")),
+    /**
+     * OUR reference, handed to the provider when the checkout was opened and
+     * echoed back on every transaction event for it.
+     *
+     * It exists because `providerRef` cannot do this job at the start: it
+     * holds the PROVIDER's subscription code, which does not exist until the
+     * customer has paid — so the very first `charge.success` has nothing to
+     * match against and parks as unattributed, forever. A reference we
+     * generate is known before the customer opens the page.
+     */
+    startReference: v.optional(v.string()),
     providerRef: v.optional(v.string()),
     status: v.union(v.literal("pending"), v.literal("active"), v.literal("past_due"), v.literal("cancelled")),
     nextBillingAt: v.optional(v.number()),
@@ -214,7 +256,10 @@ export const moneyTables = {
     lastEventAt: v.optional(v.number()),
   })
     .index("by_client", ["clientId"])
-    .index("by_status_nextBilling", ["status", "nextBillingAt"]),
+    .index("by_status_nextBilling", ["status", "nextBillingAt"])
+    /* The two routes a webhook has to find its subscription by. */
+    .index("by_startReference", ["startReference"])
+    .index("by_providerRef", ["providerRef"]),
 
   /** Part 5.4 — attributable to a venture, optionally a client or property. */
   expenses: defineTable({

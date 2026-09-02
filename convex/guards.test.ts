@@ -802,6 +802,101 @@ describe("the preview harness cannot exist in production", () => {
   });
 });
 
+describe("the monthly fee", () => {
+  /**
+   * The path that reaches a real card, monthly, without anybody touching it.
+   * Every rule here is about a mistake that keeps charging.
+   */
+  const STARTER = "subscriptions.ts";
+  const INGEST = "webhooks.ts";
+
+  test("only lib/paystack.ts talks to Paystack", () => {
+    /*
+     * One seam, same as lib/providers.ts. A second caller is a second place
+     * that can forget the missing-key refusal and hand somebody a checkout
+     * link that goes nowhere.
+     */
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === "lib/paystack.ts") continue;
+      if (/api\.paystack\.co/.test(file.code)) {
+        offenders.push(`${file.path}: calls the Paystack API directly`);
+      }
+    }
+    expect(offenders, "Paystack is reached through lib/paystack.ts and nowhere else.").toEqual([]);
+  });
+
+  test("THE SUBSCRIPTION AMOUNT IS NEVER TAKEN FROM THE CALLER", () => {
+    /*
+     * Same rule as a quote's total and a deal's probability, and the stakes
+     * are higher: a price a caller can pass is a price that will eventually be
+     * passed wrongly, and this one is charged every month to a real card until
+     * somebody notices.
+     */
+    const starter = sourceFiles.find((f) => f.path === STARTER);
+    const args = starter?.code.match(/export const start = platformAction\(\{[\s\S]*?\}\,/)?.[0] ?? "";
+
+    expect(starter, "subscriptions.ts is missing").toBeDefined();
+    expect(
+      /amountCents/.test(args),
+      [
+        "subscriptions.start must not accept an amount. It comes from the plan,",
+        "and the subscription snapshots it — a caller-supplied price is one that",
+        "gets passed wrongly and then charged monthly.",
+      ].join("\n"),
+    ).toBe(false);
+  });
+
+  test("A DEMO OR SEED CLIENT CAN NEVER BE SUBSCRIBED", () => {
+    // The same flag the ledger and the messaging pipeline check, checked on
+    // the path that reaches a card. The demo regime exists so a business who
+    // never signed up cannot be billed by a mistake in our code.
+    const starter = sourceFiles.find((f) => f.path === STARTER);
+    expect(
+      /isDemo\s*\|\|\s*\w+\.isSeed/.test(starter?.code ?? ""),
+      "subscriptions.ts must refuse a demo or seed client before opening a checkout.",
+    ).toBe(true);
+  });
+
+  test("only subscriptions.ts and the webhook write the subscriptions table", () => {
+    /*
+     * Two writers, and they own different halves: this side opens a checkout
+     * and writes a PENDING row; the webhook is the only thing that may say a
+     * subscription is active, because the provider is the only party that
+     * knows whether money is actually being collected.
+     */
+    const WRITERS = new Set([STARTER, INGEST]);
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (WRITERS.has(file.path)) continue;
+      if (/db\.(insert|patch|replace)\(\s*"?subscriptions/.test(file.code)) {
+        offenders.push(`${file.path}: writes subscriptions`);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "A subscription is opened by subscriptions.ts and activated only by",
+        "webhooks.ts. A third writer is a second opinion about whether a client",
+        "is being billed, and the provider's is the one that is true.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("nothing activates a subscription except a webhook", () => {
+    const starter = sourceFiles.find((f) => f.path === STARTER);
+    expect(
+      /status:\s*"active"/.test(starter?.code ?? ""),
+      [
+        "subscriptions.ts must not set a subscription active. Nothing is active",
+        "until Paystack says so — a row we activate ourselves is a second record",
+        "of whether the money is being collected, and theirs is the one that",
+        "matters.",
+      ].join("\n"),
+    ).toBe(false);
+  });
+});
+
 describe("conversion is one transaction", () => {
   /**
    * WON MEANS THEY SAID YES. CONVERTED MEANS THEY EXIST.

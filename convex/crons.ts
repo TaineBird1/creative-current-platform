@@ -26,6 +26,23 @@ const crons = cronJobs();
  * is not cheap enough to run every ten seconds, and nothing here needs that —
  * the reminders are hours-granular and the confirmation is the only message
  * anyone is actually waiting on.
+ *
+ * DO NOT "FIX" THE COST BY RAISING THIS NUMBER.
+ *
+ * Polling is the wrong shape, and that is a different problem from the
+ * interval being short. At two minutes this runs 720 times a day whether or
+ * not a message exists, so calls scale with TIME — and every other rule in
+ * this codebase says Convex spend scales with bookings and admin usage.
+ * Slowing it to five minutes trades latency for cost, buys a cut in the one
+ * direction that does not matter, and leaves calls still scaling with time.
+ * Cheaper-but-still-wrong is worse than wrong: it removes the pressure to fix
+ * the shape.
+ *
+ * The right fix is `ctx.scheduler.runAt(scheduledFor, …)` where a message is
+ * QUEUED, plus an hourly safety sweep here for anything that lost its
+ * schedule. Calls then scale with messages, and latency improves rather than
+ * degrades. See CLAUDE.md — decided 2 Sep 2026, deliberately not built, and
+ * the trigger is the month we move off the free plan.
  */
 crons.interval("drain the outbox", { minutes: 2 }, internal.outbox.drain, {});
 

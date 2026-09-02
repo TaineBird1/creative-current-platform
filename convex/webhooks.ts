@@ -107,6 +107,9 @@ export const ingest = internalMutation({
      */
     const occurredAt = args.occurredAt;
 
+    /** Statuses where a person has to read what arrived. See the schema. */
+    const NEEDS_THE_PAYLOAD = ["unattributed", "refused"];
+
     const record = async (
       status: Doc<"webhookEvents">["status"],
       extra: {
@@ -123,6 +126,9 @@ export const ingest = internalMutation({
         occurredAt: occurredAt ?? args.receivedAt,
         receivedAt: args.receivedAt,
         status,
+        // Shape always; contents only where somebody has to reconcile it.
+        payloadKeys: shapeOf(args.payload),
+        payload: NEEDS_THE_PAYLOAD.includes(status) ? args.payload : undefined,
         ...extra,
       });
       return { status, eventId: args.eventId };
@@ -380,4 +386,33 @@ function refusalCode(error: unknown): string | null {
   const data = (error as { data?: unknown })?.data;
   const code = (data as { code?: unknown })?.code;
   return typeof code === "string" && LEDGER_REFUSALS.has(code) ? code : null;
+}
+
+/**
+ * THE KEYS THAT ARRIVED, NEVER THE VALUES.
+ *
+ * `["data.metadata", "data.reference", "event"]` — enough to settle what a
+ * provider actually sends, which their documentation is often vague about and
+ * which otherwise gets answered by whoever happens to be reading the logs when
+ * a rare event lands. Values are never included, so this is safe to keep on
+ * every event forever: there is no personal information in a list of field
+ * names.
+ *
+ * Two levels deep and sorted. Deeper would start describing card objects and
+ * customer records in enough detail to be a fingerprint, and the questions
+ * worth asking are all about the top of the payload.
+ */
+function shapeOf(payload: unknown): string[] | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+
+  const keys = new Set<string>();
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    keys.add(key);
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      for (const nested of Object.keys(value as Record<string, unknown>)) {
+        keys.add(`${key}.${nested}`);
+      }
+    }
+  }
+  return [...keys].sort();
 }

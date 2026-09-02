@@ -60,6 +60,37 @@ export const webhookTables = {
     ),
     /** Why it landed in that status, in words a human can act on. */
     note: v.optional(v.string()),
+    /**
+     * THE SHAPE OF WHAT ARRIVED, WITHOUT WHAT WAS IN IT.
+     *
+     * Key names only — `data.metadata`, `data.reference` — never values. It
+     * answers the structural questions a provider's documentation is vague
+     * about ("does subscription.create carry metadata?") from data rather
+     * than from somebody happening to be watching the logs when it lands,
+     * and it carries no personal information at all, so it can be kept for
+     * every event without a retention argument.
+     */
+    payloadKeys: v.optional(v.array(v.string())),
+    /**
+     * THE WHOLE PAYLOAD, AND ONLY FOR THE EVENTS A HUMAN MUST RECONCILE.
+     *
+     * The note on `unattributed` above has always said such an event is
+     * "parked with the payload intact". It was not: nothing stored it, so
+     * reconciling one meant going to the provider's dashboard with an event
+     * id, which is precisely the "somebody has to go and look somewhere else"
+     * that parking is supposed to avoid.
+     *
+     * Kept for `unattributed` and `refused` only. Those are money we could
+     * not place and money a rule turned away — the two cases where the answer
+     * is in the payload and a person has to read it. An applied event needs
+     * nothing: its effects are rows.
+     *
+     * That restriction is also the POPIA answer. A charge payload carries a
+     * customer's email and card metadata, so keeping every one of them
+     * forever is a data-retention decision nobody made. Keeping the handful
+     * that are broken is a working note.
+     */
+    payload: v.optional(v.any()),
     clientId: v.optional(v.id("clients")),
     subscriptionId: v.optional(v.id("subscriptions")),
     paymentId: v.optional(v.id("payments")),

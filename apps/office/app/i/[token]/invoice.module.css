@@ -145,6 +145,22 @@
 
 /* ---------- the lines ------------------------------------------------ */
 
+/*
+ * THE TABLE SCROLLS, THE PAGE DOES NOT.
+ *
+ * Four columns of mono figures do not fit a 375px phone once a description is
+ * long or an amount reaches six figures, and the failure is the worst kind
+ * available on this document: the AMOUNT column goes off-screen and the reader
+ * cannot see what they owe. Tightening the spacing buys headroom; it does not
+ * make the problem impossible, so the container absorbs what is left rather
+ * than the body scrolling sideways under the whole invoice.
+ */
+.linesWrap {
+  overflow-x: auto;
+  /* A trimmed focus ring on a scrollable region reads as a rendering fault. */
+  padding-bottom: 2px;
+}
+
 .lines {
   width: 100%;
   border-collapse: collapse;
@@ -173,12 +189,28 @@
  * Every figure is mono with tabular numerals, so a column of rand amounts
  * aligns on the decimal. That is the whole reason DESIGN.md picked a mono for
  * data — it is measurement, not costume.
+ *
+ * SCOPED TO .lines DELIBERATELY, and this is not tidiness. Bare `.num` is
+ * (0,1,0) and `.lines td` above is (0,1,1), so the element selector won and
+ * EVERY money column rendered left-aligned — on the one document where a
+ * column of rands has to align on the decimal. Nothing errored and the markup
+ * was right; the cascade quietly threw the alignment away. Found by looking at
+ * the preview harness, which is the entire argument for having one.
  */
-.num {
+.lines .num {
   text-align: right;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  /*
+   * A figure never touches the label to its left. `Total` and the amount sat
+   * flush against each other and read as one word — `TotalR 13 500,00`.
+   *
+   * 2xs, not s. At 1rem across three numeric columns this added 48px and put
+   * the table over a 375px viewport, which hid the AMOUNT column on a phone.
+   * The separation only has to be legible, not generous.
+   */
+  padding-left: var(--space-2xs);
 }
 
 .lines tfoot th {
@@ -198,6 +230,83 @@
 
 .totalRow td {
   font-weight: 600;
+}
+
+/*
+ * NARROW SCREENS GET THE WHOLE TABLE, not a scrollbar.
+ *
+ * The container above guarantees the PAGE never scrolls sideways. It does not
+ * guarantee the reader can see the AMOUNT column, and on this document that is
+ * the number they opened it for — a horizontal scrollbar under the one figure
+ * that matters is a design that technically fits and practically does not.
+ *
+ * Four mono columns overrun a 375px phone by about seventeen pixels. Half a
+ * step of type across the numeric columns is enough, and no token below
+ * --step--1 exists, so this is a local ratio rather than a new scale entry:
+ * inventing a --step--2 for one table would put a size in the design system
+ * that nothing else asked for.
+ */
+/*
+ * The restated `5 x R 600,00`. Present in the markup always, shown only when
+ * the columns it replaces are hidden.
+ */
+.rateInline {
+  display: none;
+}
+
+@media (max-width: 30rem) {
+  .lines {
+    font-size: 0.82rem;
+  }
+
+  .lines th,
+  .lines td {
+    padding: var(--space-2xs) 0;
+  }
+
+  /*
+   * TWO COLUMNS, NOT FOUR. Qty and Unit are wide mono figures, and on a phone
+   * they crowd AMOUNT off the edge — leaving the reader swiping to find the
+   * one number they opened the document for. Tightening type and padding
+   * bought pixels and never quite enough; removing a column is decisive.
+   *
+   * The figures are not lost, they move: `.rateInline` restates them under
+   * the description, so how a line was arrived at is still on the document.
+   */
+  .rateCol {
+    display: none;
+  }
+
+  .rateInline {
+    display: block;
+    margin-top: 2px;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.95em;
+    color: var(--text-muted);
+  }
+
+  /*
+   * The footer labels span the three columns before AMOUNT. With two of them
+   * gone the span is wrong, and an over-long colspan pushes the total figure
+   * out of its own column.
+   */
+  .lines tfoot th[colspan] {
+    /* One remaining label column; the browser clamps a too-large span, but
+       stating it keeps the layout from depending on that leniency. */
+    text-align: left;
+  }
+}
+
+@media print {
+  /* Paper is wide. The columns come back whatever the screen was. */
+  .rateCol {
+    display: table-cell;
+  }
+
+  .rateInline {
+    display: none;
+  }
 }
 
 /* ---------- how to pay ----------------------------------------------- */
@@ -343,5 +452,15 @@
   .footer {
     /* The instruction is about the live page. On paper it is noise. */
     display: none;
+  }
+
+  /*
+   * Paper has no scrollbar. An overflow container that scrolls on screen
+   * CLIPS on paper, so a wide table would print with its amounts cut off —
+   * the exact failure the container exists to prevent, arriving through the
+   * fix for it.
+   */
+  .linesWrap {
+    overflow-x: visible;
   }
 }

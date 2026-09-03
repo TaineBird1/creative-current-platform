@@ -1,6 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { byName } from "./lib/ordering";
-import { ownerMutation, platformQuery } from "./lib/functions";
+import { ownerMutation, platformQuery, tenantQuery } from "./lib/functions";
+import { safeParseSiteConfig, type AccentRamp } from "@cc/site-config";
 import { currency } from "./tables/tenants";
 
 /**
@@ -136,5 +137,61 @@ export const createExternal = ownerMutation({
     });
 
     return { clientId, name, ventureId: args.ventureId };
+  },
+});
+
+
+/**
+ * A CLIENT'S OWN BRAND, FOR A CALLER WHO IS ALREADY INSIDE.
+ *
+ * This replaces `public/brand.forSignIn`, which was UNAUTHENTICATED and is
+ * now deleted. That function answered "does this slug belong to a Creative
+ * Current client, and what are they called" to anybody who asked, which made
+ * the office origin an enumeration oracle: run a wordlist of KZN solar
+ * installers against it and you have the client roster.
+ *
+ * The per-item disclosure was fine and the old comment said so honestly — a
+ * client's name and brand colour are already on their public website. The
+ * aggregate is the problem, and it is a different problem: the LIST of who
+ * pays us is precisely the asset the outreach engine exists to build, and it
+ * was readable by a stranger one HTTP request at a time.
+ *
+ * So the brand is tenant-scoped now. `tenantQuery` re-derives the caller's
+ * membership from their own rows, so an unknown slug and a slug you have no
+ * membership for are indistinguishable — which is the same answer the rest of
+ * the tenant surface gives.
+ *
+ * "staff" tier: everyone who can open the back office sees its branding.
+ */
+export type ClientBrand = {
+  name: string;
+  colour: string | null;
+  /*
+   * The real ramp type, not `unknown`. `accentStyle` indexes every step, so a
+   * loose type here compiles under `tsc -p tsconfig.json` and fails inside
+   * `next build`, which type-checks the JSX that consumes it — two checks that
+   * do not see the same thing, and only the second one runs in the app.
+   */
+  accent: AccentRamp | null;
+};
+
+export const brand = tenantQuery("staff")({
+  args: {},
+  handler: async (ctx): Promise<ClientBrand> => {
+    const client = await ctx.db.get(ctx.tenant.clientId);
+    if (!client) throw new ConvexError({ code: "NOT_FOUND", message: "Not found" });
+
+    const site = await ctx.db
+      .query("sites")
+      .withIndex("by_client", (q) => q.eq("clientId", ctx.tenant.clientId))
+      .first();
+
+    const parsed = site?.publishedConfig ? safeParseSiteConfig(site.publishedConfig) : null;
+
+    return {
+      name: client.name,
+      colour: client.brandColour ?? null,
+      accent: parsed?.success ? parsed.data.brand.accent : null,
+    };
   },
 });

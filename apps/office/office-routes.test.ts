@@ -203,6 +203,92 @@ describe("the sign-in paths", () => {
   });
 });
 
+describe("the preview entry's claim is checked, not asserted", () => {
+  /*
+   * `preview-harness` sits in the public route list with the reason "cannot
+   * exist in a production build at all". That is the single most load-bearing
+   * sentence in the table — it is why a route rendering a tenant's customer
+   * names and invoice amounts is allowed to be public — and until CI read a
+   * real build it was a claim verified by eye, once.
+   *
+   * This asserts the check RUNS. The check itself lives in
+   * scripts/assert-no-preview-route.mjs and its negative control is a build
+   * with ALLOW_PREVIEW_ROUTES=1, which it catches in both Next manifests.
+   */
+  const ci = readFileSync(join(OFFICE_DIR, "..", "..", ".github", "workflows", "ci.yml"), "utf8");
+
+  test("CI runs the build-output guard", () => {
+    expect(ci.length, "ci.yml is empty or missing").toBeGreaterThan(1000);
+    expect(
+      ci,
+      "CI must run scripts/assert-no-preview-route.mjs. Without it, " +
+        "'cannot exist in a production build' is a comment.",
+    ).toContain("scripts/assert-no-preview-route.mjs");
+  });
+
+  test("AFTER the office build, or it reads nothing", () => {
+    const build = ci.indexOf("pnpm --filter @cc/office build");
+    const guard = ci.indexOf("scripts/assert-no-preview-route.mjs");
+    expect(build, "the office build step has moved or been renamed").toBeGreaterThan(-1);
+    expect(
+      guard > build,
+      "The guard reads .next/, so it must run after the build. Before it, " +
+        "it fails on a missing build — which is correct, and means CI never " +
+        "reaches the assertion it exists for.",
+    ).toBe(true);
+  });
+
+  test("the script refuses a missing build rather than passing", () => {
+    const script = readFileSync(
+      join(OFFICE_DIR, "..", "..", "scripts", "assert-no-preview-route.mjs"),
+      "utf8",
+    );
+    expect(script).toContain("No build found");
+    // A manifest that parsed to nothing would satisfy "no preview route".
+    expect(script).toContain("MUST_CONTAIN");
+  });
+});
+
+describe("the client door does not enumerate the roster", () => {
+  /*
+   * `/c/<slug>/sign-in` used to fetch the client's name and accent ramp before
+   * authenticating, so it rendered their brand. The per-item disclosure was
+   * defensible — a name and a colour are on the business's own website — and
+   * the unit of analysis was wrong. What a branded door discloses is
+   * MEMBERSHIP, and the aggregate of those answers is the client roster,
+   * buildable by pointing a wordlist of local installers at this path. That
+   * list is exactly what the outreach engine exists to construct.
+   *
+   * Measured after the change: the rendered document is byte-identical for a
+   * real client and two unknown slugs. These guards keep it that way.
+   */
+  const signIn = read("app/c/[slug]/sign-in/page.tsx");
+
+  test("IT MAKES NO QUERY AT ALL", () => {
+    expect(signIn.raw.length, "the client sign-in page is missing").toBeGreaterThan(200);
+    for (const forbidden of ["fetchQuery", "useQuery", "convex/nextjs", "convex/react"]) {
+      expect(
+        signIn.code,
+        `The client sign-in page calls ${forbidden}. Any per-slug lookup before ` +
+          "authentication makes this page an oracle for whether a business is a " +
+          "client, and a wordlist turns that into the roster.",
+      ).not.toContain(forbidden);
+    }
+  });
+
+  test("and renders nothing that could differ by slug", () => {
+    // businessName/accent are the two props that carried the branding.
+    expect(signIn.code).not.toContain("businessName");
+    expect(signIn.code).not.toContain("accent");
+  });
+
+  test("the slug is still used for the post-sign-in redirect", () => {
+    // Not a leak: the visitor typed that URL, so being sent back to it proves
+    // only that they typed it. Dropping it would land a client on /admin.
+    expect(signIn.code).toContain("redirectTo");
+  });
+});
+
 describe("there is one source, and the middleware is not a second one", () => {
   test("the middleware asks the module rather than matching paths itself", () => {
     expect(middleware.code).toContain("./lib/public-routes");

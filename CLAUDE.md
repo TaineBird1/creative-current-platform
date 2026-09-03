@@ -903,6 +903,48 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   because a harness that can be pointed at a real tenant is the thing all of
   the above exists to prevent. Run it with
   `ALLOW_PREVIEW_ROUTES=1 pnpm --filter @cc/office dev`.
+- **THE SIGN-IN DOOR IS UNBRANDED, AND THAT IS A TRADE RATHER THAN AN
+  OVERSIGHT.** `/c/<slug>/sign-in` used to fetch the client's name and accent
+  ramp before authenticating. The disclosure was argued per-item and the
+  argument was sound at that unit — a name and a brand colour are already on
+  the business's own public website. The UNIT WAS WRONG. What a branded door
+  discloses is MEMBERSHIP, and the aggregate of those answers is the client
+  roster: point a wordlist of KZN solar installers at that path and read which
+  ones come back branded. That list is precisely the artefact the outreach
+  engine exists to build, and the one a competitor would most want.
+  A branded pre-auth door and an unenumerable one are mutually exclusive, so
+  the branding is what goes. `public/brand.ts` is DELETED, not just unused — a
+  live endpoint nothing calls is still an oracle anyone can call — and a guard
+  bans any public function resolving `clients` by slug. `public/site.ts`
+  resolving a SITE by slug stays: a published website's existence is public by
+  definition; the roster is not. The back office is still fully white-labelled
+  through `clients.brand`, which is tenant-scoped. Measured: the rendered
+  document is byte-identical for a real client and two unknown slugs.
+- **THE PREVIEW HARNESS'S CLAIM IS CHECKED AGAINST A BUILD, NOT A COMMENT.**
+  `scripts/assert-no-preview-route.mjs` reads the office's route manifests in
+  CI, after the build. The three existing barriers were all asserted against
+  SOURCE — a claim about what a build WILL do, verified from its inputs — and
+  a source scan cannot see a Next version that changes `pageExtensions`, a
+  dependency that injects routes, or a stray `page.tsx` under a directory it
+  does not walk. It fails if there is no build to read rather than passing on
+  an absence, and names routes the manifest MUST contain, because a manifest
+  parsing to nothing satisfies "no /preview route" perfectly. Negative
+  control: a build with `ALLOW_PREVIEW_ROUTES=1` is caught in both manifests.
+- **THE INVOICE HAS A FIXTURE, AND IT FOUND THREE REAL BUGS.**
+  `/preview/invoice` renders `InvoiceDocument` — the SAME component `/i/<token>`
+  renders, which is why the document was split out of the page. A harness that
+  renders a COPY of the markup stops telling the truth the first time somebody
+  edits one of the two, silently. Fixtures are `@example.com` and round
+  numbers no quote would produce, so an escaped screenshot cannot be mistaken
+  for a real invoice and nobody can pay into the account on it.
+  What it caught, none of which was visible in source: `.num` at (0,1,0) lost
+  to `.lines td` at (0,1,1), so EVERY money column rendered left-aligned on
+  the one document where rands must align on the decimal; `Total` and its
+  amount sat flush and read as `TotalR 13 500,00`; and four mono columns
+  pushed AMOUNT off a 375px phone — the number the reader opened it for. On
+  narrow screens qty and unit now fold under the description and come back for
+  print. `pnpm dev:preview` starts it (the documented POSIX env-var form does
+  not run in PowerShell, which is the shell this repo is developed in).
 - Every screen goes through the `impeccable` skill. Tokens only.
 - Never mark anything done without a deployed preview URL and a human tapping
   it on a real phone.

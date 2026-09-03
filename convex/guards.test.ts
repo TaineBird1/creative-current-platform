@@ -651,6 +651,57 @@ describe("the send choke point", () => {
   });
 });
 
+describe("the office origin does not enumerate the client roster", () => {
+  /*
+   * `public/brand.ts` used to answer "is this slug a Creative Current client,
+   * and what are they called" to anybody who asked, so the branded sign-in
+   * door could render before authentication.
+   *
+   * The disclosure was argued per-item and the argument was sound at that
+   * unit: a name and a brand colour are already on the client's own public
+   * website. The WRONG UNIT was the point. What the door disclosed was
+   * MEMBERSHIP, and the aggregate of those answers is the client roster —
+   * buildable by anybody with a wordlist of local installers, which is
+   * exactly the artefact the outreach engine exists to produce.
+   *
+   * So the pre-auth branding is gone and the query with it. These guards stop
+   * either coming back: a public function that resolves a client by slug is
+   * the oracle whatever it is called.
+   */
+  test("NO PUBLIC FUNCTION LOOKS A CLIENT UP BY SLUG", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (!file.path.startsWith("public/")) continue;
+      /*
+       * `public/site.ts` resolving a SITE by slug is correct and must keep
+       * working — that is a published website, and its existence is public by
+       * definition. The `clients` table is the roster.
+       */
+      if (/query\("clients"\)[\s\S]{0,200}by_slug/.test(file.code)) {
+        offenders.push(file.path);
+      }
+    }
+    expect(
+      offenders,
+      [
+        "A public, unauthenticated function resolves the clients table by slug.",
+        "That makes app.thecreativecurrent.co.za an enumeration oracle: a",
+        "wordlist of local businesses becomes the client roster, one request",
+        "at a time. Client branding belongs behind a membership check —",
+        "see clients.brand.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("and the deleted brand query has not come back", () => {
+    expect(
+      sourceFiles.map((f) => f.path),
+      "public/brand.ts was deleted because it was the oracle. Reintroducing " +
+        "it needs the argument in this describe block answered first.",
+    ).not.toContain("public/brand.ts");
+  });
+});
+
 describe("the preview harness cannot exist in production", () => {
   /**
    * `apps/office/app/preview/**` renders the shape of a TENANT'S BOOKINGS —

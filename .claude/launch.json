@@ -2,23 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "sites",
+      "name": "office-preview",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": [
-        "--filter",
-        "@cc/sites",
-        "dev"
-      ],
-      "port": 3100
-    },
-    {
-      "name": "office",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": [
-        "--filter",
-        "@cc/office",
-        "dev"
-      ],
+      "runtimeArgs": ["run", "dev:preview"],
       "port": 3200
     }
   ]

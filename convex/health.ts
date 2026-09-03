@@ -1,4 +1,5 @@
 import { internalQuery } from "./_generated/server";
+import { importPKCS8, importJWK, SignJWT, jwtVerify, type JWK } from "jose";
 import { LIVE_CHANNELS, sendAllowlist } from "./lib/providers";
 import { paystackMode } from "./lib/paystack";
 import type { Id } from "./_generated/dataModel";
@@ -13,11 +14,120 @@ import type { Id } from "./_generated/dataModel";
  * in" and "the back office says not found", which look like application bugs
  * and were debugged as such for an hour.
  *
+ * THE PAIR LINE IS THE ONE THAT ANSWERS THE QUESTION. Every other line here
+ * checks one value in ISOLATION — JWKS parses, the private key is a
+ * well-formed PKCS8 PEM — and two individually perfect halves that do not
+ * match each other is the failure this check exists for. It cannot be seen
+ * from either value alone, it does not error when the variables are set, and
+ * it locks out the owner, every client and every client's back office at once
+ * while all three lines above it read `ok`.
+ *
+ * A half-rotation produces exactly that: JWKS from one keypair, the private
+ * key from another. So this signs a throwaway token with the deployed private
+ * key and verifies it against the deployed JWKS. Nothing else proves they
+ * belong together.
+ *
  * Run it after setting the vars on any deployment, and before believing that
  * a broken sign-in is your code:
  *
  *   npx convex run health:authConfig
  */
+
+/**
+ * Rebuild a PKCS8 PEM from however it is stored.
+ *
+ * `gen-auth-keys.mjs` writes the PEM with newlines replaced by SPACES, because
+ * Convex wants a single-line value. `importPKCS8` wants the real thing back.
+ * Rebuilt from the base64 body rather than by swapping spaces for newlines, so
+ * it works whichever form the variable holds.
+ */
+function toPkcs8Pem(stored: string): string | null {
+  const match = stored.match(
+    /-----BEGIN PRIVATE KEY-----([\s\S]*?)-----END PRIVATE KEY-----/,
+  );
+  if (!match) return null;
+  const body = (match[1] ?? "").replace(/\s+/g, "");
+  if (!body) return null;
+  const wrapped = body.match(/.{1,64}/g) ?? [];
+  return `-----BEGIN PRIVATE KEY-----\n${wrapped.join("\n")}\n-----END PRIVATE KEY-----`;
+}
+
+/**
+ * Do the deployed private key and the deployed JWKS belong to each other?
+ *
+ * Signs a throwaway JWT and verifies it. The token carries no claims worth
+ * having, is never returned, and never leaves this function — it exists only
+ * so that a real signature has to verify against a real public key.
+ *
+ * NO `iat` AND NO `exp`, deliberately: they would make the answer depend on
+ * the clock, and this question has nothing to do with time. The token is
+ * created and checked in the same breath.
+ *
+ * EVERY KEY IN THE SET IS TRIED, not just the first. A JWKS may legitimately
+ * carry more than one during a rotation, and "the private key matches one of
+ * them" is the true condition — checking only `keys[0]` would report a
+ * mismatch for a perfectly working deployment mid-rotation.
+ *
+ * NOTHING SECRET IS RETURNED. The result is a sentence about whether two
+ * values agree; neither value, nor the token, nor any part of them appears in
+ * it — including in the failure paths, where an error message could otherwise
+ * carry key material.
+ */
+async function pairStatus(
+  privateKeyRaw: string | undefined,
+  jwksRaw: string | undefined,
+): Promise<string> {
+  if (!privateKeyRaw || !jwksRaw) {
+    return "UNCHECKABLE — both JWKS and JWT_PRIVATE_KEY must be set";
+  }
+
+  const pem = toPkcs8Pem(privateKeyRaw);
+  if (!pem) return "UNCHECKABLE — JWT_PRIVATE_KEY is not a PKCS8 PEM";
+
+  let keys: JWK[];
+  try {
+    const parsed = JSON.parse(jwksRaw);
+    if (!Array.isArray(parsed?.keys) || parsed.keys.length === 0) {
+      return "UNCHECKABLE — JWKS has no `keys` array";
+    }
+    keys = parsed.keys as JWK[];
+  } catch {
+    return "UNCHECKABLE — JWKS is not valid JSON";
+  }
+
+  let token: string;
+  try {
+    const privateKey = await importPKCS8(pem, "RS256");
+    token = await new SignJWT({ sub: "health:pair-check" })
+      .setProtectedHeader({ alg: "RS256" })
+      .sign(privateKey);
+  } catch {
+    /*
+     * Deliberately not echoing the thrown message. An import failure can
+     * quote the material it failed on, and this function's output is pasted
+     * into terminals and tickets.
+     */
+    return "UNCHECKABLE — JWT_PRIVATE_KEY could not be imported as an RS256 key";
+  }
+
+  for (let i = 0; i < keys.length; i += 1) {
+    try {
+      const publicKey = await importJWK({ ...keys[i]!, alg: "RS256" }, "RS256");
+      await jwtVerify(token, publicKey);
+      return keys.length === 1
+        ? "ok — a token signed with JWT_PRIVATE_KEY verifies against JWKS"
+        : `ok — verifies against key ${i + 1} of ${keys.length} in JWKS`;
+    } catch {
+      // Try the next key; only the whole loop failing is a mismatch.
+    }
+  }
+
+  return (
+    "MISMATCH — JWT_PRIVATE_KEY does not match any key in JWKS. " +
+    "Both are individually well-formed and sign-in WILL fail for everybody. " +
+    "Set them together: node scripts/set-auth-keys.mjs"
+  );
+}
 export const authConfig = internalQuery({
   args: {},
   handler: async () => {
@@ -39,6 +149,11 @@ export const authConfig = internalQuery({
     }
 
     return {
+      /*
+       * FIRST, because it is the line that answers the question. The three
+       * below it can all read `ok` while sign-in is comprehensively broken.
+       */
+      PAIR: await pairStatus(process.env.JWT_PRIVATE_KEY, process.env.JWKS),
       JWKS: jwksStatus,
       JWT_PRIVATE_KEY: process.env.JWT_PRIVATE_KEY
         ? process.env.JWT_PRIVATE_KEY.startsWith("-----BEGIN PRIVATE KEY-----")

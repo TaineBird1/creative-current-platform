@@ -25,7 +25,15 @@ export default async function BackOffice({
   const { slug } = await params;
   const token = await convexAuthNextjsToken();
 
-  const brand = await fetchQuery(api.public.brand.forSignIn, { slug }).catch(() => null);
+  /*
+   * TENANT-SCOPED, not the old public brand query — which was an
+   * unauthenticated slug->client oracle and is deleted. The caller here is
+   * already authenticated and already has a membership, so `clients.brand`
+   * answers from their own tenant and refuses everybody else.
+   */
+  const brand = await fetchQuery(api.clients.brand, { clientSlug: slug }, { token }).catch(
+    () => null,
+  );
 
   // A blanket `.catch(() => null)` here conflates two completely different
   // things: "you have no access" (correct, expected, shows Not found) and

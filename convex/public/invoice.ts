@@ -1,5 +1,5 @@
 import { v, ConvexError } from "convex/values";
-import { query } from "../_generated/server";
+import { query, type QueryCtx } from "../_generated/server";
 import { hashToken } from "../lib/tokens";
 import { settlementOf, paymentReference } from "../invoices";
 import { sumCents, type Currency } from "../lib/money";
@@ -62,125 +62,142 @@ import { sumCents, type Currency } from "../lib/money";
 const rejected = (message: string) =>
   new ConvexError({ code: "REJECTED", message });
 
+/**
+ * THE DOCUMENT AS THE READER RECEIVES IT.
+ *
+ * Named and exported so the office app can render it without importing a
+ * Convex client — `app/i/[token]/InvoiceDocument.tsx` takes this shape, and
+ * the preview harness builds one by hand. That is what lets a human look at
+ * the invoice before a real one exists, without the harness gaining any way
+ * to fetch a real one.
+ *
+ * Derived from the handler rather than written twice: change what `view`
+ * returns and every consumer fails to compile, which is the only way two
+ * declarations of the same thing stay honest.
+ */
+export type InvoiceView = Awaited<ReturnType<typeof viewHandler>>;
+
+async function viewHandler(ctx: QueryCtx, { token }: { token: string }) {
+  const tokenHash = await hashToken(token);
+
+  const invoice = await ctx.db
+    .query("invoices")
+    .withIndex("by_viewTokenHash", (q) => q.eq("viewTokenHash", tokenHash))
+    .unique();
+
+  if (!invoice) throw rejected("that link is not valid");
+
+  if (invoice.viewTokenRevokedAt !== undefined) {
+    throw rejected(
+      "that link has been withdrawn — ask for a fresh one and this invoice will open again",
+    );
+  }
+
+  const currency = invoice.currency as Currency;
+
+  const issuer = await ctx.db
+    .query("issuers")
+    .withIndex("by_venture", (q) => q.eq("ventureId", invoice.ventureId))
+    .unique();
+
+  /*
+   * Settled from the LEDGER, never from a flag on the row, and scoped to
+   * this invoice by index so the read cannot see money belonging to
+   * anything else.
+   */
+  const entries = await ctx.db
+    .query("ledgerEntries")
+    .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+    .collect();
+  const movements = entries.filter(
+    (entry) => entry.type === "payment_received" || entry.type === "refund",
+  );
+  const paidCents = movements.length === 0 ? 0 : sumCents(movements, currency);
+
+  const money = settlementOf(invoice, paidCents, Date.now());
+
+  /*
+   * ASSEMBLED FIELD BY FIELD, never spread. A column added to the invoices
+   * table must not become publishable by default — the next person to add
+   * one should have to decide, in this file, that a stranger holding a link
+   * may see it.
+   */
+  return {
+    number: invoice.number,
+    issuedAt: invoice.issuedAt ?? null,
+    dueAt: invoice.dueAt ?? null,
+    paymentTermsDays: invoice.paymentTermsDays,
+    status: invoice.status,
+
+    /** History. Snapshotted at issue and never re-read. */
+    issuerLegalName: invoice.issuerLegalName,
+    issuerRegistrationNumber: invoice.issuerRegistrationNumber ?? null,
+    issuerVatNumber: invoice.issuerVatNumber ?? null,
+    billToName: invoice.billToName ?? null,
+
+    /** Instructions. Read live — see the note above. */
+    issuer: issuer
+      ? {
+          tradingName: issuer.tradingName ?? null,
+          addressLine: issuer.addressLine,
+          suburb: issuer.suburb ?? null,
+          city: issuer.city,
+          postalCode: issuer.postalCode ?? null,
+          countryCode: issuer.countryCode,
+          email: issuer.email,
+          phone: issuer.phone ?? null,
+          /*
+           * All four or none. A half-printed bank block is worse than an
+           * absent one: somebody transposes an account number from an
+           * invoice that never had a branch code and the payment bounces
+           * back a week later.
+           */
+          bank:
+            issuer.bankName &&
+            issuer.bankAccountName &&
+            issuer.bankAccountNumber &&
+            issuer.bankBranchCode
+              ? {
+                  name: issuer.bankName,
+                  accountName: issuer.bankAccountName,
+                  accountNumber: issuer.bankAccountNumber,
+                  branchCode: issuer.bankBranchCode,
+                }
+              : null,
+        }
+      : null,
+
+    currency: invoice.currency,
+    lineItems: invoice.lineItems.map((line) => ({
+      description: line.description,
+      quantity: line.quantity,
+      unitPriceCents: line.unitPriceCents,
+      lineTotalCents: Math.round(line.unitPriceCents * line.quantity),
+      kind: line.kind,
+    })),
+    subtotalCents: invoice.subtotalCents,
+    taxCents: invoice.taxCents,
+    totalCents: invoice.totalCents,
+    /** False while unregistered, and then no VAT line renders at all. */
+    taxFlag: invoice.taxFlag,
+
+    /*
+     * THE REFERENCE IS THE NUMBER. Derived from the same function the rest
+     * of the system uses rather than stored, because a second field could
+     * be set to something else — and a deposit that reconciles to nothing
+     * is not an error anywhere, just money nobody can place.
+     */
+    paymentReference: paymentReference(invoice.number),
+
+  settlement: money.settlement,
+  paidCents: money.paidCents,
+  owedCents: money.owedCents,
+  creditCents: money.creditCents,
+  overdue: money.overdue,
+  };
+}
+
 export const view = query({
   args: { token: v.string() },
-  handler: async (ctx, { token }) => {
-    const tokenHash = await hashToken(token);
-
-    const invoice = await ctx.db
-      .query("invoices")
-      .withIndex("by_viewTokenHash", (q) => q.eq("viewTokenHash", tokenHash))
-      .unique();
-
-    if (!invoice) throw rejected("that link is not valid");
-
-    if (invoice.viewTokenRevokedAt !== undefined) {
-      throw rejected(
-        "that link has been withdrawn — ask for a fresh one and this invoice will open again",
-      );
-    }
-
-    const currency = invoice.currency as Currency;
-
-    const issuer = await ctx.db
-      .query("issuers")
-      .withIndex("by_venture", (q) => q.eq("ventureId", invoice.ventureId))
-      .unique();
-
-    /*
-     * Settled from the LEDGER, never from a flag on the row, and scoped to
-     * this invoice by index so the read cannot see money belonging to
-     * anything else.
-     */
-    const entries = await ctx.db
-      .query("ledgerEntries")
-      .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
-      .collect();
-    const movements = entries.filter(
-      (entry) => entry.type === "payment_received" || entry.type === "refund",
-    );
-    const paidCents = movements.length === 0 ? 0 : sumCents(movements, currency);
-
-    const money = settlementOf(invoice, paidCents, Date.now());
-
-    /*
-     * ASSEMBLED FIELD BY FIELD, never spread. A column added to the invoices
-     * table must not become publishable by default — the next person to add
-     * one should have to decide, in this file, that a stranger holding a link
-     * may see it.
-     */
-    return {
-      number: invoice.number,
-      issuedAt: invoice.issuedAt ?? null,
-      dueAt: invoice.dueAt ?? null,
-      paymentTermsDays: invoice.paymentTermsDays,
-      status: invoice.status,
-
-      /** History. Snapshotted at issue and never re-read. */
-      issuerLegalName: invoice.issuerLegalName,
-      issuerRegistrationNumber: invoice.issuerRegistrationNumber ?? null,
-      issuerVatNumber: invoice.issuerVatNumber ?? null,
-      billToName: invoice.billToName ?? null,
-
-      /** Instructions. Read live — see the note above. */
-      issuer: issuer
-        ? {
-            tradingName: issuer.tradingName ?? null,
-            addressLine: issuer.addressLine,
-            suburb: issuer.suburb ?? null,
-            city: issuer.city,
-            postalCode: issuer.postalCode ?? null,
-            countryCode: issuer.countryCode,
-            email: issuer.email,
-            phone: issuer.phone ?? null,
-            /*
-             * All four or none. A half-printed bank block is worse than an
-             * absent one: somebody transposes an account number from an
-             * invoice that never had a branch code and the payment bounces
-             * back a week later.
-             */
-            bank:
-              issuer.bankName &&
-              issuer.bankAccountName &&
-              issuer.bankAccountNumber &&
-              issuer.bankBranchCode
-                ? {
-                    name: issuer.bankName,
-                    accountName: issuer.bankAccountName,
-                    accountNumber: issuer.bankAccountNumber,
-                    branchCode: issuer.bankBranchCode,
-                  }
-                : null,
-          }
-        : null,
-
-      currency: invoice.currency,
-      lineItems: invoice.lineItems.map((line) => ({
-        description: line.description,
-        quantity: line.quantity,
-        unitPriceCents: line.unitPriceCents,
-        lineTotalCents: Math.round(line.unitPriceCents * line.quantity),
-        kind: line.kind,
-      })),
-      subtotalCents: invoice.subtotalCents,
-      taxCents: invoice.taxCents,
-      totalCents: invoice.totalCents,
-      /** False while unregistered, and then no VAT line renders at all. */
-      taxFlag: invoice.taxFlag,
-
-      /*
-       * THE REFERENCE IS THE NUMBER. Derived from the same function the rest
-       * of the system uses rather than stored, because a second field could
-       * be set to something else — and a deposit that reconciles to nothing
-       * is not an error anywhere, just money nobody can place.
-       */
-      paymentReference: paymentReference(invoice.number),
-
-      settlement: money.settlement,
-      paidCents: money.paidCents,
-      owedCents: money.owedCents,
-      creditCents: money.creditCents,
-      overdue: money.overdue,
-    };
-  },
+  handler: viewHandler,
 });

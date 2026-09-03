@@ -117,6 +117,24 @@ jobs:
         env:
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://ci-compile-check.convex.cloud' }}
 
+      # THE HARNESS IS NOT IN THE ARTEFACT. Checked against the build, not the
+      # source.
+      #
+      # guards.test.ts already reads next.config.mjs, turbo.json and the page
+      # files and concludes the route cannot ship. That is a claim about what a
+      # build WILL do, verified from its inputs. This reads what the build
+      # actually produced, because the claim is about the artefact — and a
+      # source scan cannot see a Next version that changes pageExtensions, a
+      # dependency that injects routes, or a stray page.tsx under a directory
+      # it does not walk.
+      #
+      # It matters because /preview is on the PUBLIC route allowlist and
+      # renders a tenant's customer names, phone numbers and invoice amounts.
+      # Deliberately AFTER the build above, and it fails if there is no build
+      # to read rather than passing on an absence.
+      - name: No /preview route in the office build
+        run: node scripts/assert-no-preview-route.mjs
+
   deploy-backend:
     name: Deploy Convex
     needs: check

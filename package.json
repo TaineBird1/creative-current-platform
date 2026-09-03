@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "dev:backend": "convex dev",
+    "dev:preview": "node scripts/dev-preview.mjs",
     "build": "turbo run build",
     "lint": "turbo run lint && pnpm lint:tokens",
     "lint:tokens": "node scripts/lint-tokens.mjs",

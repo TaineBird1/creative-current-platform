@@ -55,7 +55,6 @@ import type * as messages from "../messages.js";
 import type * as onboarding from "../onboarding.js";
 import type * as outbox from "../outbox.js";
 import type * as platform from "../platform.js";
-import type * as public_brand from "../public/brand.js";
 import type * as public_invoice from "../public/invoice.js";
 import type * as public_quote from "../public/quote.js";
 import type * as public_site from "../public/site.js";
@@ -135,7 +134,6 @@ declare const fullApi: ApiFromModules<{
   onboarding: typeof onboarding;
   outbox: typeof outbox;
   platform: typeof platform;
-  "public/brand": typeof public_brand;
   "public/invoice": typeof public_invoice;
   "public/quote": typeof public_quote;
   "public/site": typeof public_site;

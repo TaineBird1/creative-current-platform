@@ -189,7 +189,7 @@ if (!existsSync(convexCli)) {
 }
 
 /**
- * Run the Convex CLI. Values reach it as file paths, never as argv content.
+ * Run the Convex CLI. A value reaches it over STDIN — never argv, never a file.
  *
  * `shell: false` is the whole point and is the default — stated explicitly so
  * that flipping it reads as the deliberate mistake it would be.
@@ -233,7 +233,7 @@ const relay = (text) => relayRaw(text, SECRETS);
 if (has("--dry-run")) {
   console.log(`\n  Would set on ${target}:`);
   for (const name of names) console.log(`    ${name} — ${fingerprint(keys[name])}`);
-  console.log("\n  No shell, and no value in argv: each is handed over as a file path.\n");
+  console.log("\n  No shell, no argv, no file: each value goes over the child's stdin.\n");
   process.exit(0);
 }
 

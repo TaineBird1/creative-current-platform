@@ -990,16 +990,15 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   This is the same family as capability removal above. A script is not a
   tidier way to write the command; it is the version that CANNOT be
   mistranscribed, and it works identically in PowerShell, Git Bash and CI.
-  **ONE KNOWN EXCEPTION, and it is outstanding rather than excused.**
-  `npx convex env set "JWKS=$(cat jwks.json)"` in the deployment section is
-  still POSIX-only prose. It is not laziness — PowerShell actively CORRUPTS
-  that value, stripping the quotes out of the JSON, which is why the paragraph
-  above it says so at length and offers the Convex dashboard as the shell-free
-  route. By this rule it should be a script (`node scripts/set-jwks.mjs`)
-  passing the value as an argv element, where no shell quotes it at all — which
-  would remove the hazard instead of documenting it. Written down here rather
-  than quietly tolerated, because a rule its own repo violates is a rule
-  nobody has to follow.
+  **THE LAST EXCEPTION IS CLOSED.** `npx convex env set "JWKS=$(cat jwks.json)"`
+  was the one POSIX-only command left in prose, and it was the worst kind: not
+  laziness, but a real hazard the docs handled by WARNING about it at length.
+  `node scripts/set-auth-keys.mjs` replaced both — the command and the warning.
+  That the warning could then be deleted is the tell that it was the right fix;
+  a paragraph saying "never do X from PowerShell" is a barrier that has to be
+  read by the right person on the day they are in a hurry.
+  Every command documented in this file now runs in PowerShell. Keep it that
+  way: the next POSIX-only form goes in `scripts/`, not in prose.
 - **COMMENT-STRIPPING IS THE DEFAULT IN THE GUARD HELPERS, AND THE NAMES
   ENFORCE IT.** `sourceFiles` exposes `code` (stripped) and `raw` (not), and
   deliberately no `text` — so scanning prose is something somebody has to type
@@ -1036,7 +1035,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 789 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — the count is whatever it is; run it. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -1125,25 +1124,34 @@ derives `NEXT_PUBLIC_CONVEX_URL` from it, so there is one value to keep right
 — and that config THROWS on a production build if it is missing, because
 Convex Auth would otherwise fail at runtime after a green deploy.
 
-**Never set these from PowerShell.** It strips the double quotes out of JSON
-before the CLI sees them, so `JWKS` lands as `{keys:[...]}` instead of
-`{"keys":[...]}`. Convex then cannot build a key set and EVERY token
-verification fails with `AuthProviderDiscoveryFailed` — which surfaces as
-"middleware thinks nobody is signed in", "the back office says not found",
-and a client retry storm in the logs. It cost an hour of misdiagnosis.
-
-Use the Convex dashboard's env settings (masked field, no shell), or Git Bash:
-
-```bash
-npx convex env set "JWKS=$(cat jwks.json)"
-```
-
-Generate a fresh pair headlessly — never the interactive `npx @convex-dev/auth`
-wizard, which hangs without a TTY:
+**Set them with the script; no shell ever touches the value.** `JWKS` is JSON,
+and a shell that rewrites quotes turns `{"keys":[...]}` into `{keys:[...]}` —
+Convex then cannot build a key set and EVERY token verification fails with
+`AuthProviderDiscoveryFailed`, which surfaces as "middleware thinks nobody is
+signed in", "the back office says not found", and a client retry storm. It
+cost an hour of misdiagnosis, and this used to be a paragraph telling you not
+to do it. A warning is a barrier somebody has to read; the script is the
+absence of the thing that went wrong. See the barrier rules above.
 
 ```bash
-node scripts/gen-auth-keys.mjs
+node scripts/gen-auth-keys.mjs --write
+node scripts/set-auth-keys.mjs
+node scripts/set-auth-keys.mjs --prod
 ```
+
+`spawn` with no shell, and each value reaches the CLI through `--from-file`
+rather than argv — so nothing can re-quote it, and nothing can mistake it for
+an option. That second part is not theoretical: a PEM starts `-----BEGIN`, and
+passing it as an argument made the CLI refuse with `unknown option
+'-----BEGIN PRIVATE KEY----- ...'`. The script then READS EACH VALUE BACK and
+compares it byte for byte, because a mangled key does not fail when it is set —
+it fails at every sign-in afterwards, to somebody else.
+
+It sets BOTH by default, deliberately: they are a matching pair and rotating
+one alone invalidates every session. `--only jwks` exists for the one honest
+single-key case (repairing a JWKS a shell already ate) and says so when used.
+`--dry-run` prints what it would do. The Convex dashboard's env settings
+remain a fine manual route.
 
 Verify it took. Every line must read `ok`; `JWKS` reporting `INVALID JSON` is
 the quote-stripping above, and is the single likeliest cause of a sign-in that
@@ -1317,7 +1325,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 789 tests
+pnpm test                        # the whole suite; it prints its own count
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

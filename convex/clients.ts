@@ -1,7 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { byName } from "./lib/ordering";
 import { ownerMutation, platformQuery, tenantQuery } from "./lib/functions";
-import { safeParseSiteConfig } from "@cc/site-config";
+import { safeParseSiteConfig, type AccentRamp } from "@cc/site-config";
 import { currency } from "./tables/tenants";
 
 /**
@@ -166,7 +166,13 @@ export const createExternal = ownerMutation({
 export type ClientBrand = {
   name: string;
   colour: string | null;
-  accent: unknown | null;
+  /*
+   * The real ramp type, not `unknown`. `accentStyle` indexes every step, so a
+   * loose type here compiles under `tsc -p tsconfig.json` and fails inside
+   * `next build`, which type-checks the JSX that consumes it — two checks that
+   * do not see the same thing, and only the second one runs in the app.
+   */
+  accent: AccentRamp | null;
 };
 
 export const brand = tenantQuery("staff")({

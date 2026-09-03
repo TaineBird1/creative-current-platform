@@ -390,9 +390,19 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   **THE TOKEN IS THE CREDENTIAL, because the reader has no account.** The
   person who most needs to open an invoice is the client's BOOKKEEPER, who
   does not work for us and never will. A login in front of an invoice is an
-  invoice that does not get opened, so `/i/<token>` is public — it falls
-  through the office middleware by construction, which protects `/admin(.*)`
-  and `/c/:slug(.*)` only. That makes three properties load-bearing and none
+  invoice that does not get opened, so `/i/<token>` is public — DECLARED so,
+  in `apps/office/lib/public-routes.ts`. That is the whole list of paths the
+  office serves without a session, and the middleware now DEFAULTS TO
+  PROTECTED and holds no route literals of its own. It used to list what was
+  protected instead, which made the invoice public by OMISSION — fail-open,
+  and wrong in both directions at once: a new authenticated area forgotten
+  from that list is served to anybody, and the obvious later hardening (a
+  catch-all) silently kills every invoice link already in a client's inbox,
+  surfacing a fortnight later as a client who cannot pay. `office-routes.test.ts`
+  pins the public set by EQUALITY, not membership, so a sixth public path
+  fails CI until a person edits the test — which is the moment the decision
+  gets made rather than inherited. Six negative controls, all seen red.
+  That makes three properties load-bearing and none
   of them expressible in a type: the token is 256 random bits from
   `lib/tokens.ts` (never the number, never the id — `paymentReference` IS the
   invoice number, which is the opposite requirement and must never be

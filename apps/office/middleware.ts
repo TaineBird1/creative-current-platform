@@ -1,8 +1,13 @@
 import {
   convexAuthNextjsMiddleware,
-  createRouteMatcher,
   nextjsMiddlewareRedirect,
 } from "@convex-dev/auth/nextjs/server";
+import {
+  afterSignInPathFor,
+  isSignInPath,
+  requiresSession,
+  signInPathFor,
+} from "./lib/public-routes";
 
 /**
  * Route protection here is a UX affordance, NOT the security boundary.
@@ -26,28 +31,28 @@ import {
  * That diagnosis was wrong. The real fault was a JWKS environment variable
  * mangled by shell quoting, which broke token verification EVERYWHERE. The
  * change survives on the reasoning above, not on that one.)
+ *
+ * EVERY PATH REQUIRES A SESSION UNLESS `lib/public-routes.ts` SAYS OTHERWISE,
+ * and this file holds no route literals of its own outside `config.matcher`
+ * below, which Next requires to be a static literal. It used to list what was
+ * PROTECTED, which made `/i/<token>` public by omission — see that module for
+ * why an absence was the wrong way to hold a decision this size.
  */
-const isSignIn = createRouteMatcher(["/admin/sign-in", "/c/:slug/sign-in"]);
-const isProtected = createRouteMatcher(["/admin(.*)", "/c/:slug(.*)"]);
-
 export default convexAuthNextjsMiddleware(async (request, { convexAuth }) => {
   const { pathname } = request.nextUrl;
 
   // Cookie presence only. No network call, no verification.
   const hasSession = (await convexAuth.getToken()) !== undefined;
 
-  if (isSignIn(request)) {
+  if (isSignInPath(pathname)) {
     if (hasSession) {
-      return nextjsMiddlewareRedirect(request, pathname.replace(/\/sign-in$/, "") || "/admin");
+      return nextjsMiddlewareRedirect(request, afterSignInPathFor(pathname));
     }
     return;
   }
 
-  if (isProtected(request) && !hasSession) {
-    const base = pathname.startsWith("/admin")
-      ? "/admin"
-      : `/c/${pathname.split("/")[2] ?? ""}`;
-    return nextjsMiddlewareRedirect(request, `${base}/sign-in`);
+  if (requiresSession(pathname) && !hasSession) {
+    return nextjsMiddlewareRedirect(request, signInPathFor(pathname));
   }
 });
 
@@ -61,5 +66,12 @@ export const config = {
   // page just renders. That cost two debugging rounds in one session.
   //
   // A character class means exactly the same thing and cannot be mangled.
+  //
+  // THIS MUST STAY A CATCH-ALL, and it is the one place route literals are
+  // unavoidable: Next reads `config.matcher` statically at build time, so it
+  // cannot be an imported constant. Narrowing it does not make anything
+  // public in a visible way — it makes the middleware stop running, which
+  // for `/admin` means the console renders to a stranger. office-routes.test
+  // asserts the catch-all entry is still here.
   matcher: ["/((?!_next|.*[.].*).*)", "/", "/(api|trpc)(.*)"],
 };

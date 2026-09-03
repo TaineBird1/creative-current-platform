@@ -18,9 +18,14 @@ import s from "./invoice.module.css";
  * `public/invoice.view` is written so it can reach exactly this document and
  * nothing else.
  *
- * The middleware never sees this path: it protects `/admin(.*)` and
- * `/c/:slug(.*)` only, so `/i/<token>` falls through by construction rather
- * than by an exception somebody added.
+ * The middleware DOES see this path and lets it through DELIBERATELY. It used
+ * to fall through by omission — the middleware listed what was protected, so
+ * anything unlisted was public — and an exception that exists as an absence
+ * is one that a later catch-all removes without anybody noticing, killing
+ * every invoice link already sitting in a client's inbox. `/i/:token` is now
+ * a named entry in `lib/public-routes.ts`, which is the only list of paths
+ * that may be reached without a session, and `office-routes.test.ts` asserts
+ * that list EQUALS its intended set in both directions.
  *
  * IT PRINTS. That is the entire PDF strategy — a print stylesheet below, and
  * "save as PDF" in any browser covers the bookkeeping case. No PDF is ever

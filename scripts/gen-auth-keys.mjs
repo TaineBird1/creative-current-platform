@@ -15,9 +15,15 @@
  *   node scripts/gen-auth-keys.mjs --write    # write .auth-keys.json, gitignored
  *
  * Then set BOTH — they are a matching pair, and rotating one alone
- * invalidates every existing session. Use the Convex dashboard's environment
- * settings, or a shell that does not rewrite quotes (Git Bash, not
- * PowerShell), because JWKS is JSON and PowerShell strips its quotes.
+ * invalidates every existing session:
+ *
+ *   node scripts/set-auth-keys.mjs          # dev
+ *   node scripts/set-auth-keys.mjs --prod   # production
+ *
+ * That script hands each value to the CLI as a FILE, never through a shell or
+ * argv, so nothing can rewrite the quotes in JWKS — which is JSON, and which
+ * PowerShell used to corrupt silently. It reads the values back and compares
+ * them byte for byte before reporting success.
  */
 
 import { writeFileSync } from "node:fs";

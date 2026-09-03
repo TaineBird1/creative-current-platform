@@ -7,6 +7,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertCents, scaleCents, sumCents, type Currency } from "./lib/money";
 import { postEntry, reverseEntry } from "./lib/ledger";
+import { patchDoc } from "./lib/db";
 
 /**
  * INVOICES. The document a client receives.
@@ -100,7 +101,7 @@ async function takeNumber(
   }
 
   const seq = counter.next;
-  await ctx.db.patch(counter._id, { next: seq + 1 });
+  await patchDoc(ctx, counter._id, { next: seq + 1 });
   return { number: `${INVOICE_SERIES}-${String(seq).padStart(4, "0")}`, seq };
 }
 
@@ -498,7 +499,7 @@ export const voidInvoice = ownerMutation({
       .first();
     if (entry) await reverseEntry(ctx, entry._id, reason, ctx.platform.userId);
 
-    await ctx.db.patch(args.invoiceId, { status: "void" });
+    await patchDoc(ctx, args.invoiceId, { status: "void" });
 
     await ctx.db.insert("auditLog", {
       actorUserId: ctx.platform.userId,
@@ -754,7 +755,7 @@ export const revokeViewLink = ownerMutation({
     }
 
     const now = args.now ?? Date.now();
-    await ctx.db.patch(args.invoiceId, { viewTokenRevokedAt: now });
+    await patchDoc(ctx, args.invoiceId, { viewTokenRevokedAt: now });
 
     await ctx.db.insert("auditLog", {
       actorUserId: ctx.platform.userId,
@@ -797,7 +798,7 @@ export const reissueViewLink = ownerMutation({
     const now = args.now ?? Date.now();
     const token = newToken();
 
-    await ctx.db.patch(args.invoiceId, {
+    await patchDoc(ctx, args.invoiceId, {
       viewTokenHash: await hashToken(token),
       /* A fresh link is not a revoked one. Clearing this is what re-opens it. */
       viewTokenRevokedAt: undefined,
@@ -844,7 +845,7 @@ export const resendInvoice = ownerMutation({
 
     const now = args.now ?? Date.now();
     const token = newToken();
-    await ctx.db.patch(args.invoiceId, {
+    await patchDoc(ctx, args.invoiceId, {
       viewTokenHash: await hashToken(token),
       viewTokenRevokedAt: undefined,
     });

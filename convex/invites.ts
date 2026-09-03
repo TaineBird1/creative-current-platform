@@ -9,6 +9,7 @@ import {
   newInviteToken,
   normaliseEmail,
 } from "./lib/invites";
+import { patchDoc } from "./lib/db";
 
 /**
  * MINTING INVITES.
@@ -126,7 +127,7 @@ export const revoke = tenantMutation("manager")({
     }
     if (invite.acceptedAt) throw forbidden("That invite has already been used");
 
-    await ctx.db.patch(inviteId, { revokedAt: Date.now() });
+    await patchDoc(ctx, inviteId, { revokedAt: Date.now() });
     await auditWrite(ctx, ctx.tenant, {
       action: "invite.revoke",
       entityTable: "invites",

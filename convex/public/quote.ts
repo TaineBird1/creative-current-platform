@@ -4,6 +4,7 @@ import type { Id } from "../_generated/dataModel";
 import { safeParseSiteConfig } from "@cc/site-config";
 import { hashToken } from "../lib/invites";
 import { toE164 } from "../lib/phone";
+import { patchDoc } from "../lib/db";
 
 /**
  * PUBLIC, UNAUTHENTICATED. On the PUBLIC_ALLOWLIST in guards.test.ts.
@@ -269,7 +270,7 @@ export const accept = mutation({
     }
 
     const now = Date.now();
-    await ctx.db.patch(quote._id, { status: "accepted", acceptedAt: now });
+    await patchDoc(ctx, quote._id, { status: "accepted", acceptedAt: now });
 
     /*
      * Accepting creates the JOB. That is the point of the link: the customer

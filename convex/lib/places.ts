@@ -1,5 +1,6 @@
 import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { replaceDoc } from "./db";
 
 /**
  * WHAT GOOGLE LETS US KEEP, ENFORCED IN CODE.
@@ -115,7 +116,7 @@ export async function writePlace(
   if (existing) {
     // A refresh resets the clock, which is what a re-fetch is for. It does
     // not extend the old row's licence — the row is replaced wholesale.
-    await ctx.db.replace(existing._id, row);
+    await replaceDoc(ctx, existing._id, row);
     return;
   }
   await ctx.db.insert("placesCache", row);

@@ -193,76 +193,88 @@ describe("tenancy", () => {
   });
 
   /**
-   * IMMUTABILITY, CHECKED IN A WAY THAT CAN ACTUALLY FIRE.
+   * IMMUTABILITY, MOVED OFF A SCAN AND ONTO THE TYPE SYSTEM.
    *
-   * The previous version of this test matched
-   * `db\.(patch|delete|replace)\([^)]*<table>` — which cannot catch anything,
-   * because Convex's `db.patch(id, partial)` NEVER contains a table name. A
-   * real violation looks like `ctx.db.patch(entry._id, { amountCents: 0 })`,
-   * and the only way that regex fires is if a variable happens to be named
-   * after the table by coincidence.
+   * THE LADDER, which is the general lesson from three vacuous guards found
+   * in one day rather than a note about this one:
    *
-   * So for six listed tables the protection was zero, not merely latent, and
-   * it had never once fired in anger. A control proved it: a function that
-   * both patched AND deleted a ledger entry passed the whole suite.
+   *   WEAKEST   a guard that INFERS a fact from source. The previous version
+   *             matched `db\.(patch|delete|replace)\([^)]*<table>` — and
+   *             `db.patch(id, partial)` never contains a table name, so it
+   *             asserted something the text can never contain. Six tables,
+   *             zero protection, and a control proved it by planting a
+   *             function that both patched AND deleted a ledger entry and
+   *             watching the suite pass green.
+   *   STRONGER  a guard that matches a LITERAL TOKEN genuinely present in the
+   *             text. That is what the test below does, and it can fire.
+   *   STRONGEST the TYPE SYSTEM. `lib/db.ts` exports helpers generic over
+   *             mutable tables only, so `patchDoc(ctx, ledgerEntryId, …)` does
+   *             not compile — `Id` is branded with its table name, so there is
+   *             something real to reject. Nothing has to run or be scanned.
    *
-   * This version works the way a reader would: find the identifiers in a file
-   * that hold a row or an id from an immutable table, then look for a
-   * mutation applied to one of them. Three ways an identifier gets bound:
+   * Both upper rungs are in use: tsc enforces the rule, and this test stops
+   * the helpers being bypassed by reaching for `ctx.db.patch` directly.
    *
-   *   const x = await ctx.db.insert("ledgerEntries", …)
-   *   const x = await ctx.db.query("consents")…
-   *   function f(id: Id<"webhookEvents">)      ← and any `x: Id<"T">` field
-   *
-   * Then `db.patch(x`, `db.delete(x._id`, `db.replace(x`, and the `for (const
-   * row of rows)` shape via the loop variable.
-   *
-   * IT ASSERTS IT EXAMINED SOMETHING. A table nobody binds anywhere is an
-   * entry protecting nothing — decorative, exactly what quoteAcceptances was
-   * before it had a writer — and that is now a failure rather than a silent
-   * pass. Same family as the `.ts`-only walker.
+   * Same shape as `lib/leadAccess.ts` — one module owns a capability and
+   * everything else is banned from the raw form.
    */
-  /** Identifiers in `code` holding a row or id from `table`. */
-  function bindingsFor(code: string, table: string): string[] {
-    const names = new Set<string>();
+  const DB_WRITE_OWNER = "lib/db.ts";
+  const RAW_MUTATORS = ["ctx.db.patch", "ctx.db.replace", "ctx.db.delete"];
 
-    // const x = await ctx.db.insert("T", …)
-    for (const m of code.matchAll(
-      new RegExp(`(?:const|let|var)\\s+(\\w+)\\s*=\\s*await\\s+ctx\\.db\\.insert\\(\\s*"${table}"`, "g"),
-    )) {
-      names.add(m[1]!);
-    }
-
-    // const x = await ctx.db.query("T")… (the chain may run over lines)
-    for (const m of code.matchAll(
-      new RegExp(`(?:const|let|var)\\s+(\\w+)\\s*=\\s*await\\s+ctx\\.db\\s*\\.?\\s*\\n?\\s*\\.query\\(\\s*"${table}"`, "g"),
-    )) {
-      names.add(m[1]!);
-    }
-
-    // Anything annotated with the table's id type: `id: Id<"T">`.
-    for (const m of code.matchAll(new RegExp(`(\\w+)\\s*:\\s*Id<"${table}">`, "g"))) {
-      names.add(m[1]!);
-    }
-
-    // for (const row of <bound>) — the loop variable inherits the binding.
-    for (const name of [...names]) {
-      for (const m of code.matchAll(
-        new RegExp(`for\\s*\\(\\s*const\\s+(\\w+)\\s+of\\s+${name}\\b`, "g"),
-      )) {
-        names.add(m[1]!);
+  test("ONLY lib/db.ts calls ctx.db.patch, replace or delete", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles) {
+      if (file.path === DB_WRITE_OWNER) continue;
+      for (const raw of RAW_MUTATORS) {
+        if (file.code.includes(raw)) offenders.push(`${file.path}: ${raw}`);
       }
     }
 
-    return [...names];
-  }
+    expect(
+      offenders,
+      [
+        "These reach for the raw mutator instead of the typed helpers in",
+        "lib/db.ts, which is what makes editing an append-only row a COMPILE",
+        "error rather than something a reviewer has to notice.",
+        "",
+        "Use patchDoc / replaceDoc / deleteDoc. If the table you need is",
+        "refused, that is the point: correct an append-only row by inserting",
+        "one that reverses it.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("and lib/db.ts is really where they live", () => {
+    /*
+     * The anti-vacuity half. A ban on a token nothing contains passes forever,
+     * so the owner must actually hold the calls it is excused for — otherwise
+     * the helpers have been quietly reimplemented somewhere and the test above
+     * is guarding an empty set.
+     */
+    const owner = sourceFiles.find((f) => f.path === DB_WRITE_OWNER);
+    expect(owner, "convex/lib/db.ts is missing").toBeDefined();
+    for (const raw of RAW_MUTATORS) {
+      expect(owner!.code, `${DB_WRITE_OWNER} no longer calls ${raw}`).toContain(raw);
+    }
+  });
+
+  test("the helpers are typed against the immutable list, not a copy of it", () => {
+    /*
+     * `MutableTable` is derived by excluding IMMUTABLE_TABLES from the table
+     * names. Written out as a second list it would drift, and the drift would
+     * be silent — a table added to IMMUTABLE_TABLES but forgotten here stays
+     * editable while the schema says otherwise.
+     */
+    const owner = sourceFiles.find((f) => f.path === DB_WRITE_OWNER)!;
+    expect(owner.code).toContain("IMMUTABLE_TABLES");
+    expect(owner.code).toMatch(/Exclude<\s*TableNames\s*,\s*ImmutableTable\s*>/);
+  });
 
   test("EVERY immutable table has something that actually writes it", () => {
     /*
-     * The anti-decorative check. A table on this list that nothing anywhere
-     * inserts is protecting nothing, and every check below would pass it
-     * forever — which is precisely what `quoteAcceptances` was before it had a
-     * writer, and how the whole list came to be trusted without being tested.
+     * A table on the list that nothing anywhere inserts is protecting nothing,
+     * and every check above would pass it forever — which is precisely what
+     * `quoteAcceptances` was before it had a writer.
      */
     const unwritten = IMMUTABLE_TABLES.filter(
       (table) => !sourceFiles.some((f) => f.code.includes(`db.insert("${table}"`)),
@@ -273,51 +285,6 @@ describe("tenancy", () => {
         "These tables are on IMMUTABLE_TABLES and nothing writes them, so",
         "listing them protects nothing. Either something should be writing",
         "them, or they should come off the list until it does.",
-      ].join("\n"),
-    ).toEqual([]);
-  });
-
-  test("immutable tables are never patched, replaced or deleted", () => {
-    const offenders: string[] = [];
-    let examined = 0;
-
-    for (const file of sourceFiles) {
-      for (const table of IMMUTABLE_TABLES) {
-        for (const name of bindingsFor(file.code, table)) {
-          examined += 1;
-          const mutation = new RegExp(
-            `ctx\\.db\\.(patch|replace|delete)\\(\\s*${name}\\b`,
-            "g",
-          );
-          for (const hit of file.code.matchAll(mutation)) {
-            offenders.push(`${file.path}: db.${hit[1]}() on ${name}, a ${table} row`);
-          }
-        }
-      }
-    }
-
-    /*
-     * The mechanism found something to look at.
-     *
-     * Not every immutable table binds anything, and that is a legitimately
-     * SAFER state rather than a gap: `auditLog` and `apiSpend` are inserted
-     * fire-and-forget, with no variable holding the id, so there is nothing in
-     * scope that could be mutated. What this floor catches is the mechanism
-     * itself breaking — a regex that stops matching, a rename — which would
-     * otherwise report safety across every table in green.
-     */
-    expect(
-      examined,
-      "no immutable-table bindings were examined at all — the matcher is broken",
-    ).toBeGreaterThan(5);
-
-    expect(
-      offenders,
-      [
-        "Ledger, audit log, consent, webhook, spend and acceptance rows are",
-        "APPEND-ONLY. Correct one with a new reversing row, never by editing",
-        "the one that is already there — the only time anybody reads these is",
-        "when they are reconstructing what happened.",
       ].join("\n"),
     ).toEqual([]);
   });

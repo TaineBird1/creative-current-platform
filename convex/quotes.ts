@@ -8,6 +8,7 @@ import type { DispatchResult } from "./lib/messaging";
 import { assertOwned, auditWrite, type TenantContext } from "./lib/tenancy";
 import { assertCents } from "./lib/money";
 import { hashToken, newInviteToken } from "./lib/invites";
+import { patchDoc } from "./lib/db";
 
 /**
  * QUOTES — priced work, sent to a customer, accepted by a link.
@@ -106,7 +107,7 @@ async function nextNumber(ctx: MutationCtx, ventureId: Id<"ventures">): Promise<
    * than both taking the same number. Numbers must never collide: a customer
    * accepting "QUO-0007" must be accepting exactly one document.
    */
-  await ctx.db.patch(counter._id, { next: counter.next + 1 });
+  await patchDoc(ctx, counter._id, { next: counter.next + 1 });
   return `${QUOTE_SERIES}-${String(counter.next).padStart(4, "0")}`;
 }
 
@@ -320,7 +321,7 @@ export const markSent = tenantMutation("staff")({
   handler: async (ctx, { quoteId }): Promise<{ quoteId: Id<"quotes">; number: string }> => {
     const quote = await assertSendable(ctx, ctx.tenant, quoteId);
 
-    await ctx.db.patch(quoteId, { status: "sent" });
+    await patchDoc(ctx, quoteId, { status: "sent" });
     await auditWrite(ctx, ctx.tenant, {
       action: "quote.markSent",
       entityTable: "quotes",
@@ -377,7 +378,7 @@ export const sendToCustomer = tenantMutation("staff")({
      * link exists that the database will not recognise.
      */
     const token = newInviteToken();
-    await ctx.db.patch(quoteId, {
+    await patchDoc(ctx, quoteId, {
       status: "sent",
       acceptTokenHash: await hashToken(token),
     });
@@ -447,7 +448,7 @@ export const decline = tenantMutation("staff")({
         message: `${quote.number} was accepted. Cancel the job instead.`,
       });
     }
-    await ctx.db.patch(quoteId, { status: "declined" });
+    await patchDoc(ctx, quoteId, { status: "declined" });
     await auditWrite(ctx, ctx.tenant, {
       action: "quote.decline",
       entityTable: "quotes",
@@ -511,7 +512,7 @@ export const reissueAcceptLink = tenantMutation("staff")({
     }
 
     const token = newInviteToken();
-    await ctx.db.patch(quoteId, {
+    await patchDoc(ctx, quoteId, {
       acceptTokenHash: await hashToken(token),
       acceptLinkResends: (quote.acceptLinkResends ?? 0) + 1,
     });
@@ -579,7 +580,7 @@ export const resendToCustomer = tenantMutation("staff")({
 
     const resend = (quote.acceptLinkResends ?? 0) + 1;
     const token = newInviteToken();
-    await ctx.db.patch(quoteId, {
+    await patchDoc(ctx, quoteId, {
       acceptTokenHash: await hashToken(token),
       acceptLinkResends: resend,
     });

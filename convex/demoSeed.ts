@@ -8,6 +8,7 @@ import { issueInvoiceFor } from "./invoices";
 import { createBooking } from "./bookings";
 import { insertSite } from "./siteConfigs";
 import { toE164 } from "./lib/phone";
+import { deleteDoc, patchDoc } from "./lib/db";
 
 /**
  * A CLICKABLE VERSION OF THE WALKTHROUGH.
@@ -151,7 +152,7 @@ export const run = platformMutation({
      * who may be contacted. A seeder is not worth an exception to it, and a
      * discarded lead demonstrates the same thing.
      */
-    await ctx.db.patch(leads[3]!, { status: "discarded" });
+    await patchDoc(ctx, leads[3]!, { status: "discarded" });
 
     // ---- a client who signed --------------------------------------------
     const clientId = await ctx.db.insert("clients", {
@@ -402,7 +403,7 @@ export const clear = platformMutation({
 
     let deleted = 0;
     const kill = async (id: Id<never>) => {
-      await ctx.db.delete(id);
+      await deleteDoc(ctx, id);
       deleted++;
     };
 

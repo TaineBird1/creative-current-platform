@@ -5,6 +5,7 @@ import type { SendResult } from "./providers";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { hasConsent } from "./consent";
+import { patchDoc } from "./db";
 
 /**
  * THE SEND CHOKE POINT.
@@ -922,7 +923,7 @@ export async function claimForSend(
      * longer within its window, so it holds until morning like everything
      * else. Without that, an outage turns the exemption into a broadcast.
      */
-    await ctx.db.patch(args.messageId, {
+    await patchDoc(ctx, args.messageId, {
       status: "holding_quiet_hours",
       scheduledFor: nextSendableAt(args.now, message.quietHoursTimezone),
     });
@@ -938,7 +939,7 @@ export async function claimForSend(
    * stalled-row sweep below reuse `by_status_scheduledFor` instead of needing
    * a claimedAt column and an index of its own.
    */
-  await ctx.db.patch(args.messageId, {
+  await patchDoc(ctx, args.messageId, {
     status: "sending",
     attempts: message.attempts + 1,
     scheduledFor: args.now + SENDING_TIMEOUT_MS,
@@ -976,7 +977,7 @@ export async function recordSendResult(
   if (!message || message.status !== "sending") return;
 
   if (args.result.delivered) {
-    await ctx.db.patch(args.messageId, {
+    await patchDoc(ctx, args.messageId, {
       status: "sent",
       sentAt: args.now,
       scheduledFor: args.now,
@@ -993,7 +994,7 @@ export async function recordSendResult(
       args.now + backoffFor(message.attempts),
       message.quietHoursTimezone,
     );
-    await ctx.db.patch(args.messageId, {
+    await patchDoc(ctx, args.messageId, {
       status: "scheduled",
       scheduledFor: next,
       providerName: args.result.providerName,
@@ -1004,7 +1005,7 @@ export async function recordSendResult(
     return;
   }
 
-  await ctx.db.patch(args.messageId, {
+  await patchDoc(ctx, args.messageId, {
     status: "failed",
     scheduledFor: args.now,
     providerName: args.result.providerName,
@@ -1026,7 +1027,7 @@ export async function requeueStalled(
   if (!message || message.status !== "sending") return false;
   if (message.scheduledFor > args.now) return false;
 
-  await ctx.db.patch(args.messageId, {
+  await patchDoc(ctx, args.messageId, {
     status: "scheduled",
     scheduledFor: args.now,
     error:

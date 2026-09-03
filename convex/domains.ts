@@ -5,6 +5,7 @@ import { platformAction, platformMutation, platformQuery } from "./lib/functions
 import { normaliseHostname, requiredRecords, dnsOnePager } from "./lib/dns";
 import { attachDomain, domainStatus, isVercelConfigured } from "./lib/vercel";
 import type { DomainAttachment, DomainStatus } from "./lib/vercel";
+import { deleteDoc, patchDoc } from "./lib/db";
 
 /**
  * THE DOMAIN WIZARD.
@@ -150,7 +151,7 @@ export const release = platformMutation({
     if (!domain) throw new ConvexError({ code: "NOT_FOUND", message: "Not found" });
 
     const client = await ctx.db.get(domain.clientId);
-    await ctx.db.delete(domainId);
+    await deleteDoc(ctx, domainId);
 
     await ctx.db.insert("auditLog", {
       actorUserId: ctx.platform.userId,
@@ -174,7 +175,7 @@ export const recordStatus = internalMutation({
     attached: v.boolean(),
   },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.domainId, {
+    await patchDoc(ctx, args.domainId, {
       verificationStatus: args.verified ? "verified" : "pending",
       // Vercel issues the certificate once verification passes; there is no
       // separate step to wait on.

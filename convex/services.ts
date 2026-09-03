@@ -4,6 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, auditWrite } from "./lib/tenancy";
 import { assertCents } from "./lib/money";
+import { patchDoc } from "./lib/db";
 
 /**
  * SERVICES — what a tenant sells, and the thing a booking books.
@@ -271,7 +272,7 @@ export const update = tenantMutation("owner")({
       });
     }
 
-    await ctx.db.patch(args.serviceId, next);
+    await patchDoc(ctx, args.serviceId, next);
 
     await auditWrite(ctx, ctx.tenant, {
       action: "service.update",

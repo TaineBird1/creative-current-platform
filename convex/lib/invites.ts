@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { deleteDoc, patchDoc } from "./db";
 
 /**
  * INVITE RECONCILIATION — the mechanism behind "no bare user rows".
@@ -94,7 +95,7 @@ export async function reconcileInvites(
         .unique();
 
       if (existing) {
-        await ctx.db.patch(existing._id, {
+        await patchDoc(ctx, existing._id, {
           role: invite.tenantRole,
           locationId: invite.locationId,
           active: true,
@@ -119,7 +120,7 @@ export async function reconcileInvites(
         .withIndex("by_user", (q) => q.eq("userId", userId))
         .unique();
       if (existing) {
-        await ctx.db.patch(existing._id, { role: invite.platformRole, active: true });
+        await patchDoc(ctx, existing._id, { role: invite.platformRole, active: true });
       } else {
         await ctx.db.insert("platformMembers", {
           userId,
@@ -133,7 +134,7 @@ export async function reconcileInvites(
 
     // Single use. Marked accepted whether or not it granted anything, so a
     // malformed invite cannot be replayed.
-    await ctx.db.patch(invite._id, { acceptedAt: now, acceptedByUserId: userId });
+    await patchDoc(ctx, invite._id, { acceptedAt: now, acceptedByUserId: userId });
   }
 
   return applied;
@@ -194,7 +195,7 @@ export async function resolveSignIn(
   if (applied === 0) {
     // The invite existed but granted nothing. Rather than leave the bare user
     // row this whole function exists to prevent, undo it.
-    await ctx.db.delete(userId);
+    await deleteDoc(ctx, userId);
     throw noInvite();
   }
 

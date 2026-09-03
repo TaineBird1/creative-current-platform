@@ -3,6 +3,7 @@ import { platformMutation, platformQuery } from "./lib/functions";
 import type { MutationCtx } from "./_generated/server";
 import { solarTradesTemplate, buildAccentRamp, safeParseSiteConfig } from "@cc/site-config";
 import { contactDecision } from "./lib/suppression";
+import { patchDoc } from "./lib/db";
 
 /**
  * THE DEMO PIPELINE — a lead becomes a site you can send them.
@@ -175,7 +176,7 @@ export const createForLead = platformMutation({
       isDemo: true,
     });
 
-    await ctx.db.patch(args.leadId, { status: "demo_sent" });
+    await patchDoc(ctx, args.leadId, { status: "demo_sent" });
 
     return {
       siteId,
@@ -208,7 +209,7 @@ export const extend = platformMutation({
     }
 
     const expiresAt = (args.now ?? Date.now()) + days * 24 * 60 * 60 * 1000;
-    await ctx.db.patch(args.siteId, { demoExpiresAt: expiresAt });
+    await patchDoc(ctx, args.siteId, { demoExpiresAt: expiresAt });
     return { expiresAt };
   },
 });
@@ -226,7 +227,7 @@ export const revoke = platformMutation({
     const site = await ctx.db.get(args.siteId);
     if (!site) throw bad("NOT_FOUND", "No such site.");
     if (!site.isDemo) throw bad("NOT_A_DEMO", "That is a real client's site.");
-    await ctx.db.patch(args.siteId, { demoExpiresAt: (args.now ?? Date.now()) - 1000 });
+    await patchDoc(ctx, args.siteId, { demoExpiresAt: (args.now ?? Date.now()) - 1000 });
     return { ok: true as const };
   },
 });

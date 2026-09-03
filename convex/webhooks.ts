@@ -3,6 +3,7 @@ import { internalMutation } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { postEntry } from "./lib/ledger";
 import { assertCents, type Currency } from "./lib/money";
+import { patchDoc } from "./lib/db";
 
 /**
  * WHAT A VERIFIED WEBHOOK DOES TO OUR DATA.
@@ -191,7 +192,7 @@ export const ingest = internalMutation({
      * different transaction reference entirely.
      */
     if (subscription && subscriptionRef && !subscription.providerRef) {
-      await ctx.db.patch(subscription._id, { providerRef: subscriptionRef });
+      await patchDoc(ctx, subscription._id, { providerRef: subscriptionRef });
       subscription = { ...subscription, providerRef: subscriptionRef };
     }
 
@@ -324,7 +325,7 @@ export const ingest = internalMutation({
       });
     }
 
-    await ctx.db.patch(subscription._id, { status: wants, lastEventAt: occurredAt });
+    await patchDoc(ctx, subscription._id, { status: wants, lastEventAt: occurredAt });
 
     return record("applied", {
       clientId: client._id,

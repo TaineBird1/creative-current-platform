@@ -2,6 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { byOrderThenName } from "./lib/ordering";
 import { ownerMutation, platformQuery } from "./lib/functions";
 import { currency, ventureType } from "./tables/tenants";
+import { patchDoc } from "./lib/db";
 
 /**
  * VENTURES — the portfolio dimension (Part 5.1).
@@ -144,7 +145,7 @@ export const setActive = ownerMutation({
       }
     }
 
-    await ctx.db.patch(ventureId, { active });
+    await patchDoc(ctx, ventureId, { active });
 
     await ctx.db.insert("auditLog", {
       actorUserId: ctx.platform.userId,

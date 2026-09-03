@@ -5,6 +5,7 @@ import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, auditWrite } from "./lib/tenancy";
 import { resolveConsent } from "./lib/consent";
+import { patchDoc } from "./lib/db";
 
 /**
  * CUSTOMERS — the tenant's end customers, and the lock-in memory.
@@ -186,7 +187,7 @@ export const upsertByPhone = tenantMutation("staff")({
       const patch: Record<string, unknown> = {};
       if (target.name !== name) patch.name = name;
       if (args.email && !target.email) patch.email = args.email.trim();
-      if (Object.keys(patch).length > 0) await ctx.db.patch(target._id, patch);
+      if (Object.keys(patch).length > 0) await patchDoc(ctx, target._id, patch);
 
       return { customerId: target._id, created: false, reachable };
     }
@@ -223,7 +224,7 @@ export const setNotes = tenantMutation("manager")({
   args: { customerId: v.id("customers"), notes: v.string() },
   handler: async (ctx, { customerId, notes }): Promise<{ customerId: Id<"customers"> }> => {
     const customer = assertOwned(ctx.tenant, await ctx.db.get(customerId));
-    await ctx.db.patch(customerId, { notes: notes.trim() || undefined });
+    await patchDoc(ctx, customerId, { notes: notes.trim() || undefined });
 
     await auditWrite(ctx, ctx.tenant, {
       action: "customer.setNotes",
@@ -267,7 +268,7 @@ export const merge = tenantMutation("manager")({
      */
     const notes = [keep.notes, loser.notes].filter(Boolean).join("\n\n");
 
-    await ctx.db.patch(keepId, {
+    await patchDoc(ctx, keepId, {
       visitCount: keep.visitCount + loser.visitCount,
       noShowCount: keep.noShowCount + loser.noShowCount,
       lifetimeValueCents: keep.lifetimeValueCents + loser.lifetimeValueCents,
@@ -277,7 +278,7 @@ export const merge = tenantMutation("manager")({
       tags: [...new Set([...keep.tags, ...loser.tags])],
     });
 
-    await ctx.db.patch(mergeId, { mergedIntoId: keepId });
+    await patchDoc(ctx, mergeId, { mergedIntoId: keepId });
 
     await auditWrite(ctx, ctx.tenant, {
       action: "customer.merge",

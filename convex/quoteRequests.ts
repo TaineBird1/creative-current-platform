@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, auditWrite } from "./lib/tenancy";
+import { patchDoc } from "./lib/db";
 
 /**
  * The one authenticated tenant module M1 needs: someone has to read the quote
@@ -113,7 +114,7 @@ export const setStatus = tenantMutation("manager")({
   },
   handler: async (ctx, { requestId, status }) => {
     const request = assertOwned(ctx.tenant, await ctx.db.get(requestId));
-    await ctx.db.patch(requestId, { status });
+    await patchDoc(ctx, requestId, { status });
     await auditWrite(ctx, ctx.tenant, {
       action: "quoteRequest.setStatus",
       entityTable: "quoteRequests",

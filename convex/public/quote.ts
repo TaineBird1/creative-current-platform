@@ -1,5 +1,5 @@
 import { v, ConvexError } from "convex/values";
-import { mutation } from "../_generated/server";
+import { mutation, query } from "../_generated/server";
 import { safeParseSiteConfig } from "@cc/site-config";
 import { hashToken } from "../lib/invites";
 import { toE164 } from "../lib/phone";
@@ -278,6 +278,77 @@ export const accept = mutation({
       currency: quote.currency,
       alreadyAccepted: false,
       jobCreated: location !== null,
+    };
+  },
+});
+
+/**
+ * THE QUOTE, TO WHOEVER HOLDS THE LINK.
+ *
+ * `accept` existed without this, which meant the only thing a customer could
+ * do with a quote link was agree to a number they could not see. Nobody
+ * accepts a price sight unseen, so in practice the link was unusable and the
+ * whole quote flow stopped at the back office.
+ *
+ * Same shape as `public/invoice.view`, and for the same reasons: the token is
+ * the credential because the reader has no account and never will; one
+ * document and nothing else; assembled field by field so a column added to
+ * `quotes` is never published by accident.
+ *
+ * WHY THE CLIENT NAME IS JOINED, when `public/invoice.view` deliberately does
+ * not join `clients`. There it was avoidable — the invoice snapshots
+ * `billToName`. Here the customer has to be told WHO is quoting them, and a
+ * quote that does not name the business is not a document anybody would act
+ * on. The disclosure is narrow and not enumerable: it takes the 256-bit token
+ * for one specific quote to learn one business's trading name, which that
+ * business publishes on its own website anyway. Nothing else about the client
+ * is returned, and no id of any kind is.
+ *
+ * IT DOES NOT LEAK WHETHER A LINK IS MERELY WRONG. One refusal sentence for
+ * unknown and mistyped, exactly as `accept` does, so the two agree.
+ */
+export const view = query({
+  args: { token: v.string() },
+  handler: async (ctx, { token }) => {
+    const tokenHash = await hashToken(token);
+
+    const quote = await ctx.db
+      .query("quotes")
+      .withIndex("by_acceptTokenHash", (q) => q.eq("acceptTokenHash", tokenHash))
+      .unique();
+
+    if (!quote) throw rejected("that link is not valid");
+    if (quote.status === "draft") throw rejected("that quote has not been sent yet");
+    if (quote.status === "declined") throw rejected("that quote was withdrawn");
+
+    const client = await ctx.db.get(quote.clientId);
+
+    /*
+     * Expiry is REPORTED, not refused. A customer who opens an expired quote
+     * needs to be told it lapsed and what to do about it — refusing the link
+     * outright reads as a broken message and sends them to ring up asking why
+     * nothing works.
+     */
+    const expired = quote.status !== "accepted" && quote.expiresAt < Date.now();
+
+    return {
+      number: quote.number,
+      businessName: client?.name ?? null,
+      lineItems: quote.lineItems.map((line) => ({
+        description: line.description,
+        quantity: line.quantity,
+        unitPriceCents: line.unitPriceCents,
+        lineTotalCents: Math.round(line.unitPriceCents * line.quantity),
+      })),
+      subtotalCents: quote.subtotalCents,
+      totalCents: quote.totalCents,
+      currency: quote.currency,
+      expiresAt: quote.expiresAt,
+      expired,
+      accepted: quote.status === "accepted",
+      acceptedAt: quote.acceptedAt ?? null,
+      /** Whether pressing accept would do anything. The page asks, not guesses. */
+      acceptable: quote.status === "sent" && !expired,
     };
   },
 });

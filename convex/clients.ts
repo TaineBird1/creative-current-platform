@@ -165,6 +165,8 @@ export const createExternal = ownerMutation({
  */
 export type ClientBrand = {
   name: string;
+  /** Every figure this client's screens render is in it. Never assumed ZAR. */
+  currency: "ZAR" | "USD" | "EUR" | "GBP" | "NAD" | "BWP";
   colour: string | null;
   /*
    * The real ramp type, not `unknown`. `accentStyle` indexes every step, so a
@@ -190,6 +192,7 @@ export const brand = tenantQuery("staff")({
 
     return {
       name: client.name,
+      currency: client.currency,
       colour: client.brandColour ?? null,
       accent: parsed?.success ? parsed.data.brand.accent : null,
     };

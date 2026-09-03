@@ -89,6 +89,20 @@ const PUBLIC_ROUTES: readonly PublicRoute[] = [
       segments.length === 2 && segments[0] === "i" && segments[1]!.length > 0,
   },
   {
+    id: "quote-accept",
+    why:
+      "THE QUOTE. Same shape as the invoice link and the same reason: the customer has " +
+      "no account, the token is the credential, and a login here is a quote nobody accepts.",
+    /*
+     * Matched on shape, not on a valid-looking token — identical reasoning to
+     * `invoice-view`. A link truncated by a chat client must reach the page and
+     * be told by the backend that it is not valid, not redirected to a sign-in
+     * screen telling a customer they need an account.
+     */
+    matches: (segments) =>
+      segments.length === 2 && segments[0] === "q" && segments[1]!.length > 0,
+  },
+  {
     id: "preview-harness",
     why:
       "Dev-only fixtures harness. Listed rather than left implicit — its point is to be " +

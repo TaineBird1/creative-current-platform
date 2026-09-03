@@ -521,6 +521,274 @@ export async function dispatch(ctx: MutationCtx, input: DispatchInput): Promise<
 }
 
 /* ==========================================================================
+ * CLIENT-DIRECTED MESSAGES — a second choke point, deliberately.
+ *
+ * `dispatch` above sends to a CLIENT'S CUSTOMER. Everything it enforces is
+ * about that relationship: consent the customer gave, a prospecting list the
+ * customer might be on, and quiet hours the CLIENT configured to protect
+ * their own audience.
+ *
+ * This sends to the CLIENT — an invoice from us, an invite to their own back
+ * office. Almost none of those rules survive the change of recipient, and the
+ * tempting move is to add a flag to `dispatch` and branch. That is how one
+ * function ends up with two meanings and a bug in whichever half the reader
+ * was not thinking about.
+ *
+ * WHY QUIET HOURS ARE NOT CONSULTED, AND WHY THAT IS NOT AN EXEMPTION.
+ *
+ * `INTERRUPTS_QUIET_HOURS` is a list of message types that may wake somebody
+ * during a window their business configured. Putting "invoice.issued" on it
+ * would be a category error, not a policy choice: a client's quiet hours are
+ * that client's setting about THEIR CUSTOMERS' evenings. It is not a setting
+ * they made about themselves, and it cannot be read as one — a business that
+ * sets 20:00-08:00 so their customers are not pestered has said nothing at
+ * all about when they personally want an invoice.
+ *
+ * So the config is not in scope here, and this function is built so it cannot
+ * come into scope: `DispatchToClientInput` HAS NO TIMEZONE FIELD, and nothing
+ * below reads one off the client row. That is capability removal rather than
+ * a rule to obey — there is no value to pass and nothing to forget to check.
+ * A guard test asserts the identifier never appears in this function, so
+ * "fixing" it by adding an exemption entry fails CI rather than shipping.
+ *
+ * WHAT DOES SURVIVE: the freshness window, and for exactly the reason it
+ * exists on the other path. An invoice queued at 16:00 and stuck behind a
+ * dead drain until 03:00 must not arrive at 03:00. That is the recovered-
+ * backlog failure, and it does not care who the recipient is. So the send
+ * window is anchored to when the thing HAPPENED, expires after an hour, and
+ * past it the message waits for a civilised hour in OUR timezone — a
+ * constant we own, not a column the client set for another purpose.
+ *
+ * WHAT DOES NOT SURVIVE, and this is the part worth arguing with:
+ *
+ *   CONSENT. The `consents` table is keyed on `customerId`; a client is not a
+ *   customer and has no row there, so the check is not merely inconvenient,
+ *   it is unanswerable. The lawful basis is CONTRACT — they are paying us
+ *   monthly and an invoice is the document that relationship produces. POPIA
+ *   s69 governs direct marketing. This is not that, and calling it consent
+ *   would be borrowing the word for something nobody was ever asked.
+ *
+ *   THE PROSPECTING SUPPRESSION LIST. `contactDecision` answers "did this
+ *   business ask us to leave them alone while we were selling to them". A
+ *   client is the population that said yes. Running it here would also fail
+ *   closed on every client with no phone on file, which is most of them,
+ *   which means no invoice would ever send — a check that blocks its entire
+ *   population is not a safety property.
+ *
+ * The population gate that replaces both is simpler and stronger: this
+ * function will not send to anything that is not a real client row. Demo and
+ * seed are refused below exactly as they are on the other path.
+ * ======================================================================= */
+
+/**
+ * Messages FROM the platform TO a client. Kept separate from `MessageKind`
+ * so the two populations cannot be confused at a call site, and so a type
+ * added here is never silently eligible for a customer-facing exemption.
+ */
+export type ClientMessageKind =
+  | { kind: "invoice.issued"; invoiceId: Id<"invoices"> }
+  /**
+   * A DELIBERATE second copy, which is why it carries a timestamp. See
+   * `resendInvoice`: the original send is keyed on the invoice alone so a
+   * retry can never duplicate it, and that is exactly what makes a re-send
+   * need a key of its own.
+   */
+  | { kind: "invoice.resent"; invoiceId: Id<"invoices">; at: number }
+  | { kind: "client.invite"; inviteId: Id<"invites"> };
+
+/**
+ * One key per document, because both of these are issued once.
+ *
+ * An invoice is a numbered document that exists exactly once; re-sending it
+ * is a deliberate act that mints a new link, not a retry of this one. An
+ * invite is minted per person per client, and `mintClientOwnerInvite` is
+ * called once inside the onboarding transaction.
+ */
+export function idempotencyKeyForClient(m: ClientMessageKind): string {
+  switch (m.kind) {
+    case "invoice.issued":
+      return `${m.kind}:${m.invoiceId}`;
+    case "invoice.resent":
+      // The moment, not the document. Two re-sends are two messages.
+      return `${m.kind}:${m.invoiceId}:${m.at}`;
+    case "client.invite":
+      return `${m.kind}:${m.inviteId}`;
+  }
+}
+
+/**
+ * OUR timezone, for OUR messages. A constant, not a lookup.
+ *
+ * The business runs from Durban, so a message held overnight is held until
+ * morning here. This is deliberately not `client.timezone`: reading that
+ * would make a client's own configuration govern when we may write to them,
+ * which is the confusion this whole section exists to prevent.
+ */
+export const PLATFORM_QUIET_TIMEZONE = "Africa/Johannesburg";
+
+export type DispatchToClientInput = {
+  message: ClientMessageKind;
+  clientId: Id<"clients">;
+  templateKey: string;
+  payload: Record<string, string>;
+  /**
+   * When the thing this message is about happened. REQUIRED here, unlike on
+   * the customer path where its absence safely means "no exemption".
+   *
+   * There is no safe default on this path. Absent would have to mean either
+   * "send whatever the hour", which reintroduces the 03:00 backlog, or "never
+   * fresh", which holds an invoice raised at 16:05 until the next morning for
+   * no reason. Both callers witness the event they are announcing — the
+   * invoice was just issued, the invite was just minted — so both can say.
+   */
+  triggeredAt: number;
+  now?: number;
+};
+
+export type ClientDispatchResult =
+  | { outcome: "queued"; messageId: Id<"messages">; scheduledFor: number; held: boolean }
+  | { outcome: "duplicate"; messageId: Id<"messages"> }
+  | { outcome: "suppressed_demo" }
+  | { outcome: "suppressed_lead"; reason: string }
+  | { outcome: "no_destination"; messageId: Id<"messages"> };
+
+/**
+ * THE ONLY WAY A MESSAGE TO A CLIENT IS EVER CREATED.
+ *
+ * Returns an outcome rather than throwing, same as `dispatch`, and for the
+ * same reason: a seeded client is a correct state, not an error the caller
+ * should have to catch. It matters more here — this runs inside the
+ * onboarding transaction and inside invoice issue, and a throw would roll
+ * back a client or a numbered document over an email.
+ */
+export async function dispatchToClient(
+  ctx: MutationCtx,
+  input: DispatchToClientInput,
+): Promise<ClientDispatchResult> {
+  const now = input.now ?? Date.now();
+  const idempotencyKey = idempotencyKeyForClient(input.message);
+
+  const existing = await ctx.db
+    .query("messages")
+    .withIndex("by_idempotencyKey", (q) => q.eq("idempotencyKey", idempotencyKey))
+    .unique();
+  if (existing) return { outcome: "duplicate", messageId: existing._id };
+
+  const client = await ctx.db.get(input.clientId);
+  if (!client) {
+    throw new ConvexError({ code: "NOT_FOUND", message: "No such client." });
+  }
+
+  const isDemo = client.isDemo;
+  const isSeed = client.isSeed;
+  const destination = client.primaryContactEmail?.trim() || "";
+
+  /*
+   * The row is written for every refusal below, exactly as on the customer
+   * path. An invisible drop is indistinguishable from a bug, and the outbox
+   * is the only screen that answers "did they hear from us".
+   */
+  const base = {
+    ventureId: client.ventureId,
+    clientId: input.clientId,
+    channel: "email" as const,
+    to: destination,
+    templateKey: input.templateKey,
+    payload: input.payload,
+    idempotencyKey,
+    /*
+     * The window this row's night check was computed in. Ours, always. The
+     * column is named for what it holds and this is honestly what it holds;
+     * `claimForSend` re-reads it hours later and reaches the same answer the
+     * write did, which is the whole point of storing it rather than a flag.
+     */
+    quietHoursTimezone: PLATFORM_QUIET_TIMEZONE,
+    scheduledFor: now,
+    attempts: 0,
+    isDemo,
+    isSeed,
+  };
+
+  if (isDemo || isSeed) {
+    await ctx.db.insert("messages", { ...base, status: "suppressed_demo" });
+    return { outcome: "suppressed_demo" };
+  }
+
+  /*
+   * NOWHERE TO SEND IT — checked BEFORE the lead list, and the order matters
+   * for exactly one reason: the sentence in the outbox.
+   *
+   * `recipientIsLead` fails closed on a recipient it cannot identify at all,
+   * which is the right default and the wrong ANSWER here. A client with no
+   * contact email has nothing to check, so the lead check refuses it and the
+   * outbox reads "nothing could be checked against the lead list" — sending
+   * whoever is reading it to look for a prospecting problem that does not
+   * exist, when the actual fix is one empty field on the client.
+   *
+   * Nothing is weakened by the reorder: no destination means no send either
+   * way, and there is no address for the lead check to have an opinion about.
+   */
+  if (!destination) {
+    const messageId = await ctx.db.insert("messages", {
+      ...base,
+      status: "failed",
+      error:
+        `No primary contact email is set for ${client.name}, so there was ` +
+        "nowhere to send this. Set one on the client and re-send.",
+    });
+    return { outcome: "no_destination", messageId };
+  }
+
+  /*
+   * NEVER A BUSINESS WE ARE STILL PROSPECTING.
+   *
+   * This looks redundant — the recipient is a client, and a client is by
+   * definition not a prospect — and it is not, for one specific reason: a
+   * client's `primaryContactEmail` is typed in by a person, and a typo that
+   * lands on a lead's domain would send them our invoice.
+   *
+   * `exceptClientId` is what makes it usable at all. A converted lead KEEPS
+   * its row, with `convertedClientId` pointing at the client it became, so a
+   * naive check would refuse every client we ever sourced through the call
+   * queue — which is all of them — with the message "that number belongs to a
+   * lead we are prospecting". Certain breakage, not a hypothetical.
+   */
+  const leadCheck = await recipientIsLead(ctx, {
+    email: client.primaryContactEmail ?? null,
+    exceptClientId: input.clientId,
+  });
+  if (leadCheck.verdict !== "clear") {
+    await ctx.db.insert("messages", {
+      ...base,
+      status: "suppressed_lead",
+      error: leadCheck.reason,
+    });
+    return { outcome: "suppressed_lead", reason: leadCheck.reason };
+  }
+
+  /*
+   * FRESH SENDS NOW; STALE WAITS FOR MORNING — see the section note.
+   *
+   * No client configuration is consulted. The only timezone in play is ours,
+   * and the only question asked of the clock is whether this message is still
+   * about something that just happened.
+   */
+  const quietHoursExemptUntil = input.triggeredAt + INTERRUPT_WINDOW_MS;
+  const held =
+    !mayInterrupt(now, quietHoursExemptUntil) && isQuiet(now, PLATFORM_QUIET_TIMEZONE);
+  const scheduledFor = held ? nextSendableAt(now, PLATFORM_QUIET_TIMEZONE) : now;
+
+  const messageId = await ctx.db.insert("messages", {
+    ...base,
+    status: held ? "holding_quiet_hours" : "scheduled",
+    quietHoursExemptUntil,
+    scheduledFor,
+  });
+
+  return { outcome: "queued", messageId, scheduledFor, held };
+}
+
+/* ==========================================================================
  * THE SEND SIDE.
  *
  * Everything above decides whether a row may exist. Everything below moves an
@@ -583,6 +851,24 @@ export type ClaimedMessage = {
    * copy cannot invite a reply the envelope will not deliver.
    */
   clientContactEmail: string | null;
+  /**
+   * IS THIS MESSAGE TO THE CLIENT THEMSELVES, rather than to one of their
+   * customers?
+   *
+   * Derived from the ABSENCE of a customer, not from a column: `dispatch`
+   * always writes one and `dispatchToClient` never can, so the two
+   * populations are already distinguishable and a flag would be a second
+   * source of truth that could disagree with the first.
+   *
+   * Three things downstream are backwards without it, and every one of them
+   * reaches the recipient:
+   *   - the From line would read "Renu Solar via The Creative Current" on an
+   *     invoice we sent TO Renu Solar
+   *   - the reply-to would be the client's own address, so replying to our
+   *     invoice would email themselves
+   *   - the copy would address them as though they were the customer
+   */
+  toClient: boolean;
 };
 
 /**
@@ -657,6 +943,7 @@ export async function claimForSend(
     timezone: message.quietHoursTimezone,
     attempts: message.attempts + 1,
     clientContactEmail: client?.primaryContactEmail ?? null,
+    toClient: message.customerId === undefined,
   };
 }
 

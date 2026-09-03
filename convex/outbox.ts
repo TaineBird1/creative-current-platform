@@ -176,7 +176,17 @@ async function send(claimed: ClaimedMessage): Promise<SendResult> {
    * two resolutions would eventually disagree, and the way that failure shows
    * up is a customer replying to a message that told them to.
    */
-  const replyTo = resolveReplyTo(claimed.clientContactEmail);
+  /*
+   * A CLIENT-DIRECTED MESSAGE REPLIES TO US, not to the client.
+   *
+   * `resolveReplyTo` prefers the client's own address because a customer
+   * replying to a booking confirmation is replying to the BUSINESS. Reverse
+   * the recipient and that preference becomes a bug with a very quiet failure
+   * mode: a client hits reply on our invoice and the mail goes to their own
+   * inbox, so their question reaches nobody and we never learn they asked.
+   * Passing null takes the deployment mailbox, which is ours.
+   */
+  const replyTo = resolveReplyTo(claimed.toClient ? null : claimed.clientContactEmail);
 
   const content = renderMessage({
     templateKey: claimed.templateKey,
@@ -185,6 +195,7 @@ async function send(claimed: ClaimedMessage): Promise<SendResult> {
     clientName: claimed.clientName,
     timezone: claimed.timezone,
     replyTo,
+    toClient: claimed.toClient,
   });
 
   if (!content) {
@@ -207,6 +218,7 @@ async function send(claimed: ClaimedMessage): Promise<SendResult> {
       body: content.body,
       clientName: claimed.clientName,
       replyTo,
+      toClient: claimed.toClient,
     });
   } catch (error) {
     /*

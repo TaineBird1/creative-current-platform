@@ -26,6 +26,7 @@ const PUBLIC_ALLOWLIST = new Set([
   "public/site.ts",
   "public/quote.ts",
   "public/brand.ts",
+  "public/invoice.ts",
   "http.ts",
   "auth.ts",
 ]);
@@ -1976,5 +1977,242 @@ describe("the pipeline", () => {
       offenders,
       "A lead marked converted with no client behind it makes every downstream count wrong, in the direction that flatters us.",
     ).toEqual([]);
+  });
+});
+
+describe("client-directed messages are OUT OF SCOPE of quiet hours, not exempt from them", () => {
+  /**
+   * A client's quiet hours are that client's setting about THEIR CUSTOMERS'
+   * evenings. A message from us to the client is not in that config's scope
+   * at all — a business cannot meaningfully set quiet hours on itself through
+   * a control that means something else.
+   *
+   * The tempting "fix", the day somebody finds an invoice held until 08:00,
+   * is to add `invoice.issued` to INTERRUPTS_QUIET_HOURS. That would make the
+   * category error permanent AND import the client's timezone into a decision
+   * it has no business governing. These three tests are what makes that fail
+   * CI instead of shipping.
+   */
+  const messaging = () => {
+    const file = sourceFiles.find((f) => f.path === "lib/messaging.ts");
+    expect(file, "lib/messaging.ts was not found — the walker is on the wrong tree").toBeDefined();
+    return file!;
+  };
+
+  /** The body of `dispatchToClient`, comments stripped. */
+  const clientDispatchBody = () => {
+    const code = messaging().code;
+    const from = code.indexOf("export async function dispatchToClient");
+    expect(from, "dispatchToClient has moved or been renamed").toBeGreaterThan(-1);
+    // To the next top-level close-brace, the same slice the other body guards use.
+    return code.slice(from).split("\n}")[0]!;
+  };
+
+  test("THE CLIENT PATH CANNOT SEE A CLIENT'S TIMEZONE", () => {
+    /*
+     * CAPABILITY REMOVAL, not a rule to obey. `DispatchToClientInput` has no
+     * timezone field, so there is no value to pass; and the body never reads
+     * one off the client row, so there is nothing to forget to ignore.
+     *
+     * `PLATFORM_QUIET_TIMEZONE` is ours and is a constant, which is why the
+     * match below is for the client-scoped identifiers specifically rather
+     * than for the word "timezone".
+     */
+    const body = clientDispatchBody();
+
+    expect(
+      /client\.timezone/.test(body),
+      "dispatchToClient must never read client.timezone — quiet hours are the client's " +
+        "setting about their CUSTOMERS, and a message to the client is not in its scope.",
+    ).toBe(false);
+
+    expect(
+      /input\.quietHoursTimezone/.test(body),
+      "DispatchToClientInput must not carry a timezone. Removing the field is what makes " +
+        "the rule unbreakable; a check would only be as good as whoever runs it.",
+    ).toBe(false);
+  });
+
+  test("AND THE INPUT TYPE DOES NOT OFFER ONE", () => {
+    const code = messaging().code;
+    const from = code.indexOf("export type DispatchToClientInput");
+    expect(from, "DispatchToClientInput has moved or been renamed").toBeGreaterThan(-1);
+    const type = code.slice(from, code.indexOf("};", from));
+
+    expect(
+      /timezone/i.test(type),
+      "DispatchToClientInput must have no timezone member of any name. If one is needed, " +
+        "the question to answer first is whose setting it is and what it means.",
+    ).toBe(false);
+  });
+
+  test("NO CLIENT-DIRECTED KIND MAY JOIN THE CUSTOMER EXEMPTION LIST", () => {
+    /*
+     * The list exists so a CUSTOMER who did something ninety seconds ago is
+     * not left in silence. Every entry has to be a reply to an action the
+     * recipient took. An invoice is not that, whoever is reading it.
+     */
+    const code = messaging().code;
+    const from = code.indexOf("const INTERRUPTS_QUIET_HOURS");
+    expect(from, "INTERRUPTS_QUIET_HOURS has moved or been renamed").toBeGreaterThan(-1);
+    const set = code.slice(from, code.indexOf("]);", from));
+
+    // Named individually rather than counted: a count passes if somebody
+    // swaps one entry for another.
+    for (const banned of ["invoice.issued", "invoice.resent", "client.invite"]) {
+      expect(
+        set.includes(banned),
+        `"${banned}" is client-directed and must not be in INTERRUPTS_QUIET_HOURS. ` +
+          "It is not exempt from the client's quiet hours; it was never in their scope. " +
+          "See dispatchToClient.",
+      ).toBe(false);
+    }
+
+    // And the list is still only the two it is supposed to be, so a third
+    // CUSTOMER-facing entry is also a deliberate decision rather than a drift.
+    expect(set).toContain("booking.confirmation");
+    expect(set).toContain("quote.sent");
+  });
+
+  test("the freshness window still applies, and still expires", () => {
+    /*
+     * The half that DOES survive the change of recipient. An invoice queued
+     * at 16:00 and stuck behind a dead drain until 03:00 must not land at
+     * 03:00 — that is the recovered-backlog failure, and it does not care who
+     * the recipient is.
+     */
+    const body = clientDispatchBody();
+    expect(
+      body.includes("INTERRUPT_WINDOW_MS"),
+      "dispatchToClient must anchor its send window to the triggering event. Without it, " +
+        "a drain that was down all night sends yesterday's invoices at 03:00.",
+    ).toBe(true);
+    expect(
+      body.includes("mayInterrupt"),
+      "The window must be evaluated by the shared helper, so dispatch and claim agree.",
+    ).toBe(true);
+  });
+});
+
+describe("the invoice view link exposes exactly one document", () => {
+  const publicInvoice = () => {
+    const file = sourceFiles.find((f) => f.path === "public/invoice.ts");
+    expect(file, "public/invoice.ts was not found — the walker is on the wrong tree").toBeDefined();
+    return file!.code;
+  };
+
+  test("IT NEVER READS THE CLIENTS TABLE", () => {
+    /*
+     * The token is the credential, so a leaked link is a real event to design
+     * for. It may expose the invoice it names and nothing else — which is why
+     * `billToName` is snapshotted onto the invoice rather than joined. A join
+     * here is how "one document" quietly becomes "one document plus whatever
+     * else the client row happens to hold".
+     */
+    const code = publicInvoice();
+    expect(
+      /query\("clients"\)|db\.get\(\s*\w*[Cc]lientId/.test(code),
+      "public/invoice.ts must not reach the clients table. Snapshot what the document " +
+        "needs onto the invoice at issue instead.",
+    ).toBe(false);
+  });
+
+  test("AND RETURNS NO IDENTIFIER THAT COULD REACH ANYTHING ELSE", () => {
+    const code = publicInvoice();
+    for (const leaked of ["clientId:", "ventureId:", "viewTokenHash:", "_id:"]) {
+      expect(
+        code.includes(leaked),
+        `public/invoice.ts must not return ${leaked} — an id in a public payload is an ` +
+          "invitation to try it somewhere else.",
+      ).toBe(false);
+    }
+  });
+
+  test("it resolves by token hash, never by number or id", () => {
+    /*
+     * A token derived from the invoice number would turn one leaked link into
+     * a directory of every invoice ever issued: add one and try again.
+     */
+    const code = publicInvoice();
+    expect(code).toContain("by_viewTokenHash");
+    expect(code).toContain("hashToken");
+    expect(
+      /withIndex\("by_venture_seq"|q\.eq\("number"/.test(code),
+      "The public view must resolve on the random token alone. Anything guessable is a " +
+        "directory of every invoice.",
+    ).toBe(false);
+  });
+
+  test("ONLY invoices.ts MINTS OR REVOKES A VIEW TOKEN", () => {
+    /*
+     * Same shape as every other single-writer rule here. Two places that can
+     * mint a view link are two opinions about who may read a document, and
+     * the second one will not remember to hash it.
+     */
+    const offenders = sourceFiles
+      .filter((f) => f.path !== "invoices.ts")
+      // tables/ DECLARES the column; the rule is about who WRITES it.
+      .filter((f) => !f.path.startsWith("tables/"))
+      .filter((f) => /viewTokenHash\s*:/.test(f.code))
+      .map((f) => f.path);
+
+    expect(
+      offenders,
+      "Only convex/invoices.ts may write invoices.viewTokenHash.",
+    ).toEqual([]);
+  });
+});
+
+describe("onboarding tells the client, and in an order that works", () => {
+  const onboarding = () => {
+    const file = sourceFiles.find((f) => f.path === "onboarding.ts");
+    expect(file, "onboarding.ts was not found — the walker is on the wrong tree").toBeDefined();
+    return file!.code;
+  };
+
+  test("THE LEAD IS CONVERTED BEFORE ANYTHING IS SENT", () => {
+    /*
+     * The ordering is load-bearing and it is not obvious, which is the whole
+     * reason for a test.
+     *
+     * A converted lead KEEPS its row — `convertedClientId` is how the pipeline
+     * answers where a client came from — so `dispatchToClient` has to ask
+     * whether a recipient is a business we are still prospecting, and it
+     * excuses exactly the lead that became THIS client by reading that field.
+     * Write it after the invoice, as this function originally did, and the
+     * field is still empty when the invite and the invoice are queued: both
+     * are refused as outreach to a prospect, silently, into an outbox nobody
+     * is watching on day one.
+     */
+    const code = onboarding();
+    const converted = code.indexOf('status: "converted"');
+    // The CALL SITE, not the import at the top of the file — which sits at
+    // index ~0 and would make this test pass no matter where the write went.
+    const invite = code.indexOf('kind: "client.invite"');
+    // Likewise the call, not the import.
+    const invoice = code.indexOf("await issueInvoiceFor(");
+
+    expect(converted, "the lead conversion has moved or been renamed").toBeGreaterThan(-1);
+    expect(invite, "the invite email has gone").toBeGreaterThan(-1);
+    expect(invoice, "issueInvoiceFor has moved").toBeGreaterThan(-1);
+
+    expect(
+      converted < invite,
+      "Mark the lead converted BEFORE queueing the invite, or the lead check refuses it.",
+    ).toBe(true);
+    expect(
+      converted < invoice,
+      "Mark the lead converted BEFORE issuing the invoice, or its email is refused too.",
+    ).toBe(true);
+  });
+
+  test("and the invite is actually queued, not just minted", () => {
+    /*
+     * This was the named gap for a fortnight: the invite was created inside
+     * the transaction and handed back as a plaintext token for somebody to
+     * carry out by hand, so onboarding "worked" and the client heard nothing.
+     */
+    const code = onboarding();
+    expect(code).toContain('kind: "client.invite"');
   });
 });

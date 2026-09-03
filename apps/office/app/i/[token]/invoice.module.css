@@ -1,0 +1,347 @@
+/*
+ * ONE INVOICE, ON A PHONE AND ON PAPER.
+ *
+ * Two readers with different needs and the same document. The bookkeeper
+ * prints it; the owner opens it on a phone in a van. The layout is a single
+ * column at every width for that reason — a document that reflows into
+ * columns is a document that prints differently from how it looked, and the
+ * one thing this page cannot afford is a total that moved.
+ *
+ * Tokens only. Every colour, size, space and radius comes from
+ * packages/tokens; `pnpm lint:tokens` fails the build otherwise.
+ */
+
+.page {
+  min-height: 100dvh;
+  padding: var(--space-l) var(--space-s) var(--space-2xl);
+  display: flex;
+  justify-content: center;
+}
+
+.doc {
+  width: 100%;
+  max-width: 46rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-l);
+}
+
+/* ---------- masthead ------------------------------------------------- */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-m);
+  padding-bottom: var(--space-m);
+  border-bottom: var(--border-hairline) solid var(--border-strong);
+}
+
+.issuer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+.issuerName {
+  font-size: var(--step-2);
+}
+
+.tradingName,
+.address,
+.reg {
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  font-style: normal;
+  line-height: var(--leading-snug);
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  /*
+   * Left-aligned even on wide screens. Right-aligning a block whose longest
+   * line is a business name produces a ragged left edge next to the numbers,
+   * and the numbers are what people are looking for.
+   */
+  min-width: 12rem;
+}
+
+.kicker {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-top: var(--space-2xs);
+}
+
+.number,
+.billTo,
+.date {
+  font-size: var(--step-0);
+  color: var(--text);
+}
+
+.number {
+  font-family: var(--font-mono);
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+/* ---------- what is owed --------------------------------------------- */
+
+/*
+ * The answer to the only question the reader actually has, above the detail
+ * that justifies it. Tone comes from the signal tokens, which are about money
+ * rather than about brand — this document deliberately carries no accent.
+ */
+.status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  padding: var(--space-s) var(--space-m);
+  border-radius: var(--radius-m);
+  border-left: var(--space-3xs) solid var(--border-strong);
+  background: var(--bg-sunken);
+}
+
+.status[data-tone="owing"] {
+  border-left-color: var(--signal-info);
+}
+
+.status[data-tone="overdue"] {
+  border-left-color: var(--signal-danger);
+}
+
+.status[data-tone="settled"] {
+  border-left-color: var(--signal-positive);
+}
+
+.status[data-tone="void"] {
+  border-left-color: var(--text-faint);
+}
+
+.statusLabel {
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+}
+
+.status[data-tone="overdue"] .statusLabel {
+  color: var(--signal-danger);
+}
+
+.status[data-tone="settled"] .statusLabel {
+  color: var(--signal-positive);
+}
+
+.statusDetail {
+  color: var(--text-muted);
+}
+
+/* ---------- the lines ------------------------------------------------ */
+
+.lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+}
+
+.lines th,
+.lines td {
+  text-align: left;
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--border-hairline) solid var(--border);
+  vertical-align: top;
+}
+
+.lines thead th {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border-bottom-color: var(--border-strong);
+}
+
+/*
+ * Every figure is mono with tabular numerals, so a column of rand amounts
+ * aligns on the decimal. That is the whole reason DESIGN.md picked a mono for
+ * data — it is measurement, not costume.
+ */
+.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lines tfoot th {
+  text-align: right;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.totalRow th,
+.totalRow td {
+  font-size: var(--step-0);
+  color: var(--text);
+  border-bottom-width: 0;
+  padding-top: var(--space-xs);
+}
+
+.totalRow td {
+  font-weight: 600;
+}
+
+/* ---------- how to pay ----------------------------------------------- */
+
+.pay {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+  padding: var(--space-m);
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+
+.payTitle {
+  font-size: var(--step-1);
+}
+
+/*
+ * THE REFERENCE GETS ITS OWN BOX. It is the one value on this page that has
+ * to survive being retyped into a banking app from memory, and a payment
+ * without it is money that reconciles to nothing.
+ */
+.reference {
+  padding: var(--space-s) var(--space-m);
+  border-radius: var(--radius-s);
+  background: var(--bg-sunken);
+}
+
+.referenceValue {
+  font-family: var(--font-mono);
+  font-size: var(--step-2);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  /* Selectable as one word, so a double-click copies the whole reference. */
+  user-select: all;
+}
+
+.bank {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-3xs) var(--space-m);
+  margin: 0;
+  font-size: var(--step--1);
+}
+
+.bank dt {
+  color: var(--text-faint);
+}
+
+.bank dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  user-select: all;
+}
+
+.noBank,
+.terms {
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+/* ---------- footer and refusal --------------------------------------- */
+
+.footer {
+  font-size: var(--step--1);
+  color: var(--text-faint);
+  border-top: var(--border-hairline) solid var(--border);
+  padding-top: var(--space-s);
+}
+
+.refusal {
+  max-width: var(--measure);
+  align-self: center;
+  margin-top: var(--space-2xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  text-align: center;
+}
+
+.refusalTitle {
+  font-size: var(--step-2);
+}
+
+.refusalReason {
+  color: var(--text);
+}
+
+.refusalHelp {
+  color: var(--text-muted);
+  font-size: var(--step--1);
+}
+
+/* ---------- paper ----------------------------------------------------- */
+
+/*
+ * THE ENTIRE PDF STRATEGY. "Save as PDF" from any browser produces the
+ * document, so nothing in this codebase ever renders one — no PDF library, no
+ * storage, and no stale copy to regenerate when a payment lands.
+ *
+ * What changes on paper: the ground goes white (a warm tint costs ink and
+ * prints grey), the boxes become rules rather than fills for the same reason,
+ * and nothing is allowed to break across a page in the middle of a number.
+ */
+@media print {
+  .page {
+    padding: 0;
+    min-height: auto;
+    background: var(--ink-0);
+  }
+
+  .doc {
+    max-width: none;
+    gap: var(--space-m);
+  }
+
+  .status,
+  .pay,
+  .reference {
+    background: transparent;
+    border: var(--border-hairline) solid var(--border-strong);
+  }
+
+  /*
+   * A total split from its lines, or a bank block split from its reference,
+   * is the failure that matters here — somebody pays from the half of the
+   * page they can see.
+   */
+  .status,
+  .pay,
+  .reference,
+  .bank,
+  .totalRow {
+    break-inside: avoid;
+  }
+
+  .footer {
+    /* The instruction is about the live page. On paper it is noise. */
+    display: none;
+  }
+}

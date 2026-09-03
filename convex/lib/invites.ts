@@ -22,21 +22,13 @@ export const normaliseEmail = (email: string) => email.trim().toLowerCase();
  * Tokens are stored hashed. The plaintext exists only inside the invite link,
  * so a database leak does not hand over working invites — and an invite grants
  * a role, which makes it worth the four lines.
+ *
+ * The implementation moved to lib/tokens.ts when the invoice view-link became
+ * the third caller. Re-exported here so every existing import keeps working
+ * and there is still exactly one implementation.
  */
-export async function hashToken(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-export function newInviteToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+export { hashToken } from "./tokens";
+export { newToken as newInviteToken } from "./tokens";
 
 export const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 

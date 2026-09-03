@@ -130,6 +130,22 @@ export async function getWithVerdict(
  * "cannot clear this", and dispatch refuses. Being wrongly held is a row in
  * the outbox saying why. Messaging a prospect is not undoable.
  */
+/**
+ * Is this lead row the very client we are writing to? Only true when the lead
+ * has actually been converted AND converted into this exact client — an
+ * unconverted lead is never excused, whatever id is passed.
+ */
+function isThisClient(
+  lead: { convertedClientId?: Id<"clients"> },
+  exceptClientId: Id<"clients"> | null | undefined,
+): boolean {
+  return (
+    exceptClientId !== null &&
+    exceptClientId !== undefined &&
+    lead.convertedClientId === exceptClientId
+  );
+}
+
 export type LeadRecipientVerdict =
   | { verdict: "clear" }
   | { verdict: "lead"; reason: string }
@@ -137,7 +153,28 @@ export type LeadRecipientVerdict =
 
 export async function recipientIsLead(
   ctx: QueryCtx,
-  args: { phone?: string | null; email?: string | null },
+  args: {
+    phone?: string | null;
+    email?: string | null;
+    /**
+     * A CONVERTED LEAD IS NOT A PROSPECT, and without this nothing could ever
+     * be sent to a client we sold to.
+     *
+     * `convertWonDeal` does not delete the lead row — it sets
+     * `convertedClientId`, on purpose, so the pipeline can still answer where
+     * a client came from. That leaves every client we ever sourced through
+     * the call queue permanently matching their own lead row, which is all of
+     * them. A naive check therefore refuses every invoice and every invite to
+     * every real client, with the message "a lead we are prospecting".
+     *
+     * So a caller that knows WHICH client it is writing to may name it, and a
+     * hit that already converted into exactly that client clears. Narrow on
+     * purpose: it excuses the one business this message is legitimately for
+     * and nobody else, so a typo landing on a DIFFERENT lead's domain is
+     * still caught. Absent — the customer path — excuses nothing.
+     */
+    exceptClientId?: Id<"clients"> | null;
+  },
 ): Promise<LeadRecipientVerdict> {
   try {
     /*
@@ -172,7 +209,7 @@ export async function recipientIsLead(
           .query("leads")
           .withIndex("by_phone", (q) => q.eq("phone", mine.e164))
           .first();
-        if (hit) {
+        if (hit && !isThisClient(hit, args.exceptClientId)) {
           return {
             verdict: "lead",
             reason:
@@ -209,6 +246,10 @@ export async function recipientIsLead(
        */
       const leads = await ctx.db.query("leads").collect();
       const hit = leads.find((lead) => {
+        // Skipped inside the predicate rather than after it: excusing only
+        // the FIRST match would clear a recipient that also matches a second,
+        // genuinely different lead.
+        if (isThisClient(lead, args.exceptClientId)) return false;
         if (!lead.website) return false;
         const theirs = normaliseDomain(lead.website);
         if (!theirs) return false;

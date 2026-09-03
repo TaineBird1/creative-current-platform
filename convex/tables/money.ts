@@ -110,6 +110,44 @@ export const moneyTables = {
     issuerRegistrationNumber: v.optional(v.string()),
     issuerVatNumber: v.optional(v.string()),
     /**
+     * WHO IT WAS BILLED TO, snapshotted for the same reason the issuer is —
+     * and for one more.
+     *
+     * A client who renames themselves must not rewrite a document somebody is
+     * already holding. That alone would justify it. What makes it required
+     * rather than nice is the PUBLIC VIEW: `public/invoice.ts` renders one
+     * invoice to whoever holds its link, and every field it needs has to be
+     * ON the invoice, because the alternative is a join to `clients` on a
+     * path that must never be able to reach one. A leaked link exposes one
+     * document, and a join is how that stops being true.
+     *
+     * Optional in the SCHEMA only because two seeded invoices predate it.
+     * `issueInvoiceFor` is the sole writer and always sets it; the public view
+     * omits the block rather than looking anything up.
+     */
+    billToName: v.optional(v.string()),
+    /**
+     * THE VIEW LINK'S CREDENTIAL. Hashed, like every other token here.
+     *
+     * The client's bookkeeper has to open this without an account — they are
+     * not a user of this system and never will be — so the token IS the
+     * authorisation. That makes three properties load-bearing, and the type
+     * cannot express any of them:
+     *   - RANDOM, from lib/tokens.ts. Not the invoice number, not the id,
+     *     not a counter. A guessable token is a directory of every invoice.
+     *   - ONE DOCUMENT. See public/invoice.ts: it resolves this hash and
+     *     reads nothing that could reach a second invoice or a client row.
+     *   - REVOCABLE, below, because a bearer credential with no off switch is
+     *     one you can only respond to by voiding the invoice.
+     */
+    viewTokenHash: v.optional(v.string()),
+    /**
+     * Set to kill a link that went to the wrong address. The invoice stays
+     * exactly as it was — revoking a link is not voiding a document, and
+     * conflating them would mean a mis-sent email destroys a valid invoice.
+     */
+    viewTokenRevokedAt: v.optional(v.number()),
+    /**
      * LIFECYCLE ONLY. Whether it is PAID is not in here, on purpose.
      *
      * This union used to carry "paid" and "overdue", and `recordPayment`
@@ -145,7 +183,8 @@ export const moneyTables = {
     .index("by_client_status", ["clientId", "status"])
     .index("by_venture_seq", ["ventureId", "numberSeq"])
     .index("by_status_dueAt", ["status", "dueAt"])
-    .index("by_providerRef", ["providerRef"]),
+    .index("by_providerRef", ["providerRef"])
+    .index("by_viewTokenHash", ["viewTokenHash"]),
 
   /**
    * IMMUTABLE LEDGER. Insert-only: no patch, no delete, no exceptions.

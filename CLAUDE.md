@@ -382,6 +382,115 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   issue from the CLI until the client half exists. Building the admin table
   first is the tempting order because it is easier and more visible to the
   person building it, which is exactly why it is the wrong one.
+- **THE CLIENT-FACING HALF IS BUILT, AND IT IS A LINK, NOT A PDF.**
+  `issueInvoiceFor` mints a random view token, snapshots `billToName`, and
+  queues the email in the SAME transaction as the document — an invoice that
+  committed while its delivery did not is an admin screen saying a client was
+  billed and a client who was never asked for money.
+  **THE TOKEN IS THE CREDENTIAL, because the reader has no account.** The
+  person who most needs to open an invoice is the client's BOOKKEEPER, who
+  does not work for us and never will. A login in front of an invoice is an
+  invoice that does not get opened, so `/i/<token>` is public — DECLARED so,
+  in `apps/office/lib/public-routes.ts`. That is the whole list of paths the
+  office serves without a session, and the middleware now DEFAULTS TO
+  PROTECTED and holds no route literals of its own. It used to list what was
+  protected instead, which made the invoice public by OMISSION — fail-open,
+  and wrong in both directions at once: a new authenticated area forgotten
+  from that list is served to anybody, and the obvious later hardening (a
+  catch-all) silently kills every invoice link already in a client's inbox,
+  surfacing a fortnight later as a client who cannot pay. `office-routes.test.ts`
+  pins the public set by EQUALITY, not membership, so a sixth public path
+  fails CI until a person edits the test — which is the moment the decision
+  gets made rather than inherited. Six negative controls, all seen red.
+  That makes three properties load-bearing and none
+  of them expressible in a type: the token is 256 random bits from
+  `lib/tokens.ts` (never the number, never the id — `paymentReference` IS the
+  invoice number, which is the opposite requirement and must never be
+  confused with this one); it is REVOCABLE, separately from voiding, because
+  a mis-sent email must not destroy a valid document; and the page resolves
+  ONE invoice and nothing else. `billToName` is snapshotted precisely so
+  `public/invoice.ts` never joins `clients`, and a guard bans the join and
+  bans returning any id.
+  **NO SERVER-SIDE PDF, and that is the whole strategy.** The page carries a
+  print stylesheet, so "save as PDF" in any browser covers the bookkeeping
+  case: no PDF library, no storage, and no stale copy to regenerate when a
+  payment lands. Build one when a real client asks, and they may not.
+  **WHERE TO PAY IS READ LIVE; WHO ISSUED IT IS A SNAPSHOT.** These pull in
+  opposite directions on purpose. `issuerLegalName` is history — converting
+  to a Pty Ltd must not rewrite documents already in inboxes. The bank block
+  is an INSTRUCTION the reader is about to act on, and a snapshotted account
+  that has since closed sends a real payment into a dead one.
+  **NO LINK ORIGIN, NO INVOICE.** `SITE_URL` unset refuses the issue, before
+  a number is taken. Deliberately the opposite answer to a booking with an
+  unreachable customer: that is a fact about the WORLD and refusing would lose
+  real work, while this is a fact about the DEPLOYMENT, fixed in one command,
+  and proceeding burns a number on a document nobody can open.
+- **QUIET HOURS ARE SCOPED TO CUSTOMER-DIRECTED MESSAGES. CLIENT-DIRECTED
+  MESSAGES DO NOT CONSULT THE CONFIG AT ALL.**
+  A client's quiet hours are THAT CLIENT'S setting about THEIR CUSTOMERS'
+  evenings. A business that sets 20:00-08:00 so their customers are not
+  pestered has said nothing whatever about when they personally want an
+  invoice — so adding `invoice.issued` to `INTERRUPTS_QUIET_HOURS` would be a
+  CATEGORY ERROR, not a policy choice. A client cannot meaningfully set quiet
+  hours on themselves through a control that means something else.
+  So there are TWO choke points, not one function with a flag:
+  `dispatch` (to a customer) and `dispatchToClient` (to the client). The
+  second is built so the config cannot come into scope — `DispatchToClientInput`
+  HAS NO TIMEZONE FIELD and nothing reads `client.timezone`. Capability
+  removal, per the barrier rule: there is no value to pass and nothing to
+  forget to check. Guard tests fail on both, and on any client-directed kind
+  appearing in `INTERRUPTS_QUIET_HOURS`, so the tempting "fix" fails CI.
+  **THE FRESHNESS WINDOW SURVIVES, because the 03:00 backlog does not care
+  who you are.** An invoice queued at 16:00 and stuck behind a dead drain
+  until 03:00 must not land at 03:00. Fresh (within the hour) sends whatever
+  the clock says; stale waits for morning in `PLATFORM_QUIET_TIMEZONE` — OURS,
+  a constant, never the client's column. `triggeredAt` is REQUIRED here,
+  unlike on the customer path where absent safely means no exemption: there is
+  no safe default, and both callers witnessed the event they are announcing.
+  **CONSENT AND THE PROSPECTING SUPPRESSION LIST ARE BOTH ABSENT, and that is
+  argued rather than assumed.** `consents` is keyed on `customerId`, so for a
+  client the check is unanswerable rather than merely inconvenient; the lawful
+  basis is CONTRACT. `contactDecision` answers "did this business ask us to
+  stop while we were selling to them", and a client is the population that
+  said yes — it would also fail closed on every client with no phone on file,
+  and a check that blocks its entire population is not a safety property. The
+  population gate that replaces both is stronger: nothing sends to anything
+  that is not a real, non-demo, non-seed client row.
+- **A CONVERTED LEAD IS NOT A PROSPECT, AND THE ORDER OF WRITES SAYS SO.**
+  `recipientIsLead` now takes `exceptClientId`. Without it every invoice and
+  every invite to every client sourced through the call queue — which is all
+  of them — is refused as outreach to a business we are prospecting, because
+  a converted lead KEEPS its row so the pipeline can still answer where a
+  client came from. The exception is narrow: it excuses the lead that became
+  THIS client and nobody else, so a contact address typed onto the wrong
+  client is still caught.
+  **So `convertWonDeal` marks the lead converted BEFORE it invites or
+  invoices.** It used to be last, on the reasoning that it is only true once
+  everything above committed — which is still true in one serializable
+  transaction, and is no longer the whole story: written last, the field is
+  empty when the two messages are queued, and both are refused. A guard test
+  holds the ordering, because moving it back reads as a tidy-up and produces
+  an onboarding that works and reaches nobody.
+- **THE INVITE EMAIL CARRIES AN ADDRESS, NOT A TOKEN — because the token
+  grants nothing.** `invites.tokenHash` is written and has never once been
+  read: `resolveSignIn` reconciles invites by EMAIL ADDRESS on every sign-in,
+  and `by_tokenHash` is an unused index. A link that looked like a credential
+  and was not would be worse than none — it would appear to work when
+  forwarded, for reasons its holder could not guess, and fail for the person
+  who needed it. So the email says: open your back office, sign in with THIS
+  address, another one will not be recognised. That sentence is the whole
+  support-call prevention: the one thing that can go wrong is a personal
+  Gmail instead of the work address, which fails as "this platform is
+  invite-only" and reads as a broken invite.
+- **A MESSAGE TO THE CLIENT REVERSES THE FROM LINE AND THE REPLY-TO.**
+  Derived from the ABSENCE of a `customerId` — `dispatch` always writes one
+  and `dispatchToClient` never can, so the populations are already
+  distinguishable and a flag would be a second source of truth. Three things
+  are backwards without it and every one reaches the recipient: the From
+  would read "Renu Solar via The Creative Current" on an invoice we sent TO
+  Renu Solar; the reply-to would be the client's OWN address, so replying to
+  our invoice would email themselves and their question would reach nobody;
+  and the copy would address them as the customer.
 - **PAYSTACK CREATES THE SUBSCRIPTION. WE OPEN A CHECKOUT AND THEN LISTEN.**
   `subscriptions.start` writes a **pending** row and returns a link;
   `webhooks.ingest` is the only thing that may say a subscription is active.
@@ -848,7 +957,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 726 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 755 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -1129,7 +1238,7 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 726 tests
+pnpm test                        # 755 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200

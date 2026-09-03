@@ -4,6 +4,8 @@ import type { MutationCtx } from "./_generated/server";
 import { ownerMutation } from "./lib/functions";
 import { promoteSiteToLive } from "./siteConfigs";
 import { mintClientOwnerInvite } from "./invites";
+import { dispatchToClient } from "./lib/messaging";
+import { clientSignInUrl } from "./lib/links";
 import { issueInvoiceFor } from "./invoices";
 import type { Id } from "./_generated/dataModel";
 import { createBooking } from "./bookings";
@@ -501,12 +503,69 @@ export const convertWonDeal = ownerMutation({
       });
     }
 
+    /* ------------------------------------------------------ the lead closes */
+
+    /*
+     * THE WRITE `deals.advance` REFUSED TO MAKE, and it is still only true
+     * because this is one serializable transaction — every partial state
+     * below would leave a lead marked converted with nothing behind it.
+     *
+     * IT USED TO BE LAST, and the order is now load-bearing rather than
+     * cosmetic. A converted lead KEEPS its row, so `dispatchToClient` has to
+     * ask whether a recipient is a business we are still prospecting, and it
+     * excuses exactly the lead that became THIS client — by reading
+     * `convertedClientId`. Written after the invoice, that field is still
+     * empty when the invoice email is queued, so the client's own invite and
+     * their first invoice would both be refused as outreach to a prospect.
+     * Silently, with a row in the outbox nobody was watching yet.
+     *
+     * So: convert first, then tell them. Moving this back down is a working
+     * onboarding that reaches nobody, which is the failure mode this whole
+     * transaction exists to rule out.
+     */
+    await ctx.db.patch(deal.leadId, {
+      status: "converted",
+      convertedClientId: clientId,
+    });
+
     /* ------------------------------------------------------ access and work */
 
     const invite = await mintClientOwnerInvite(ctx, {
       clientId,
       email: ownerEmail,
       createdBy: ctx.platform.userId,
+    });
+
+    /*
+     * AND THE CLIENT IS TOLD. This was the named gap: the invite was minted
+     * inside the transaction and then handed back as a plaintext token for
+     * somebody to carry out by hand, which meant onboarding worked and the
+     * client heard nothing until a phone call happened.
+     *
+     * NO TOKEN IN THE EMAIL, and that is not an omission. `resolveSignIn`
+     * reconciles invites by EMAIL ADDRESS on every sign-in — nothing has ever
+     * read `invites.tokenHash` back — so the token grants precisely nothing.
+     * Putting one in a link would be handing somebody a credential that is
+     * not one: it would appear to work when forwarded, for reasons its holder
+     * could not guess, and it would fail for the person who needed it. The
+     * email carries the address to sign in at and the instruction that only
+     * this email address will be recognised, which is the truth.
+     *
+     * The plaintext token is still returned below. It is what the invite row
+     * is keyed on if the token ever becomes a real credential, and returning
+     * it costs nothing.
+     */
+    const inviteDelivery = await dispatchToClient(ctx, {
+      message: { kind: "client.invite", inviteId: invite.inviteId },
+      clientId,
+      templateKey: "client_invite",
+      payload: {
+        businessName: lead.businessName,
+        signInUrl: clientSignInUrl(slug),
+        email: ownerEmail,
+      },
+      triggeredAt: now,
+      now,
     });
 
     for (const item of CHECKLIST) {
@@ -547,18 +606,6 @@ export const convertWonDeal = ownerMutation({
       actorUserId: ctx.platform.userId,
     });
 
-    /* ------------------------------------------------------ the lead closes */
-
-    /*
-     * LAST, and only now. This is the write `deals.advance` refused to make,
-     * and it is only true once everything above it committed — which, in one
-     * transaction, it has.
-     */
-    await ctx.db.patch(deal.leadId, {
-      status: "converted",
-      convertedClientId: clientId,
-    });
-
     await ctx.db.insert("auditLog", {
       actorUserId: ctx.platform.userId,
       clientId,
@@ -579,13 +626,25 @@ export const convertWonDeal = ownerMutation({
       backOffice: `/c/${slug}`,
       inviteId: invite.inviteId,
       /**
-       * THE ONLY TIME THE PLAINTEXT EXISTS. Nothing stores it, and no email
-       * sender is wired to this path — so if it is not carried out of here and
-       * given to the client, the invite is unusable and they cannot sign in.
+       * THE ONLY TIME THE PLAINTEXT EXISTS, and it is no longer load-bearing:
+       * the invite is delivered by email above, and sign-in reconciles by
+       * address rather than by token. Returned because the row is keyed on it
+       * and that costs nothing to hand back.
        */
       inviteToken: invite.token,
+      /**
+       * WHAT ACTUALLY HAPPENED TO THE TWO MESSAGES, never assumed.
+       *
+       * The person who just converted a deal is on the phone with the client
+       * and can still ask for a different address — the same reasoning as
+       * `reachable` on a booking. `queued` is not `sent`; the outbox is what
+       * says that.
+       */
+      inviteDelivery: inviteDelivery.outcome,
+      invoiceDelivery: invoice.delivery,
       invoiceNumber: invoice.number,
       paymentReference: invoice.paymentReference,
+      invoiceUrl: invoice.viewUrl,
       totalCents: invoice.totalCents,
     };
   },

@@ -1,5 +1,6 @@
 import { v, ConvexError } from "convex/values";
 import { ownerMutation, platformQuery } from "./lib/functions";
+import { patchDoc, replaceDoc } from "./lib/db";
 
 /**
  * WHO IS ISSUING THE INVOICE.
@@ -152,7 +153,7 @@ export const set = ownerMutation({
      * correcting a bank account cannot rewrite documents a client is holding.
      */
     if (existing) {
-      await ctx.db.replace(existing._id, row);
+      await replaceDoc(ctx, existing._id, row);
       return { issuerId: existing._id, created: false };
     }
     return { issuerId: await ctx.db.insert("issuers", row), created: true };
@@ -186,7 +187,7 @@ export const confirm = ownerMutation({
     refusePlaceholder("legal name", issuer.legalName);
 
     const now = Date.now();
-    await ctx.db.patch(issuer._id, { confirmedAt: now, confirmedBy: ctx.platform.userId });
+    await patchDoc(ctx, issuer._id, { confirmedAt: now, confirmedBy: ctx.platform.userId });
     return { confirmedAt: now };
   },
 });

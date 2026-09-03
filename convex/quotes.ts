@@ -2,9 +2,13 @@ import { v, ConvexError } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { tenantQuery, tenantMutation } from "./lib/functions";
-import { assertOwned, auditWrite } from "./lib/tenancy";
+import { queueQuoteSentFor } from "./messages";
+import { quoteLink } from "./lib/links";
+import type { DispatchResult } from "./lib/messaging";
+import { assertOwned, auditWrite, type TenantContext } from "./lib/tenancy";
 import { assertCents } from "./lib/money";
 import { hashToken, newInviteToken } from "./lib/invites";
+import { patchDoc } from "./lib/db";
 
 /**
  * QUOTES — priced work, sent to a customer, accepted by a link.
@@ -103,7 +107,7 @@ async function nextNumber(ctx: MutationCtx, ventureId: Id<"ventures">): Promise<
    * than both taking the same number. Numbers must never collide: a customer
    * accepting "QUO-0007" must be accepting exactly one document.
    */
-  await ctx.db.patch(counter._id, { next: counter.next + 1 });
+  await patchDoc(ctx, counter._id, { next: counter.next + 1 });
   return `${QUOTE_SERIES}-${String(counter.next).padStart(4, "0")}`;
 }
 
@@ -268,34 +272,171 @@ export const create = tenantMutation("manager")({
   },
 });
 
-export const send = tenantMutation("staff")({
+/**
+ * Everything both send paths must be true of, in one place.
+ *
+ * Both act only on a DRAFT, and that is what keeps them from treading on each
+ * other: once a quote is `sent`, neither can run, so a link already in a
+ * customer's hands can never be invalidated by the other route being taken
+ * afterwards.
+ */
+async function assertSendable(
+  ctx: MutationCtx,
+  tenant: TenantContext,
+  quoteId: Id<"quotes">,
+) {
+  const quote = assertOwned(tenant, await ctx.db.get(quoteId));
+  if (quote.status !== "draft") {
+    throw new ConvexError({
+      code: "NOT_A_DRAFT",
+      message: `${quote.number} has already gone out.`,
+    });
+  }
+  if (quote.expiresAt < Date.now()) {
+    throw new ConvexError({
+      code: "ALREADY_EXPIRED",
+      message: `${quote.number} expired before it went out. Issue a new one.`,
+    });
+  }
+  return quote;
+}
+
+/**
+ * RECORD THAT THE CLIENT HANDED THE QUOTE OVER THEMSELVES.
+ *
+ * Renamed from `send`, which is the whole point of the change. It never sent
+ * anything: it set a status and wrote an audit row, so a quote could sit at
+ * `sent` having reached nobody, and the screen, the list and the audit trail
+ * would all agree it had gone out. A name that asserts something the function
+ * does not do is the failure this codebase refuses everywhere else — the no-op
+ * driver that returns success, the outbox that must never say delivered.
+ *
+ * This is the honest version and it has a real use: the client copies the
+ * accept link into their own WhatsApp thread, which is how this business
+ * actually works, and then tells the system they did. `sendToCustomer` below
+ * is the path that genuinely dispatches.
+ */
+export const markSent = tenantMutation("staff")({
   args: { quoteId: v.id("quotes") },
   handler: async (ctx, { quoteId }): Promise<{ quoteId: Id<"quotes">; number: string }> => {
-    const quote = assertOwned(ctx.tenant, await ctx.db.get(quoteId));
-    if (quote.status !== "draft") {
-      throw new ConvexError({
-        code: "NOT_A_DRAFT",
-        message: `${quote.number} has already been sent.`,
-      });
-    }
-    if (quote.expiresAt < Date.now()) {
-      throw new ConvexError({
-        code: "ALREADY_EXPIRED",
-        message: `${quote.number} expired before it was sent. Issue a new one.`,
-      });
-    }
+    const quote = await assertSendable(ctx, ctx.tenant, quoteId);
 
-    await ctx.db.patch(quoteId, { status: "sent" });
+    await patchDoc(ctx, quoteId, { status: "sent" });
     await auditWrite(ctx, ctx.tenant, {
-      action: "quote.send",
+      action: "quote.markSent",
       entityTable: "quotes",
       entityId: quoteId,
-      after: { status: "sent" },
+      after: { status: "sent", by: "hand" },
     });
 
     return { quoteId, number: quote.number };
   },
 });
+
+/**
+ * ACTUALLY SEND IT, through the outbox.
+ *
+ * IT MINTS A FRESH TOKEN, and that is unavoidable rather than careless: the
+ * plaintext from `create` is returned once and stored nowhere, so nothing can
+ * reconstruct the link later. Re-minting is the only way to build a message
+ * that contains one.
+ *
+ * The consequence — any link `create` already produced stops working — is
+ * contained by `assertSendable`: both paths require a DRAFT, so this cannot
+ * run on a quote whose link has already been handed over and marked sent. The
+ * screen marks a manual handover as sent for exactly that reason.
+ *
+ * THE OUTCOME IS RETURNED, not assumed. `dispatch` refuses demo and seed data,
+ * a recipient that resolves to a lead, a customer with no consent and one with
+ * nowhere to send to — all of them correct, all of them meaning the customer
+ * heard nothing. The caller is told which, while they can still act on it,
+ * rather than discovering it in the outbox next week. Same reasoning as
+ * `book` returning its confirmation outcome.
+ *
+ * The status moves to `sent` REGARDLESS, because the client did send it: the
+ * quote is no longer a draft they are working on. Whether it reached anybody
+ * is the outbox's question and it answers it honestly.
+ */
+export const sendToCustomer = tenantMutation("staff")({
+  args: { quoteId: v.id("quotes") },
+  handler: async (
+    ctx,
+    { quoteId },
+  ): Promise<{
+    quoteId: Id<"quotes">;
+    number: string;
+    /** What the messaging pipeline decided. See DispatchResult. */
+    outcome: string;
+    /** Plain-language, for a person who is standing there now. */
+    notice: string | null;
+  }> => {
+    const quote = await assertSendable(ctx, ctx.tenant, quoteId);
+
+    /*
+     * A NEW TOKEN, and the old hash is replaced in the same transaction that
+     * queues the message carrying the new one. There is no window in which a
+     * link exists that the database will not recognise.
+     */
+    const token = newInviteToken();
+    await patchDoc(ctx, quoteId, {
+      status: "sent",
+      acceptTokenHash: await hashToken(token),
+    });
+
+    const now = Date.now();
+    const result = await queueQuoteSentFor(ctx, {
+      quoteId,
+      acceptToken: token,
+      // The client is standing here having just pressed send, so they
+      // witnessed it — which is what lets this interrupt quiet hours for an
+      // hour, and no longer.
+      triggeredAt: now,
+      now,
+    });
+
+    await auditWrite(ctx, ctx.tenant, {
+      action: "quote.sendToCustomer",
+      entityTable: "quotes",
+      entityId: quoteId,
+      after: { status: "sent", by: "outbox", outcome: result.outcome },
+    });
+
+    return {
+      quoteId,
+      number: quote.number,
+      outcome: result.outcome,
+      notice: describeDispatch(result),
+    };
+  },
+});
+
+/**
+ * The sentence a person needs, or null when nothing needs saying.
+ *
+ * Null for a queued message on purpose: "it worked" is what the absence of a
+ * warning already means, and a notice for the ordinary case trains people to
+ * dismiss the ones that matter.
+ */
+function describeDispatch(result: DispatchResult): string | null {
+  switch (result.outcome) {
+    case "queued":
+      return result.held
+        ? "Queued. It will go out in the morning — it is quiet hours where this customer is."
+        : null;
+    case "duplicate":
+      return "That quote had already been sent to this customer, so nothing was sent twice.";
+    case "suppressed_demo":
+      return "This is demo or seed data, so nothing was sent.";
+    case "suppressed_consent":
+      return "Nothing was sent: this customer has not agreed to be contacted, or asked us to stop.";
+    case "suppressed_lead":
+      return `Nothing was sent — ${result.reason}`;
+    case "no_destination":
+      return "Nothing was sent: there is no email address or usable number on this customer. Send them the link yourself.";
+    default:
+      return null;
+  }
+}
 
 export const decline = tenantMutation("staff")({
   args: { quoteId: v.id("quotes") },
@@ -307,7 +448,7 @@ export const decline = tenantMutation("staff")({
         message: `${quote.number} was accepted. Cancel the job instead.`,
       });
     }
-    await ctx.db.patch(quoteId, { status: "declined" });
+    await patchDoc(ctx, quoteId, { status: "declined" });
     await auditWrite(ctx, ctx.tenant, {
       action: "quote.decline",
       entityTable: "quotes",
@@ -316,5 +457,155 @@ export const decline = tenantMutation("staff")({
       after: { status: "declined" },
     });
     return { quoteId };
+  },
+});
+
+/**
+ * MINT A FRESH ACCEPT LINK FOR A QUOTE ALREADY SENT.
+ *
+ * "Sent" was a one-way door before this. `sendToCustomer` requires a draft and
+ * the plaintext token is returned once and stored nowhere, so the moment a
+ * quote left the back office there was no way back to its link — and the
+ * things that put you there are all week-one ordinary: the customer deleted
+ * the email, it went to spam, they changed phones, or the client wants to read
+ * the address down the phone while the customer is on the line.
+ *
+ * The only remaining option was to build the whole quote again under a new
+ * number, which loses the thread and puts two documents for one job in front
+ * of a customer.
+ *
+ * THE OLD LINK STOPS WORKING, and that is the honest behaviour rather than a
+ * limitation. There is one `acceptTokenHash`, so minting replaces it. Two live
+ * links to one document is two things to remember to revoke, and the second is
+ * the one nobody remembers.
+ *
+ * IT DOES NOT SEND. `resendToCustomer` below does that, deliberately separate:
+ * minting a link is what you do to read it down a phone, and a function that
+ * emailed as a side effect would be a second message to a customer who is
+ * already talking to you.
+ */
+export const reissueAcceptLink = tenantMutation("staff")({
+  args: { quoteId: v.id("quotes") },
+  handler: async (
+    ctx,
+    { quoteId },
+  ): Promise<{ quoteId: Id<"quotes">; number: string; acceptUrl: string }> => {
+    const quote = assertOwned(ctx.tenant, await ctx.db.get(quoteId));
+
+    if (quote.status === "accepted") {
+      throw new ConvexError({
+        code: "ALREADY_ACCEPTED",
+        message: `${quote.number} has been accepted. There is nothing left to agree to.`,
+      });
+    }
+    if (quote.status === "declined") {
+      throw new ConvexError({
+        code: "WITHDRAWN",
+        message: `${quote.number} was withdrawn. Build a new quote instead.`,
+      });
+    }
+    if (quote.expiresAt < Date.now()) {
+      throw new ConvexError({
+        code: "EXPIRED",
+        message: `${quote.number} expired on its own terms. Build a new one — the price has moved.`,
+      });
+    }
+
+    const token = newInviteToken();
+    await patchDoc(ctx, quoteId, {
+      acceptTokenHash: await hashToken(token),
+      acceptLinkResends: (quote.acceptLinkResends ?? 0) + 1,
+    });
+
+    await auditWrite(ctx, ctx.tenant, {
+      action: "quote.reissueAcceptLink",
+      entityTable: "quotes",
+      entityId: quoteId,
+      after: { resends: (quote.acceptLinkResends ?? 0) + 1 },
+    });
+
+    return { quoteId, number: quote.number, acceptUrl: quoteLink(token) };
+  },
+});
+
+/**
+ * SEND IT AGAIN, on a fresh link.
+ *
+ * A NEW IDEMPOTENCY KEY, carried by the resend ordinal — see
+ * `idempotencyKeyFor`. Without it the outbox would refuse this as a duplicate
+ * of the original send, which is the silent failure that matters most here: a
+ * customer says they never got the quote, the client presses send, and the
+ * system decides on their behalf that they did.
+ *
+ * The standing preference settles the cost. A quote arriving twice is mildly
+ * annoying. One that never arrives is a job that goes to whoever did answer.
+ */
+export const resendToCustomer = tenantMutation("staff")({
+  args: { quoteId: v.id("quotes") },
+  handler: async (
+    ctx,
+    { quoteId },
+  ): Promise<{
+    quoteId: Id<"quotes">;
+    number: string;
+    outcome: string;
+    notice: string | null;
+  }> => {
+    const quote = assertOwned(ctx.tenant, await ctx.db.get(quoteId));
+
+    if (quote.status === "draft") {
+      throw new ConvexError({
+        code: "NOT_SENT_YET",
+        message: `${quote.number} has not gone out once yet.`,
+      });
+    }
+    if (quote.status === "accepted") {
+      throw new ConvexError({
+        code: "ALREADY_ACCEPTED",
+        message: `${quote.number} has been accepted already.`,
+      });
+    }
+    if (quote.status === "declined") {
+      throw new ConvexError({
+        code: "WITHDRAWN",
+        message: `${quote.number} was withdrawn. Build a new quote instead.`,
+      });
+    }
+    if (quote.expiresAt < Date.now()) {
+      throw new ConvexError({
+        code: "EXPIRED",
+        message: `${quote.number} has expired. Build a new one rather than re-sending a dead price.`,
+      });
+    }
+
+    const resend = (quote.acceptLinkResends ?? 0) + 1;
+    const token = newInviteToken();
+    await patchDoc(ctx, quoteId, {
+      acceptTokenHash: await hashToken(token),
+      acceptLinkResends: resend,
+    });
+
+    const now = Date.now();
+    const result = await queueQuoteSentFor(ctx, {
+      quoteId,
+      acceptToken: token,
+      resend,
+      triggeredAt: now,
+      now,
+    });
+
+    await auditWrite(ctx, ctx.tenant, {
+      action: "quote.resendToCustomer",
+      entityTable: "quotes",
+      entityId: quoteId,
+      after: { resend, outcome: result.outcome },
+    });
+
+    return {
+      quoteId,
+      number: quote.number,
+      outcome: result.outcome,
+      notice: describeDispatch(result),
+    };
   },
 });

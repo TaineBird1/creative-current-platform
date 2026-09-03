@@ -406,7 +406,7 @@ describe("accepting a quote does not guess a branch", () => {
       customerId,
       lineItems: [{ description: "5 kW hybrid inverter", quantity: 1, unitPriceCents: 350000 }],
     });
-    await owner.mutation(api.quotes.send, { clientSlug: "alpha", quoteId });
+    await owner.mutation(api.quotes.markSent, { clientSlug: "alpha", quoteId });
     return { acceptToken };
   }
 

@@ -52,6 +52,7 @@ const INTENDED_PUBLIC_ROUTES = [
   "client-sign-in",
   "invoice-view",
   "preview-harness",
+  "quote-accept",
   "root",
 ] as const;
 
@@ -135,6 +136,29 @@ describe("the exception actually works", () => {
     expect(requiresSession("/i")).toBe(true);
     expect(requiresSession("/i/")).toBe(true);
     expect(requiresSession("/i/token/extra")).toBe(true);
+  });
+});
+
+describe("the quote link is public for the same reason the invoice is", () => {
+  /*
+   * A customer reading a quote has no account and never will. The token is the
+   * credential; a login in front of it is a quote nobody accepts, which is a
+   * job nobody wins.
+   */
+  test("a quote link needs no session", () => {
+    expect(requiresSession(`/q/${"b".repeat(64)}`)).toBe(false);
+  });
+
+  test("a mangled token still reaches the page", () => {
+    // Told "that link is not valid" by the backend that knows, rather than
+    // sent to a sign-in screen that is wrong and unfixable for them.
+    expect(requiresSession("/q/truncated")).toBe(false);
+  });
+
+  test("but /q alone, and anything deeper, is not the document", () => {
+    expect(requiresSession("/q")).toBe(true);
+    expect(requiresSession("/q/")).toBe(true);
+    expect(requiresSession("/q/token/extra")).toBe(true);
   });
 });
 

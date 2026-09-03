@@ -1,0 +1,464 @@
+/*
+ * Operate mode, matching the Bookings screen's friction exactly: bordered
+ * rows rather than cards, nothing decorative, and every figure in mono with
+ * tabular numerals so a column of rand amounts aligns.
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-s);
+  padding-bottom: var(--space-2xs);
+  border-bottom: var(--border-hairline) solid var(--border-strong);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.count {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+.quiet {
+  margin: var(--space-m) 0 0;
+  color: var(--text-muted);
+  max-width: 46ch;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  gap: var(--space-2xs) var(--space-m);
+  padding-block: var(--space-m);
+  border-bottom: var(--border-hairline) solid var(--border);
+  align-items: start;
+}
+
+@media (min-width: 48rem) {
+  .row {
+    grid-template-columns: minmax(0, 14rem) minmax(0, 1fr) minmax(0, 12rem);
+  }
+}
+
+.name {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--step-0);
+}
+
+.number,
+.meta {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+.number {
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-normal);
+}
+
+.phone {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--accent-700);
+}
+
+.withheld {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+.answers {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: 0;
+}
+
+@media (min-width: 30rem) {
+  .answers {
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  }
+}
+
+.answerKey {
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+.answerValue {
+  margin: 0;
+  font-size: var(--step-0);
+}
+
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+.total {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs) var(--space-s);
+}
+
+/*
+ * Status as a word, not a coloured dot. The client is reading a list to find
+ * what needs doing; a legend they have to learn is slower than four words.
+ */
+.state {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.state[data-state="sent"] {
+  color: var(--text-muted);
+}
+
+.state[data-state="accepted"] {
+  color: var(--signal-positive);
+}
+
+.state[data-state="expired"] {
+  color: var(--signal-warning);
+}
+
+/* ---------- controls -------------------------------------------------- */
+
+.primary,
+.secondary,
+.quietAction {
+  appearance: none;
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  border-radius: var(--radius-m);
+  /* Thumb-sized. This screen is used standing up. */
+  min-height: 2.75rem;
+  padding-inline: var(--space-m);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.primary {
+  border: 0;
+  background: var(--accent-500);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--accent-600);
+}
+
+.primary:disabled {
+  background: var(--ink-200);
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.secondary {
+  background: var(--bg);
+  border: var(--border-hairline) solid var(--control-border);
+  color: var(--text);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--bg-sunken);
+}
+
+.quietAction {
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  padding-inline: var(--space-2xs);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.quietAction:hover {
+  color: var(--text);
+}
+
+.primary:focus-visible,
+.secondary:focus-visible,
+.quietAction:focus-visible,
+.removeLine:focus-visible,
+.input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---------- the builder ----------------------------------------------- */
+
+.builder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+  max-width: 48rem;
+}
+
+.fields {
+  display: grid;
+  gap: var(--space-s);
+}
+
+@media (min-width: 34rem) {
+  .fields {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+.label {
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+.input {
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  color: var(--text);
+  background: var(--bg);
+  border: var(--border-hairline) solid var(--control-border);
+  border-radius: var(--radius-s);
+  min-height: 2.75rem;
+  padding-inline: var(--space-xs);
+  width: 100%;
+}
+
+.input::placeholder {
+  color: var(--text-faint);
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--signal-danger);
+}
+
+/* Every figure entered is money or a count: mono, so a column of them lines
+   up while it is being typed, not only once it is saved. */
+.figure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.lineHead {
+  padding-top: var(--space-2xs);
+}
+
+.lineList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+
+.lineRow {
+  display: grid;
+  gap: var(--space-2xs);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 34rem) {
+  .lineRow {
+    grid-template-columns: minmax(0, 1fr) 5rem 8rem auto;
+    align-items: center;
+    gap: var(--space-xs);
+  }
+}
+
+.lineField,
+.lineQty,
+.linePrice {
+  display: block;
+}
+
+.removeLine {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--step--1);
+  min-height: 2.75rem;
+  padding-inline: var(--space-2xs);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.removeLine:hover {
+  color: var(--signal-danger);
+}
+
+.totalBar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-m);
+  padding-block: var(--space-s);
+  border-top: var(--border-hairline) solid var(--border-strong);
+  border-bottom: var(--border-hairline) solid var(--border-strong);
+}
+
+.totalFigure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step-2);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+}
+
+.validRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.days {
+  width: 5rem;
+}
+
+.footnote {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-faint);
+  max-width: 52ch;
+}
+
+.error {
+  margin: 0;
+  color: var(--signal-danger);
+  font-size: var(--step--1);
+}
+
+/* ---------- the handover ---------------------------------------------- */
+
+/*
+ * A HARD STOP, not a toast. The accept link is shown exactly once and can
+ * never be recovered, so this replaces the form and does not offer a way past
+ * it that looks like carrying on.
+ */
+.handover {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+  max-width: 44rem;
+}
+
+.handoverLead {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.warning {
+  margin: 0;
+  padding: var(--space-s) var(--space-m);
+  border: var(--border-hairline) solid var(--signal-warning);
+  border-radius: var(--radius-m);
+  color: var(--text);
+  max-width: 56ch;
+}
+
+/*
+ * The link is selectable text at a readable size, not a truncated pill. If
+ * every other route fails, reading it off the screen has to work.
+ */
+.linkBox {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  word-break: break-all;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-s);
+  padding: var(--space-s);
+  user-select: all;
+}
+
+.handoverActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+/* The backend's sentence about what the outbox decided. Information, not an
+   error: a message held for quiet hours went out correctly. */
+.notice {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  max-width: 46ch;
+}
+
+/*
+ * Visible to a screen reader, not to the eye.
+ *
+ * This class was USED and never DEFINED, so `s.srOnly` was undefined and every
+ * per-line label rendered as plain body text — "Description of line 1" sitting
+ * above the field it names, on every line of every quote. Invisible in source
+ * and in every test; obvious the second the screen was opened. It is the first
+ * thing the harness caught, which is the whole argument for having one.
+ *
+ * Not `display: none` and not `visibility: hidden`: both remove the element
+ * from the accessibility tree as well, which would leave the inputs unlabelled
+ * — the exact opposite of what these spans are for.
+ */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

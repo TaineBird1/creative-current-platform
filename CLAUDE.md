@@ -951,6 +951,39 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## How the guards are built, and three ways they have been fooled
 
+- **THE LADDER: INFERENCE < LITERAL TOKEN < TYPE SYSTEM. CLIMB IT WHEREVER A
+  GUARD PROTECTS SOMETHING THAT MATTERS.** Three guards were found vacuous in
+  one day, and they were vacuous in three different ways — an empty walker, a
+  latent rule nothing exercised, and one that could never fire at all. The
+  common cause is the bottom rung.
+  *WEAKEST — a guard that INFERS a fact from source.* It can be satisfied by
+  text that means something else (the three comment-stripping incidents), or
+  it can assert a thing the text is incapable of containing. The immutability
+  guard matched `db\.(patch|delete|replace)\([^)]*<table>` for two years, and
+  Convex's `db.patch(id, partial)` NEVER contains a table name — a real
+  violation reads `ctx.db.patch(entry._id, {...})`. Six append-only tables,
+  ZERO protection, never once fired. A control proved it: a function that both
+  patched AND deleted a ledger entry passed the whole suite green.
+  *STRONGER — a guard that matches a LITERAL TOKEN genuinely present.*
+  `guards.test.ts` now bans the strings `ctx.db.patch`, `ctx.db.replace` and
+  `ctx.db.delete` everywhere except `lib/db.ts`. It can fire, because it looks
+  for something that is actually there.
+  *STRONGEST — the TYPE SYSTEM.* `lib/db.ts` exports `patchDoc`/`replaceDoc`/
+  `deleteDoc`, generic over `Exclude<TableNames, ImmutableTable>`, so
+  `patchDoc(ctx, ledgerEntryId, …)` is a COMPILE ERROR (TS2345). `Id` is
+  branded with its table name, so the constraint has something real to reject.
+  Nothing has to run, nothing has to be scanned, and it cannot be satisfied by
+  accident. `MutableTable` is DERIVED from `IMMUTABLE_TABLES` rather than
+  listed twice, so adding a table there is the single edit that makes it
+  uneditable.
+  The two upper rungs work together: the type enforces the rule, the scan stops
+  it being bypassed. Same shape as `lib/leadAccess.ts` — one module owns a
+  capability, everything else is banned from the raw form.
+  **A CONTROL THAT GOES RED FOR THE WRONG REASON IS NOT A CONTROL.** The first
+  type-level controls were planted in a file that did not import `patchDoc`, so
+  they failed with `TS2304: Cannot find name` and looked like successes. Check
+  the error CODE, and always include the positive case — a mutable table must
+  still compile, or every refusal above it proves nothing.
 - **PREFER A BARRIER THAT REMOVES THE CAPABILITY OVER ONE THAT REFUSES TO USE
   IT.** Nothing has to run correctly for the first kind. `ALLOW_PREVIEW_ROUTES`
   is the worked example: the runtime check (`if flag !== "1" notFound()`) has

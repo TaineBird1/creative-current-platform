@@ -323,7 +323,7 @@ describe("a working week", () => {
       ],
     });
     say(`  quotes.create     → ${quote.number}, ${R(quote.totalCents)} (computed, never taken from the caller)`);
-    await owner.mutation(api.quotes.send, { clientSlug: "hillcrest-solar", quoteId: quote.quoteId });
+    await owner.mutation(api.quotes.markSent, { clientSlug: "hillcrest-solar", quoteId: quote.quoteId });
 
     const accepted = await h.mutation(api.public.quote.accept, { token: quote.acceptToken });
     const jobs = await h.run((ctx) => ctx.db.query("jobs").collect());

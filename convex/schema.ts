@@ -57,4 +57,16 @@ export const PLATFORM_SCOPED_TABLES = [
 ] as const;
 
 /** Append-only. No patch, no delete. Asserted by immutability tests. */
-export const IMMUTABLE_TABLES = ["ledgerEntries", "auditLog", "consents", "webhookEvents", "apiSpend"] as const;
+export const IMMUTABLE_TABLES = [
+  "ledgerEntries",
+  "auditLog",
+  "consents",
+  "webhookEvents",
+  "apiSpend",
+  /*
+   * An acceptance records what a customer AGREED TO. The only time anybody
+   * reads one is when there is a disagreement about a price, and a record that
+   * can be revised afterwards is worth nothing in exactly that moment.
+   */
+  "quoteAcceptances",
+] as const;

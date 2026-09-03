@@ -4,6 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { assertOwned, assertLocationAllowed, auditWrite } from "./lib/tenancy";
 import { assertCents, sumCents } from "./lib/money";
+import { patchDoc } from "./lib/db";
 
 /**
  * JOBS — multi-day work, as distinct from a booking.
@@ -232,7 +233,7 @@ export const setStatus = tenantMutation("staff")({
       });
     }
 
-    await ctx.db.patch(jobId, { status });
+    await patchDoc(ctx, jobId, { status });
     await auditWrite(ctx, ctx.tenant, {
       action: "job.setStatus",
       entityTable: "jobs",
@@ -260,7 +261,7 @@ export const schedule = tenantMutation("manager")({
       });
     }
 
-    await ctx.db.patch(args.jobId, {
+    await patchDoc(ctx, args.jobId, {
       scheduledFor: args.scheduledFor,
       crewUserIds: args.crewUserIds ?? job.crewUserIds,
       status: job.status === "quoted" || job.status === "accepted" ? "scheduled" : job.status,
@@ -318,7 +319,7 @@ export const addMaterials = tenantMutation("staff")({
     // bought in two currencies.
     const materialsCostCents = materialsCost(materials, job.currency);
 
-    await ctx.db.patch(args.jobId, { materials });
+    await patchDoc(ctx, args.jobId, { materials });
     await auditWrite(ctx, ctx.tenant, {
       action: "job.addMaterials",
       entityTable: "jobs",

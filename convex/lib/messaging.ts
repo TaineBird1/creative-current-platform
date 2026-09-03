@@ -5,6 +5,7 @@ import type { SendResult } from "./providers";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { hasConsent } from "./consent";
+import { patchDoc } from "./db";
 
 /**
  * THE SEND CHOKE POINT.
@@ -57,7 +58,7 @@ export type MessageKind =
   | { kind: "booking.reminder24"; bookingId: Id<"bookings">; startsAt: number; revision: number }
   | { kind: "booking.reminder1"; bookingId: Id<"bookings">; startsAt: number; revision: number }
   | { kind: "booking.cancelled"; bookingId: Id<"bookings"> }
-  | { kind: "quote.sent"; quoteId: Id<"quotes"> }
+  | { kind: "quote.sent"; quoteId: Id<"quotes">; resend?: number }
   | { kind: "quote.followup"; quoteId: Id<"quotes">; day: 2 | 5 | 10 }
   | { kind: "review.request"; bookingId: Id<"bookings"> }
   | { kind: "job.scheduled"; jobId: Id<"jobs">; scheduledFor: number };
@@ -81,8 +82,19 @@ export function idempotencyKeyFor(m: MessageKind): string {
       // it is off is noise, not safety.
       return `${m.kind}:${m.bookingId}`;
     case "quote.sent":
-      // `quotes.send` only accepts a draft, so this happens once by construction.
-      return `${m.kind}:${m.quoteId}`;
+      /*
+       * The first send happens once by construction — `sendToCustomer` only
+       * accepts a draft — so its key is the bare one and existing rows keep
+       * working.
+       *
+       * A RE-SEND IS A DIFFERENT MESSAGE and needs a different key. Without
+       * the ordinal the outbox would refuse it as a duplicate, which is the
+       * worst available outcome: a customer says they never got the quote, the
+       * client presses send again, and the system silently decides they did.
+       * The standing preference settles it — a quote arriving twice is mildly
+       * annoying; one that never arrives is a job lost to a competitor.
+       */
+      return m.resend ? `${m.kind}:${m.quoteId}:r${m.resend}` : `${m.kind}:${m.quoteId}`;
     case "quote.followup":
       return `${m.kind}:${m.quoteId}:d${m.day}`;
     case "review.request":
@@ -911,7 +923,7 @@ export async function claimForSend(
      * longer within its window, so it holds until morning like everything
      * else. Without that, an outage turns the exemption into a broadcast.
      */
-    await ctx.db.patch(args.messageId, {
+    await patchDoc(ctx, args.messageId, {
       status: "holding_quiet_hours",
       scheduledFor: nextSendableAt(args.now, message.quietHoursTimezone),
     });
@@ -927,7 +939,7 @@ export async function claimForSend(
    * stalled-row sweep below reuse `by_status_scheduledFor` instead of needing
    * a claimedAt column and an index of its own.
    */
-  await ctx.db.patch(args.messageId, {
+  await patchDoc(ctx, args.messageId, {
     status: "sending",
     attempts: message.attempts + 1,
     scheduledFor: args.now + SENDING_TIMEOUT_MS,
@@ -965,7 +977,7 @@ export async function recordSendResult(
   if (!message || message.status !== "sending") return;
 
   if (args.result.delivered) {
-    await ctx.db.patch(args.messageId, {
+    await patchDoc(ctx, args.messageId, {
       status: "sent",
       sentAt: args.now,
       scheduledFor: args.now,
@@ -982,7 +994,7 @@ export async function recordSendResult(
       args.now + backoffFor(message.attempts),
       message.quietHoursTimezone,
     );
-    await ctx.db.patch(args.messageId, {
+    await patchDoc(ctx, args.messageId, {
       status: "scheduled",
       scheduledFor: next,
       providerName: args.result.providerName,
@@ -993,7 +1005,7 @@ export async function recordSendResult(
     return;
   }
 
-  await ctx.db.patch(args.messageId, {
+  await patchDoc(ctx, args.messageId, {
     status: "failed",
     scheduledFor: args.now,
     providerName: args.result.providerName,
@@ -1015,7 +1027,7 @@ export async function requeueStalled(
   if (!message || message.status !== "sending") return false;
   if (message.scheduledFor > args.now) return false;
 
-  await ctx.db.patch(args.messageId, {
+  await patchDoc(ctx, args.messageId, {
     status: "scheduled",
     scheduledFor: args.now,
     error:

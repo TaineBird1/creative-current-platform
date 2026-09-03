@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { tenantMutation, tenantQuery } from "./lib/functions";
 import { assertOwned, auditWrite } from "./lib/tenancy";
+import { patchDoc } from "./lib/db";
 
 /**
  * THE ONLY WRITER OF THE `sites` TABLE.
@@ -79,7 +80,7 @@ export async function promoteSiteToLive(
   const site = await ctx.db.get(siteId);
   if (!site) throw new ConvexError({ code: "NOT_FOUND", message: "No such site." });
 
-  await ctx.db.patch(siteId, {
+  await patchDoc(ctx, siteId, {
     status: "live",
     isDemo: false,
     demoExpiresAt: undefined,
@@ -120,7 +121,7 @@ export const replace = tenantMutation("manager")({
 
     const parsed = parseSiteConfig(config);
 
-    await ctx.db.patch(siteId, {
+    await patchDoc(ctx, siteId, {
       config: parsed,
       version: site.version + 1,
       configSchemaVersion: SITE_CONFIG_VERSION,
@@ -148,7 +149,7 @@ export const publish = tenantMutation("owner")({
     const site = assertOwned(ctx.tenant, await ctx.db.get(siteId));
     const parsed = parseSiteConfig(site.config);
 
-    await ctx.db.patch(siteId, {
+    await patchDoc(ctx, siteId, {
       publishedConfig: parsed,
       publishedAt: Date.now(),
       publishedBy: ctx.tenant.userId,

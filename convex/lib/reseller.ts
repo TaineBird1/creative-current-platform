@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { patchDoc } from "./db";
 
 /**
  * RESELLER DEPTH IS EXACTLY 1.
@@ -58,7 +59,7 @@ export async function setReseller(
   resellerId: Id<"clients"> | null,
 ) {
   if (resellerId === null) {
-    await ctx.db.patch(clientId, { resellerId: undefined });
+    await patchDoc(ctx, clientId, { resellerId: undefined });
     return;
   }
   if (resellerId === clientId) throw conflict("a client cannot resell itself");
@@ -66,5 +67,5 @@ export async function setReseller(
   await assertCanBecomeReseller(ctx, resellerId); // parent has no parent
   await assertCanHaveReseller(ctx, clientId); // child has no children
 
-  await ctx.db.patch(clientId, { resellerId });
+  await patchDoc(ctx, clientId, { resellerId });
 }

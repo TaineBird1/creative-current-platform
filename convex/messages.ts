@@ -6,6 +6,7 @@ import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { tenantQuery } from "./lib/functions";
 import { dispatch, type DispatchResult } from "./lib/messaging";
+import { quoteLink } from "./lib/links";
 import { LIVE_CHANNELS, type MessageChannel } from "./lib/providers";
 
 /**
@@ -293,3 +294,66 @@ export const outbox = tenantQuery("staff")({
       }));
   },
 });
+
+/**
+ * QUEUE A QUOTE TO ITS CUSTOMER.
+ *
+ * Lives here rather than in `quotes.ts` because this module is where dispatch
+ * is called from — the choke point has one set of callers and they are all in
+ * one file, which is what makes "who can queue a message" a question with a
+ * short answer.
+ *
+ * THE LINK IS THE POINT. A quote message without a working accept link is a
+ * price with no way to say yes, so `officeOrigin()` refusing an unset
+ * SITE_URL refuses the whole send — the same call `issueInvoiceFor` makes, and
+ * for the same reason: a fact about the DEPLOYMENT, fixed in one command,
+ * where proceeding would send a customer a dead address.
+ */
+export async function queueQuoteSentFor(
+  ctx: MutationCtx,
+  args: {
+    quoteId: Id<"quotes">;
+    /** Plaintext, minted by the caller. Never stored; only the hash is. */
+    acceptToken: string;
+    /** Nth re-send. Absent for the first, which keeps its original key. */
+    resend?: number;
+    /**
+     * When the client pressed send. They witnessed it, so a quote the customer
+     * is waiting on may interrupt quiet hours for an hour — `quote.sent` is on
+     * INTERRUPTS_QUIET_HOURS for exactly this.
+     */
+    triggeredAt: number;
+    channel?: MessageChannel;
+    now?: number;
+  },
+): Promise<DispatchResult> {
+  const quote = await ctx.db.get(args.quoteId);
+  if (!quote) throw notFound("quote");
+  const client = await ctx.db.get(quote.clientId);
+  if (!client) throw notFound("client");
+  const customer = await ctx.db.get(quote.customerId);
+  if (!customer) throw notFound("customer");
+
+  return dispatch(ctx, {
+    message: {
+      kind: "quote.sent",
+      quoteId: quote._id,
+      ...(args.resend ? { resend: args.resend } : {}),
+    },
+    ventureId: client.ventureId,
+    clientId: client._id,
+    customerId: quote.customerId,
+    channel: args.channel ?? transactionalChannelFor(customer),
+    templateKey: "quote_sent",
+    payload: {
+      number: quote.number,
+      totalCents: String(quote.totalCents),
+      currency: quote.currency,
+      expiresAt: String(quote.expiresAt),
+      link: quoteLink(args.acceptToken),
+    },
+    quietHoursTimezone: client.timezone,
+    triggeredAt: args.triggeredAt,
+    ...(args.now !== undefined ? { now: args.now } : {}),
+  });
+}

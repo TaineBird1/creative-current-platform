@@ -3,6 +3,7 @@ import type { QuoteRequestRow } from "@cc/convex-src/quoteRequests";
 import { convexAuthNextjsToken } from "@convex-dev/auth/nextjs/server";
 import { api } from "@cc/convex/api";
 import { accentStyle } from "@/lib/accent-css";
+import Link from "next/link";
 import { SignOut } from "@/components/SignOut";
 import { Bookings } from "./Bookings";
 import type { UpcomingBookings } from "@cc/convex-src/bookings";
@@ -128,7 +129,17 @@ export default async function BackOffice({
       <Bookings data={bookings} />
 
       <main className={s.main}>
-        <h2 className={s.subheading}>Quote requests</h2>
+        <div className={s.headRow}>
+          <h2 className={s.subheading}>Quote requests</h2>
+          {/*
+            The way OUT of this list and into pricing. Without it the requests
+            were a screen you could read and not act on, which is where the
+            quote flow actually stopped.
+          */}
+          <Link className={s.headLink} href={`/c/${slug}/quotes`}>
+            Price a request
+          </Link>
+        </div>
         {requests.length === 0 ? (
           <p className={s.body}>
             Requests from your website land here the moment someone sends one.

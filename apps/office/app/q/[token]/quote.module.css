@@ -1,0 +1,363 @@
+/*
+ * THE CUSTOMER'S QUOTE.
+ *
+ * Read on a phone, in a WhatsApp thread, while deciding whether to spend five
+ * figures. So: the total is the largest thing on the page, the accept button
+ * is the only primary action, and nothing animates on arrival — content that
+ * is already there beats content that arrives beautifully.
+ *
+ * `world-client` with no accent injected, exactly like the invoice. This
+ * document is the BUSINESS's, and the customer has never seen their palette;
+ * a colour they cannot place is noise on a page whose whole job is one
+ * decision. The accent tokens stay at their ink fallbacks and the only colour
+ * is signal.
+ */
+
+.page {
+  min-height: 100dvh;
+  background: var(--bg);
+  padding: var(--space-m);
+  display: flex;
+  justify-content: center;
+}
+
+.doc {
+  width: 100%;
+  max-width: 44rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-l);
+  padding-block: var(--space-l);
+}
+
+/* ---------- masthead ------------------------------------------------- */
+
+.masthead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  padding-bottom: var(--space-m);
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.from {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.number {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 400;
+  letter-spacing: var(--tracking-normal);
+  color: var(--text-muted);
+}
+
+/* ---------- the number they came for --------------------------------- */
+
+.headline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+.headlineLabel {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.headlineFigure {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step-4);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+}
+
+.headlineNote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  max-width: 48ch;
+}
+
+/* An expired quote must not read like a live one. Warning, not danger: it is
+   not an error, it is a date that passed. */
+.headlineNote[data-tone="lapsed"] {
+  color: var(--signal-warning);
+}
+
+/* ---------- the lines ------------------------------------------------ */
+
+/* The table scrolls; the page never does. See the invoice for the argument. */
+.linesWrap {
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+}
+
+.lines th,
+.lines td {
+  text-align: left;
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--border-hairline) solid var(--border);
+  vertical-align: top;
+}
+
+.lines thead th {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border-bottom-color: var(--border-strong);
+}
+
+/*
+ * Scoped to `.lines` on purpose: bare `.num` is (0,1,0) and `.lines td` is
+ * (0,1,1), so the element selector wins and every money column renders
+ * left-aligned. That exact bug shipped on the invoice and was found by a
+ * preview harness rather than by reading.
+ */
+.lines .num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-left: var(--space-2xs);
+}
+
+.lines tfoot th {
+  text-align: right;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.totalRow th,
+.totalRow td {
+  font-size: var(--step-0);
+  color: var(--text);
+  border-bottom-width: 0;
+  padding-top: var(--space-xs);
+}
+
+.totalRow td {
+  font-weight: 600;
+}
+
+/* The restated `2 × R 6 000,00`, shown only when its columns are hidden. */
+.rateInline {
+  display: none;
+}
+
+/*
+ * AFTER `.lines .num`, because equal specificity means source order decides.
+ * Placed before it, the padding override below silently lost — which is the
+ * same cascade mistake twice in one stylesheet, so it is written down.
+ */
+@media (max-width: 30rem) {
+  .lines {
+    font-size: 0.82rem;
+  }
+
+  /*
+   * Two columns, not four. Qty and Each are wide mono figures that crowd
+   * Amount off a phone, and Amount is the number the reader opened this for.
+   * The figures move under the description rather than disappearing.
+   */
+  .rateCol {
+    display: none;
+  }
+
+  .rateInline {
+    display: block;
+    margin-top: 2px;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.95em;
+    color: var(--text-muted);
+  }
+
+  .lines .num {
+    padding-left: 4px;
+  }
+}
+
+/* ---------- the decision --------------------------------------------- */
+
+.acceptBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.accept {
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--ink-900);
+  color: var(--ink-0);
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  font-weight: 600;
+  /* Comfortably above the 44px target floor: this is pressed once, with a
+     thumb, by somebody who must not miss it and must not hit it by accident. */
+  min-height: 3.25rem;
+  padding-inline: var(--space-l);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.accept:hover:not(:disabled) {
+  background: var(--ink-800);
+}
+
+.accept:disabled {
+  background: var(--ink-500);
+  cursor: default;
+}
+
+.accept:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.acceptNote {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+
+.accepted {
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: var(--radius-m);
+  padding: var(--space-m);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+.acceptedTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--signal-positive);
+}
+
+.acceptedBody {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 52ch;
+}
+
+.error {
+  margin: 0;
+  color: var(--signal-danger);
+  font-size: var(--step--1);
+}
+
+/* ---------- refusal --------------------------------------------------- */
+
+.refusal {
+  max-width: 42ch;
+  margin-block: var(--space-2xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.refusalTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.refusalReason {
+  margin: 0;
+  color: var(--text);
+}
+
+.refusalHelp {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--step--1);
+}
+
+.footer {
+  border-top: var(--border-hairline) solid var(--border);
+  padding-top: var(--space-s);
+  color: var(--text-faint);
+  font-size: var(--step--1);
+}
+
+.footer p {
+  margin: 0;
+  max-width: 60ch;
+}
+
+/* ---------- paper ----------------------------------------------------- */
+
+/*
+ * Same strategy as the invoice: "save as PDF" from any browser is the whole
+ * PDF story, so nothing renders one anywhere.
+ */
+@media print {
+  .page {
+    padding: 0;
+    min-height: auto;
+    background: var(--ink-0);
+  }
+
+  .doc {
+    max-width: none;
+  }
+
+  /* A decision is not a thing you print. */
+  .acceptBlock,
+  .footer {
+    display: none;
+  }
+
+  .accepted {
+    break-inside: avoid;
+  }
+
+  /* Paper has no scrollbar; an overflow container would print clipped. */
+  .linesWrap {
+    overflow-x: visible;
+  }
+
+  /* Wide enough for all four columns, whatever the screen was. */
+  .rateCol {
+    display: table-cell;
+  }
+
+  .rateInline {
+    display: none;
+  }
+
+  .totalRow {
+    break-inside: avoid;
+  }
+}

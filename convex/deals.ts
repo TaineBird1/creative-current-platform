@@ -3,6 +3,7 @@ import { platformMutation, platformQuery } from "./lib/functions";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { byDesc } from "./lib/ordering";
+import { patchDoc } from "./lib/db";
 
 /**
  * THE PIPELINE — what happens between "they took the meeting" and "they paid".
@@ -181,7 +182,7 @@ export const advance = platformMutation({
       );
     }
 
-    await ctx.db.patch(args.dealId, {
+    await patchDoc(ctx, args.dealId, {
       stage: args.stage,
       valueCents,
       probability: PROBABILITY[args.stage],

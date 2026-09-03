@@ -30,6 +30,7 @@ import type * as jobs from "../jobs.js";
 import type * as leadImport from "../leadImport.js";
 import type * as ledger from "../ledger.js";
 import type * as lib_consent from "../lib/consent.js";
+import type * as lib_db from "../lib/db.js";
 import type * as lib_dns from "../lib/dns.js";
 import type * as lib_functions from "../lib/functions.js";
 import type * as lib_invites from "../lib/invites.js";
@@ -109,6 +110,7 @@ declare const fullApi: ApiFromModules<{
   leadImport: typeof leadImport;
   ledger: typeof ledger;
   "lib/consent": typeof lib_consent;
+  "lib/db": typeof lib_db;
   "lib/dns": typeof lib_dns;
   "lib/functions": typeof lib_functions;
   "lib/invites": typeof lib_invites;

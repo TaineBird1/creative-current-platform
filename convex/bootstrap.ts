@@ -1,6 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { normaliseEmail } from "./lib/invites";
+import { patchDoc } from "./lib/db";
 
 /**
  * THE ONE-TIME BOOTSTRAP.
@@ -70,7 +71,7 @@ export const claimPlatformOwner = internalMutation({
       .unique();
 
     if (existing) {
-      await ctx.db.patch(existing._id, { role: "owner", active: true });
+      await patchDoc(ctx, existing._id, { role: "owner", active: true });
     } else {
       await ctx.db.insert("platformMembers", {
         userId,

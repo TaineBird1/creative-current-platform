@@ -5,6 +5,7 @@ import { byAsc } from "./lib/ordering";
 import { toE164 } from "./lib/phone";
 import type { Doc, Id } from "./_generated/dataModel";
 import { openDeal } from "./deals";
+import { patchDoc } from "./lib/db";
 
 /**
  * TODAY'S QUEUE — the list you work down with a phone in your hand.
@@ -363,9 +364,9 @@ export const disposition = platformMutation({
           kind: "nameFragment", value: lead.businessName, reason, createdAt: now,
         });
       }
-      await ctx.db.patch(args.leadId, { status: "discarded" });
+      await patchDoc(ctx, args.leadId, { status: "discarded" });
     } else if (lead.status === "new") {
-      await ctx.db.patch(args.leadId, { status: "working" });
+      await patchDoc(ctx, args.leadId, { status: "working" });
     }
 
     // Hand back the deal so the UI can go straight to it — a meeting set on

@@ -10,6 +10,7 @@ import { issueInvoiceFor } from "./invoices";
 import type { Id } from "./_generated/dataModel";
 import { createBooking } from "./bookings";
 import { toE164, toStorageKey } from "./lib/phone";
+import { patchDoc } from "./lib/db";
 
 /**
  * THE FIRST REAL CLIENT, BY HAND.
@@ -285,7 +286,7 @@ export const takeFirstBooking = internalMutation({
 
     // An existing record may predate the email; the confirmation needs one.
     if (existing && !existing.email) {
-      await ctx.db.patch(existing._id, { email: required(args.customerEmail, "The email") });
+      await patchDoc(ctx, existing._id, { email: required(args.customerEmail, "The email") });
     }
 
     const startsAt = args.startsAt ?? Date.now() + 24 * 60 * 60 * 1000;
@@ -462,7 +463,7 @@ export const convertWonDeal = ownerMutation({
       slug = demoSite.slug;
       promotedDemo = true;
 
-      await ctx.db.patch(clientId, {
+      await patchDoc(ctx, clientId, {
         status: "live",
         /*
          * The flag every money and messaging path checks. It comes off HERE
@@ -523,7 +524,7 @@ export const convertWonDeal = ownerMutation({
      * onboarding that reaches nobody, which is the failure mode this whole
      * transaction exists to rule out.
      */
-    await ctx.db.patch(deal.leadId, {
+    await patchDoc(ctx, deal.leadId, {
       status: "converted",
       convertedClientId: clientId,
     });

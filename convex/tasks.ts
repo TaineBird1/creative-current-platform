@@ -1,6 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { platformMutation, platformQuery } from "./lib/functions";
 import type { Doc } from "./_generated/dataModel";
+import { patchDoc } from "./lib/db";
 
 /**
  * ONE INBOX.
@@ -139,7 +140,7 @@ export const complete = platformMutation({
     if (task.status === "done") return { alreadyDone: true as const };
 
     const now = args.now ?? Date.now();
-    await ctx.db.patch(args.taskId, { status: "done", completedAt: now });
+    await patchDoc(ctx, args.taskId, { status: "done", completedAt: now });
     return { alreadyDone: false as const, completedAt: now };
   },
 });
@@ -155,7 +156,7 @@ export const reopen = platformMutation({
   handler: async (ctx, { taskId }) => {
     const task = await ctx.db.get(taskId);
     if (!task) throw bad("NOT_FOUND", "No such task.");
-    await ctx.db.patch(taskId, { status: "open", completedAt: undefined });
+    await patchDoc(ctx, taskId, { status: "open", completedAt: undefined });
     return { ok: true as const };
   },
 });
@@ -173,7 +174,7 @@ export const cancel = platformMutation({
     const task = await ctx.db.get(args.taskId);
     if (!task) throw bad("NOT_FOUND", "No such task.");
     const reason = args.reason?.trim();
-    await ctx.db.patch(args.taskId, {
+    await patchDoc(ctx, args.taskId, {
       status: "cancelled",
       completedAt: undefined,
       body: reason ? [task.body, `Cancelled: ${reason}`].filter(Boolean).join("\n") : task.body,

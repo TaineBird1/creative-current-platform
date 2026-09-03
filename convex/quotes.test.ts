@@ -177,7 +177,7 @@ describe("accepting a quote", () => {
     const created = await s.owner.mutation(api.quotes.create, {
       clientSlug: "alpha", customerId: s.customerId, lineItems: LINES,
     });
-    await s.owner.mutation(api.quotes.send, {
+    await s.owner.mutation(api.quotes.markSent, {
       clientSlug: "alpha", quoteId: created.quoteId,
     });
     return { ...s, ...created };

@@ -192,17 +192,100 @@ describe("tenancy", () => {
     ).toEqual([]);
   });
 
-  test("immutable tables are never patched or deleted", () => {
+  /**
+   * IMMUTABILITY, MOVED OFF A SCAN AND ONTO THE TYPE SYSTEM.
+   *
+   * THE LADDER, which is the general lesson from three vacuous guards found
+   * in one day rather than a note about this one:
+   *
+   *   WEAKEST   a guard that INFERS a fact from source. The previous version
+   *             matched `db\.(patch|delete|replace)\([^)]*<table>` — and
+   *             `db.patch(id, partial)` never contains a table name, so it
+   *             asserted something the text can never contain. Six tables,
+   *             zero protection, and a control proved it by planting a
+   *             function that both patched AND deleted a ledger entry and
+   *             watching the suite pass green.
+   *   STRONGER  a guard that matches a LITERAL TOKEN genuinely present in the
+   *             text. That is what the test below does, and it can fire.
+   *   STRONGEST the TYPE SYSTEM. `lib/db.ts` exports helpers generic over
+   *             mutable tables only, so `patchDoc(ctx, ledgerEntryId, …)` does
+   *             not compile — `Id` is branded with its table name, so there is
+   *             something real to reject. Nothing has to run or be scanned.
+   *
+   * Both upper rungs are in use: tsc enforces the rule, and this test stops
+   * the helpers being bypassed by reaching for `ctx.db.patch` directly.
+   *
+   * Same shape as `lib/leadAccess.ts` — one module owns a capability and
+   * everything else is banned from the raw form.
+   */
+  const DB_WRITE_OWNER = "lib/db.ts";
+  const RAW_MUTATORS = ["ctx.db.patch", "ctx.db.replace", "ctx.db.delete"];
+
+  test("ONLY lib/db.ts calls ctx.db.patch, replace or delete", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
-      for (const table of IMMUTABLE_TABLES) {
-        const pattern = new RegExp(`db\\.(patch|delete|replace)\\([^)]*${table}`, "g");
-        if (pattern.test(file.code)) offenders.push(`${file.path}: mutates ${table}`);
+      if (file.path === DB_WRITE_OWNER) continue;
+      for (const raw of RAW_MUTATORS) {
+        if (file.code.includes(raw)) offenders.push(`${file.path}: ${raw}`);
       }
     }
+
     expect(
       offenders,
-      "Ledger, audit log and consent rows are append-only. Correct with a reversing entry.",
+      [
+        "These reach for the raw mutator instead of the typed helpers in",
+        "lib/db.ts, which is what makes editing an append-only row a COMPILE",
+        "error rather than something a reviewer has to notice.",
+        "",
+        "Use patchDoc / replaceDoc / deleteDoc. If the table you need is",
+        "refused, that is the point: correct an append-only row by inserting",
+        "one that reverses it.",
+      ].join("\n"),
+    ).toEqual([]);
+  });
+
+  test("and lib/db.ts is really where they live", () => {
+    /*
+     * The anti-vacuity half. A ban on a token nothing contains passes forever,
+     * so the owner must actually hold the calls it is excused for — otherwise
+     * the helpers have been quietly reimplemented somewhere and the test above
+     * is guarding an empty set.
+     */
+    const owner = sourceFiles.find((f) => f.path === DB_WRITE_OWNER);
+    expect(owner, "convex/lib/db.ts is missing").toBeDefined();
+    for (const raw of RAW_MUTATORS) {
+      expect(owner!.code, `${DB_WRITE_OWNER} no longer calls ${raw}`).toContain(raw);
+    }
+  });
+
+  test("the helpers are typed against the immutable list, not a copy of it", () => {
+    /*
+     * `MutableTable` is derived by excluding IMMUTABLE_TABLES from the table
+     * names. Written out as a second list it would drift, and the drift would
+     * be silent — a table added to IMMUTABLE_TABLES but forgotten here stays
+     * editable while the schema says otherwise.
+     */
+    const owner = sourceFiles.find((f) => f.path === DB_WRITE_OWNER)!;
+    expect(owner.code).toContain("IMMUTABLE_TABLES");
+    expect(owner.code).toMatch(/Exclude<\s*TableNames\s*,\s*ImmutableTable\s*>/);
+  });
+
+  test("EVERY immutable table has something that actually writes it", () => {
+    /*
+     * A table on the list that nothing anywhere inserts is protecting nothing,
+     * and every check above would pass it forever — which is precisely what
+     * `quoteAcceptances` was before it had a writer.
+     */
+    const unwritten = IMMUTABLE_TABLES.filter(
+      (table) => !sourceFiles.some((f) => f.code.includes(`db.insert("${table}"`)),
+    );
+    expect(
+      unwritten,
+      [
+        "These tables are on IMMUTABLE_TABLES and nothing writes them, so",
+        "listing them protects nothing. Either something should be writing",
+        "them, or they should come off the list until it does.",
+      ].join("\n"),
     ).toEqual([]);
   });
 });

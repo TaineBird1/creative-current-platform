@@ -58,3 +58,14 @@ export function invoiceViewUrl(token: string): string {
 export function clientSignInUrl(slug: string): string {
   return `${officeOrigin()}/c/${slug}/sign-in`;
 }
+
+/**
+ * The public, tokenised address of one quote.
+ *
+ * `/q/` rather than `/quote/` for the reason the invoice uses `/i/`: this gets
+ * pasted into a WhatsApp message where the whole URL is visible, and a long
+ * path pushes the token onto a second line where it invites being retyped.
+ */
+export function quoteLink(token: string): string {
+  return `${officeOrigin()}/q/${token}`;
+}

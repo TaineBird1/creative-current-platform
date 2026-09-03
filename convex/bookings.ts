@@ -11,6 +11,7 @@ import {
 } from "./messages";
 import { idempotencyKeyFor, type DispatchResult } from "./lib/messaging";
 import { localDayKey, startOfLocalDay, startOfLocalDayPlus } from "./lib/localDay";
+import { patchDoc } from "./lib/db";
 
 /**
  * BOOKINGS — overlap-safe by construction.
@@ -479,7 +480,7 @@ export const setStatus = tenantMutation("staff")({
   },
   handler: async (ctx, { bookingId, status }): Promise<{ bookingId: Id<"bookings"> }> => {
     const booking = assertOwned(ctx.tenant, await ctx.db.get(bookingId));
-    await ctx.db.patch(bookingId, { status });
+    await patchDoc(ctx, bookingId, { status });
 
     /*
      * A no-show is remembered on the customer, because the third one is a
@@ -488,7 +489,7 @@ export const setStatus = tenantMutation("staff")({
     if (status === "no_show" && booking.status !== "no_show") {
       const customer = await ctx.db.get(booking.customerId);
       if (customer) {
-        await ctx.db.patch(customer._id, { noShowCount: customer.noShowCount + 1 });
+        await patchDoc(ctx, customer._id, { noShowCount: customer.noShowCount + 1 });
       }
     }
 

@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertCents } from "./lib/money";
 import { newStartReference, paystack, paystackMode } from "./lib/paystack";
+import { patchDoc } from "./lib/db";
 
 /**
  * THE MONTHLY FEE.
@@ -90,7 +91,7 @@ export const setPlan = ownerMutation({
        * snapshots its issuer — a price rise applies to the next customer, not
        * to the one who already agreed a number.
        */
-      await ctx.db.patch(existing._id, fields);
+      await patchDoc(ctx, existing._id, fields);
       return { planId: existing._id, created: false };
     }
     return { planId: await ctx.db.insert("plans", fields), created: true };
@@ -232,7 +233,7 @@ export const abandonStart = internalMutation({
      * this must not undo that.
      */
     if (row?.status === "pending" && !row.providerRef) {
-      await ctx.db.patch(subscriptionId, { status: "cancelled" });
+      await patchDoc(ctx, subscriptionId, { status: "cancelled" });
     }
   },
 });
@@ -375,7 +376,7 @@ export const markCancelled = ownerMutation({
     const row = await ctx.db.get(args.subscriptionId);
     if (!row) throw bad("NOT_FOUND", "No such subscription.");
 
-    await ctx.db.patch(args.subscriptionId, {
+    await patchDoc(ctx, args.subscriptionId, {
       status: "cancelled",
       lastEventAt: args.now ?? Date.now(),
     });

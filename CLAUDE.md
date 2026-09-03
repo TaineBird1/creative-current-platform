@@ -901,8 +901,8 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
      `"1"`.
   **Fixtures only, forever**: a guard bans any Convex read under `app/preview`,
   because a harness that can be pointed at a real tenant is the thing all of
-  the above exists to prevent. Run it with
-  `ALLOW_PREVIEW_ROUTES=1 pnpm --filter @cc/office dev`.
+  the above exists to prevent. Run it with `pnpm dev:preview` — a script, not a
+  POSIX env prefix, for the reason in the barrier rules below.
 - **THE SIGN-IN DOOR IS UNBRANDED, AND THAT IS A TRADE RATHER THAN AN
   OVERSIGHT.** `/c/<slug>/sign-in` used to fetch the client's name and accent
   ramp before authenticating. The disclosure was argued per-item and the
@@ -963,6 +963,43 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   looks at it, not because something decided to hide it. Reach for capability
   removal first, and keep the refusal as the second layer rather than the only
   one.
+- **A DOCUMENTED COMMAND THAT WILL NOT RUN HERE IS AN ABSENT BARRIER, NOT A
+  WEAK ONE — AND IT FAILS SILENTLY, BECAUSE NOBODY REPORTS NOT HAVING DONE A
+  THING.** A refusal is loud; an unrunnable instruction produces nothing at
+  all. There is no error to search for, no red step, no row in an outbox. The
+  step simply does not happen, week after week, and every artefact says it was
+  available.
+  **Every documented command in this repo must run in PowerShell on Windows**,
+  which is the shell this project is developed in. POSIX-only forms — a
+  `VAR=1 cmd` prefix, `$(...)` substitution, `&&` chaining — belong in a
+  PACKAGE SCRIPT, never in prose. `pnpm dev:preview` is the worked example and
+  it was found the expensive way: the harness for the client back office was
+  documented as `ALLOW_PREVIEW_ROUTES=1 pnpm --filter @cc/office dev`. That
+  PARSES in PowerShell and then fails at execution with
+  `CommandNotFoundException: the term 'ALLOW_PREVIEW_ROUTES=1' is not
+  recognized` — it looks for a program by that name, because PowerShell has no
+  inline env-var prefix. Verified, not assumed; the distinction matters because
+  a parse error would at least be obviously syntactic, while this reads like a
+  missing tool and invites you to go looking for one. So for **three sessions**
+  the standing rule
+  "never mark anything done without a human tapping it on a real phone" went
+  unpaid on the one screen that most needed it. Nobody noticed, because not
+  running a command leaves no trace. Three rendering bugs — every money column
+  left-aligned, `TotalR 13 500,00`, and AMOUNT off the edge of a phone — sat in
+  a merged invoice document that no test could see and no person had opened.
+  This is the same family as capability removal above. A script is not a
+  tidier way to write the command; it is the version that CANNOT be
+  mistranscribed, and it works identically in PowerShell, Git Bash and CI.
+  **ONE KNOWN EXCEPTION, and it is outstanding rather than excused.**
+  `npx convex env set "JWKS=$(cat jwks.json)"` in the deployment section is
+  still POSIX-only prose. It is not laziness — PowerShell actively CORRUPTS
+  that value, stripping the quotes out of the JSON, which is why the paragraph
+  above it says so at length and offers the Convex dashboard as the shell-free
+  route. By this rule it should be a script (`node scripts/set-jwks.mjs`)
+  passing the value as an argv element, where no shell quotes it at all — which
+  would remove the hazard instead of documenting it. Written down here rather
+  than quietly tolerated, because a rule its own repo violates is a rule
+  nobody has to follow.
 - **COMMENT-STRIPPING IS THE DEFAULT IN THE GUARD HELPERS, AND THE NAMES
   ENFORCE IT.** `sourceFiles` exposes `code` (stripped) and `raw` (not), and
   deliberately no `text` — so scanning prose is something somebody has to type
@@ -999,7 +1036,7 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
 
 ## Invariants held by tests, not by convention
 
-`pnpm test` — 755 tests. The structural ones live in `convex/guards.test.ts`
+`pnpm test` — 789 tests. The structural ones live in `convex/guards.test.ts`
 and fail CI rather than relying on anyone remembering:
 
 - no bare `query`/`mutation` outside a 5-file public allowlist
@@ -1280,10 +1317,11 @@ hole this closes.
 ## Commands
 
 ```bash
-pnpm test                        # 755 tests
+pnpm test                        # 789 tests
 pnpm lint:tokens                 # design system enforcement
 pnpm --filter @cc/sites dev      # public sites on :3100
 pnpm --filter @cc/office dev     # admin + back offices on :3200
+pnpm dev:preview                 # the same, with /preview/* routed (dev only)
 npx convex dev                   # backend; leave running while developing
 npx convex run seed:solarClient  # one live seed client, served at /renu-solar
 ```

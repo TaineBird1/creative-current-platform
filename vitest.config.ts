@@ -7,7 +7,15 @@ export default defineConfig({
     environment: "edge-runtime",
     setupFiles: ["./vitest.setup.ts"],
     server: { deps: { inline: ["convex-test"] } },
-    include: ["convex/**/*.test.ts", "packages/**/*.test.ts", "apps/**/*.test.ts"],
+    // scripts/ included so the redaction that keeps private keys out of logs
+    // is covered. It leaked once already; an untested redactor is one nobody
+    // has watched fail.
+    include: [
+      "convex/**/*.test.ts",
+      "packages/**/*.test.ts",
+      "apps/**/*.test.ts",
+      "scripts/**/*.test.ts",
+    ],
   },
   resolve: {
     alias: { "@cc/site-config": path.resolve(__dirname, "packages/site-config/src/index.ts") },

@@ -1139,13 +1139,27 @@ node scripts/set-auth-keys.mjs
 node scripts/set-auth-keys.mjs --prod
 ```
 
-`spawn` with no shell, and each value reaches the CLI through `--from-file`
-rather than argv — so nothing can re-quote it, and nothing can mistake it for
-an option. That second part is not theoretical: a PEM starts `-----BEGIN`, and
-passing it as an argument made the CLI refuse with `unknown option
-'-----BEGIN PRIVATE KEY----- ...'`. The script then READS EACH VALUE BACK and
-compares it byte for byte, because a mangled key does not fail when it is set —
-it fails at every sign-in afterwards, to somebody else.
+`spawn` with no shell, and each value reaches the CLI over **stdin** — never a
+command line, never argv, never a file. Three hazards removed rather than
+guarded:
+*No shell* — nothing can re-quote the JSON.
+*Not an argument* — a PEM starts `-----BEGIN`, and passing it as one made the
+CLI refuse with `unknown option '-----BEGIN PRIVATE KEY----- ...'`, echoing the
+key into the error. *Not a temp file either* — the second version wrote a 0600
+file and removed it in a `finally`, which cannot be guaranteed on Windows: a
+hard kill is `TerminateProcess`, which runs no handler and no `finally`. A
+control proved it by stranding a key in `%TEMP%`. Cleanup you cannot guarantee
+is a promise; a value piped to a child is never written down at all.
+**NOTHING SECRET REACHES A LOG.** `scripts/lib/secret-redaction.mjs` replaces
+any run of a registered value — and any PEM block — with its length and a
+sha256 prefix before child output is surfaced. That is not precautionary: the
+CLI error above put a real key in a terminal scrollback and a chat transcript.
+It scans the TEXT rather than the secret, because sliding windows over the
+secret misses runs that straddle two steps — a test caught a 24-character run
+surviving. `scripts/secret-redaction.test.ts` covers it.
+The script then READS EACH VALUE BACK and compares byte for byte, because a
+mangled key does not fail when it is set — it fails at every sign-in
+afterwards, to somebody else.
 
 It sets BOTH by default, deliberately: they are a matching pair and rotating
 one alone invalidates every session. `--only jwks` exists for the one honest

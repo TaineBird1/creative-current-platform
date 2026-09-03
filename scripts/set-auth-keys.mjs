@@ -15,17 +15,25 @@
  * A warning is a barrier that has to be READ, by the right person, on the day
  * they are in a hurry. This removes the capability instead: `spawn` with no
  * shell, so there is no command line for anything to re-quote, and the value
- * itself goes to the CLI through `--from-file` so it never appears in argv
- * either. Not a safer way to type the command — the absence of the thing that
- * went wrong.
+ * goes to the CLI over STDIN so it never appears in argv either. Not a safer
+ * way to type the command — the absence of the thing that went wrong.
  *
- * `--from-file` rather than `env set NAME <value>` for a second reason, found
- * by this script's own verify step rather than by reading: a PEM begins
- * `-----BEGIN PRIVATE KEY-----`, and the CLI's option parser reads a leading
- * `-` as a flag. `JWT_PRIVATE_KEY` failed with `error: unknown option
- * '-----BEGIN PRIVATE KEY----- ...'` while JWKS went through fine. Passing a
- * path sidesteps the ambiguity completely, and it means a value can never be
- * mistaken for an option no matter what it starts with.
+ * STDIN RATHER THAN AN ARGUMENT, because an argument does not survive the
+ * value. Found by this script's own verify step rather than by reading: a PEM
+ * begins `-----BEGIN PRIVATE KEY-----`, and the CLI's option parser reads a
+ * leading `-` as a flag. `JWT_PRIVATE_KEY` failed with `error: unknown option
+ * '-----BEGIN PRIVATE KEY----- ...'` — echoing the key back in the error —
+ * while JWKS went through fine.
+ *
+ * STDIN RATHER THAN A TEMP FILE, which was the second version and was worse.
+ * `--from-file` fixed the parsing, at the cost of putting a private key on
+ * disk for the length of one CLI call, and that cost cannot be fully paid
+ * back: on Windows a hard kill is `TerminateProcess`, which runs no signal
+ * handler, no `process.on("exit")` and no `finally`. A control confirmed it —
+ * SIGTERM mid-run left the key sitting in %TEMP%. Cleanup you cannot guarantee
+ * is a promise, and the barrier rules in CLAUDE.md say to remove the
+ * capability instead. A value piped to a child's stdin is never written
+ * anywhere, so there is nothing to strand and nothing to clean up.
  *
  * That is also why it invokes `node_modules/convex/bin/main.js` with
  * `process.execPath` rather than `npx convex`: `npx` on Windows is a `.cmd`
@@ -57,13 +65,16 @@
  *   npx convex run health:authConfig
  */
 
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fingerprint, redact, relay as relayRaw } from "./lib/secret-redaction.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Registered before any child runs; see the arming comment below. */
+const SECRETS = [];
 
 const argv = process.argv.slice(2);
 const has = (flag) => argv.includes(flag);
@@ -117,6 +128,12 @@ for (const name of names) {
     die(`${from} has no usable ${name}.`);
   }
 }
+
+/*
+ * Armed HERE, before any child process exists. A redactor registered after the
+ * first thing that could echo a secret is decoration.
+ */
+for (const name of names) SECRETS.push({ name, value: keys[name] });
 
 /*
  * The JSON check that the whole hazard is about. Done BEFORE anything is sent,
@@ -177,36 +194,45 @@ if (!existsSync(convexCli)) {
  * `shell: false` is the whole point and is the default — stated explicitly so
  * that flipping it reads as the deliberate mistake it would be.
  */
-function convex(args) {
+function convex(args, stdin) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [convexCli, ...args], {
       cwd: ROOT,
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let out = "";
     let err = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
     child.on("close", (code) => resolve({ code, out, err }));
+
+    if (stdin !== undefined) {
+      /*
+       * The secret's only journey: this process's memory to the child's, over
+       * a pipe. No file, no argv, no command line, nothing on disk to outlive
+       * the call.
+       */
+      child.stdin.on("error", () => {
+        /* A child that exits before reading closes the pipe; the exit code
+           below is the real verdict, and an EPIPE here would mask it. */
+      });
+      child.stdin.write(stdin);
+      child.stdin.end();
+    }
   });
 }
 
-const shorten = (v) => `${v.length} chars, sha ${hash(v)}`;
-
-function hash(value) {
-  // Enough to compare two values in a log without printing either.
-  let h = 0x811c9dc5;
-  for (let i = 0; i < value.length; i += 1) {
-    h ^= value.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h.toString(16).padStart(8, "0");
-}
+/*
+ * Redaction lives in scripts/lib/secret-redaction.mjs so it can be TESTED.
+ * It is the part of this script that already failed in practice, and an
+ * untested redactor is a redactor nobody has watched fail.
+ */
+const relay = (text) => relayRaw(text, SECRETS);
 
 if (has("--dry-run")) {
   console.log(`\n  Would set on ${target}:`);
-  for (const name of names) console.log(`    ${name} — ${shorten(keys[name])}`);
+  for (const name of names) console.log(`    ${name} — ${fingerprint(keys[name])}`);
   console.log("\n  No shell, and no value in argv: each is handed over as a file path.\n");
   process.exit(0);
 }
@@ -218,28 +244,32 @@ console.log(`\n  Target: ${target}\n`);
 let failed = false;
 
 /*
- * A directory only this user can read, removed in the `finally` below. The
- * private key is already on disk in `.auth-keys.json` — that is the documented
- * flow — so this adds no new exposure, but it is short-lived regardless.
+ * NOTHING TO CLEAN UP, DELIBERATELY.
+ *
+ * An earlier version wrote each value to a 0600 file in a private temp
+ * directory and removed it in a `finally`, with `process.on("exit")` and
+ * signal handlers behind that. On Windows none of those run for a hard kill —
+ * `TerminateProcess` is not interceptable — and a control proved it by
+ * stranding a key in %TEMP%. The fix was not more cleanup paths; it was to
+ * stop writing the value down at all.
  */
-const scratch = mkdtempSync(join(tmpdir(), "cc-auth-"));
-
-try {
 for (const name of names) {
   const value = keys[name];
 
   /*
-   * Written WITHOUT a trailing newline: the read-back below compares byte for
-   * byte, so anything this adds would show up as a mismatch rather than being
-   * silently stored.
+   * No trailing newline: the read-back below compares byte for byte, so
+   * anything added here would surface as a mismatch rather than being stored
+   * silently.
    */
-  const valueFile = join(scratch, `${name}.value`);
-  writeFileSync(valueFile, value, { encoding: "utf8", mode: 0o600 });
-
-  const set = await convex(["env", "set", ...deploymentArgs, name, "--from-file", valueFile]);
+  const set = await convex(["env", "set", ...deploymentArgs, name], value);
   if (set.code !== 0) {
     console.error(`  ${name}: FAILED to set`);
-    console.error((set.err || set.out).trim().split("\n").map((l) => "      " + l).join("\n"));
+    /*
+     * REDACTED, and this is the line that leaked. The CLI's own error echoed
+     * the private key back — truncated, which is exactly why `redact` matches
+     * windows of the value and not just the whole of it.
+     */
+    console.error(relay(set.err || set.out));
     failed = true;
     continue;
   }
@@ -258,18 +288,14 @@ for (const name of names) {
 
   const readBack = got.out.replace(/\r?\n$/, "");
   if (readBack === value) {
-    console.log(`  ${name}: set and verified byte-for-byte (${shorten(value)})`);
+    console.log(`  ${name}: set and verified byte-for-byte (${fingerprint(value)})`);
   } else {
     console.error(`  ${name}: SET BUT DOES NOT MATCH`);
-    console.error(`      sent     ${shorten(value)}`);
-    console.error(`      read back ${shorten(readBack)}`);
+    console.error(`      sent     ${fingerprint(value)}`);
+    console.error(`      read back ${fingerprint(readBack)}`);
     console.error("      Something between here and the deployment altered the value.");
     failed = true;
   }
-}
-
-} finally {
-  rmSync(scratch, { recursive: true, force: true });
 }
 
 console.log("");

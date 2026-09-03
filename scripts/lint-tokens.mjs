@@ -36,6 +36,10 @@ const COLOUR_ALLOWLIST = new Set([
   // colour arrives as a query parameter, goes through the AA-validated ramp,
   // and is never painted directly. The fallback is the same kind of data.
   join("apps", "office", "app", "preview", "bookings", "page.preview.tsx"),
+  // And the quote builder harness, for exactly the same reason: the accent is
+  // the one thing that differs per client on that screen, so a harness with no
+  // ramp shows every action in the wrong colour and lies about what ships.
+  join("apps", "office", "app", "preview", "quote-builder", "page.preview.tsx"),
   // Same seam: seed data supplies a client's brand colour, which is a hex by
   // definition. It is fed through the ramp, not painted.
   join("convex", "seed.ts"),

@@ -315,6 +315,8 @@ export async function queueQuoteSentFor(
     quoteId: Id<"quotes">;
     /** Plaintext, minted by the caller. Never stored; only the hash is. */
     acceptToken: string;
+    /** Nth re-send. Absent for the first, which keeps its original key. */
+    resend?: number;
     /**
      * When the client pressed send. They witnessed it, so a quote the customer
      * is waiting on may interrupt quiet hours for an hour — `quote.sent` is on
@@ -333,7 +335,11 @@ export async function queueQuoteSentFor(
   if (!customer) throw notFound("customer");
 
   return dispatch(ctx, {
-    message: { kind: "quote.sent", quoteId: quote._id },
+    message: {
+      kind: "quote.sent",
+      quoteId: quote._id,
+      ...(args.resend ? { resend: args.resend } : {}),
+    },
     ventureId: client.ventureId,
     clientId: client._id,
     customerId: quote.customerId,

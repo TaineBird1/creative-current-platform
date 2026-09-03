@@ -3,6 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { tenantQuery, tenantMutation } from "./lib/functions";
 import { queueQuoteSentFor } from "./messages";
+import { quoteLink } from "./lib/links";
 import type { DispatchResult } from "./lib/messaging";
 import { assertOwned, auditWrite, type TenantContext } from "./lib/tenancy";
 import { assertCents } from "./lib/money";
@@ -455,5 +456,155 @@ export const decline = tenantMutation("staff")({
       after: { status: "declined" },
     });
     return { quoteId };
+  },
+});
+
+/**
+ * MINT A FRESH ACCEPT LINK FOR A QUOTE ALREADY SENT.
+ *
+ * "Sent" was a one-way door before this. `sendToCustomer` requires a draft and
+ * the plaintext token is returned once and stored nowhere, so the moment a
+ * quote left the back office there was no way back to its link — and the
+ * things that put you there are all week-one ordinary: the customer deleted
+ * the email, it went to spam, they changed phones, or the client wants to read
+ * the address down the phone while the customer is on the line.
+ *
+ * The only remaining option was to build the whole quote again under a new
+ * number, which loses the thread and puts two documents for one job in front
+ * of a customer.
+ *
+ * THE OLD LINK STOPS WORKING, and that is the honest behaviour rather than a
+ * limitation. There is one `acceptTokenHash`, so minting replaces it. Two live
+ * links to one document is two things to remember to revoke, and the second is
+ * the one nobody remembers.
+ *
+ * IT DOES NOT SEND. `resendToCustomer` below does that, deliberately separate:
+ * minting a link is what you do to read it down a phone, and a function that
+ * emailed as a side effect would be a second message to a customer who is
+ * already talking to you.
+ */
+export const reissueAcceptLink = tenantMutation("staff")({
+  args: { quoteId: v.id("quotes") },
+  handler: async (
+    ctx,
+    { quoteId },
+  ): Promise<{ quoteId: Id<"quotes">; number: string; acceptUrl: string }> => {
+    const quote = assertOwned(ctx.tenant, await ctx.db.get(quoteId));
+
+    if (quote.status === "accepted") {
+      throw new ConvexError({
+        code: "ALREADY_ACCEPTED",
+        message: `${quote.number} has been accepted. There is nothing left to agree to.`,
+      });
+    }
+    if (quote.status === "declined") {
+      throw new ConvexError({
+        code: "WITHDRAWN",
+        message: `${quote.number} was withdrawn. Build a new quote instead.`,
+      });
+    }
+    if (quote.expiresAt < Date.now()) {
+      throw new ConvexError({
+        code: "EXPIRED",
+        message: `${quote.number} expired on its own terms. Build a new one — the price has moved.`,
+      });
+    }
+
+    const token = newInviteToken();
+    await ctx.db.patch(quoteId, {
+      acceptTokenHash: await hashToken(token),
+      acceptLinkResends: (quote.acceptLinkResends ?? 0) + 1,
+    });
+
+    await auditWrite(ctx, ctx.tenant, {
+      action: "quote.reissueAcceptLink",
+      entityTable: "quotes",
+      entityId: quoteId,
+      after: { resends: (quote.acceptLinkResends ?? 0) + 1 },
+    });
+
+    return { quoteId, number: quote.number, acceptUrl: quoteLink(token) };
+  },
+});
+
+/**
+ * SEND IT AGAIN, on a fresh link.
+ *
+ * A NEW IDEMPOTENCY KEY, carried by the resend ordinal — see
+ * `idempotencyKeyFor`. Without it the outbox would refuse this as a duplicate
+ * of the original send, which is the silent failure that matters most here: a
+ * customer says they never got the quote, the client presses send, and the
+ * system decides on their behalf that they did.
+ *
+ * The standing preference settles the cost. A quote arriving twice is mildly
+ * annoying. One that never arrives is a job that goes to whoever did answer.
+ */
+export const resendToCustomer = tenantMutation("staff")({
+  args: { quoteId: v.id("quotes") },
+  handler: async (
+    ctx,
+    { quoteId },
+  ): Promise<{
+    quoteId: Id<"quotes">;
+    number: string;
+    outcome: string;
+    notice: string | null;
+  }> => {
+    const quote = assertOwned(ctx.tenant, await ctx.db.get(quoteId));
+
+    if (quote.status === "draft") {
+      throw new ConvexError({
+        code: "NOT_SENT_YET",
+        message: `${quote.number} has not gone out once yet.`,
+      });
+    }
+    if (quote.status === "accepted") {
+      throw new ConvexError({
+        code: "ALREADY_ACCEPTED",
+        message: `${quote.number} has been accepted already.`,
+      });
+    }
+    if (quote.status === "declined") {
+      throw new ConvexError({
+        code: "WITHDRAWN",
+        message: `${quote.number} was withdrawn. Build a new quote instead.`,
+      });
+    }
+    if (quote.expiresAt < Date.now()) {
+      throw new ConvexError({
+        code: "EXPIRED",
+        message: `${quote.number} has expired. Build a new one rather than re-sending a dead price.`,
+      });
+    }
+
+    const resend = (quote.acceptLinkResends ?? 0) + 1;
+    const token = newInviteToken();
+    await ctx.db.patch(quoteId, {
+      acceptTokenHash: await hashToken(token),
+      acceptLinkResends: resend,
+    });
+
+    const now = Date.now();
+    const result = await queueQuoteSentFor(ctx, {
+      quoteId,
+      acceptToken: token,
+      resend,
+      triggeredAt: now,
+      now,
+    });
+
+    await auditWrite(ctx, ctx.tenant, {
+      action: "quote.resendToCustomer",
+      entityTable: "quotes",
+      entityId: quoteId,
+      after: { resend, outcome: result.outcome },
+    });
+
+    return {
+      quoteId,
+      number: quote.number,
+      outcome: result.outcome,
+      notice: describeDispatch(result),
+    };
   },
 });

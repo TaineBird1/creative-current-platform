@@ -175,6 +175,9 @@ function QuoteRow({ quote, currency }: { quote: Quote; currency: string }) {
   const markSent = useMutation(api.quotes.markSent);
   const sendToCustomer = useMutation(api.quotes.sendToCustomer);
   const decline = useMutation(api.quotes.decline);
+  const resend = useMutation(api.quotes.resendToCustomer);
+  const reissue = useMutation(api.quotes.reissueAcceptLink);
+  const [freshLink, setFreshLink] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -217,6 +220,15 @@ function QuoteRow({ quote, currency }: { quote: Quote; currency: string }) {
         </p>
         {error ? <p className={s.error}>{error}</p> : null}
         {notice ? <p className={s.notice}>{notice}</p> : null}
+        {freshLink ? (
+          <>
+            <p className={s.notice}>
+              A fresh link. The previous one has stopped working, and this is
+              the only time it is shown.
+            </p>
+            <output className={s.linkBox}>{freshLink}</output>
+          </>
+        ) : null}
       </div>
 
       <div className={s.rowActions}>
@@ -268,6 +280,48 @@ function QuoteRow({ quote, currency }: { quote: Quote; currency: string }) {
               onClick={() => run(() => markSent({ clientSlug: slugFromPath(), quoteId: quote._id }))}
             >
               I sent it myself
+            </button>
+          </>
+        ) : null}
+
+{/*
+          "SENT" IS NOT A ONE-WAY DOOR. A customer who deletes the email, or
+          never got it, is week one for any installer — and before these the
+          only way back was building the whole quote again under a new number,
+          putting two documents for one job in front of them.
+
+          Both mint a fresh link and kill the old one, because there is one
+          token hash: two live links to one document is two things to remember
+          to revoke, and the second is the one nobody remembers.
+        */}
+        {state === "sent" ? (
+          <>
+            <button
+              className={s.secondary}
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  const r = await resend({ clientSlug: slugFromPath(), quoteId: quote._id });
+                  setNotice(r.notice ?? `Sent again. ${r.number} is on a fresh link.`);
+                })
+              }
+            >
+              {busy ? "Sending…" : "Send again"}
+            </button>
+
+            <button
+              className={s.quietAction}
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  const r = await reissue({ clientSlug: slugFromPath(), quoteId: quote._id });
+                  setFreshLink(r.acceptUrl);
+                })
+              }
+            >
+              Get the link
             </button>
           </>
         ) : null}

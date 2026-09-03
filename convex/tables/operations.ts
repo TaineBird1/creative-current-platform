@@ -175,6 +175,14 @@ export const operationsTables = {
     acceptedAt: v.optional(v.number()),
     /** Customer accept-link. Hashed; the plaintext lives only in the link. */
     acceptTokenHash: v.string(),
+    /**
+     * How many times the accept link has been minted again after the first
+     * send. It exists to make the idempotency key differ: `quote.sent` is
+     * keyed on the quote id, so without an ordinal the outbox would refuse a
+     * deliberate re-send as a duplicate — and a customer who says "I never got
+     * it" would be told, silently, that they had.
+     */
+    acceptLinkResends: v.optional(v.number()),
     pdfStorageId: v.optional(v.id("_storage")),
     isDemo: v.boolean(),
   })

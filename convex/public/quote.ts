@@ -1,5 +1,6 @@
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
 import { safeParseSiteConfig } from "@cc/site-config";
 import { hashToken } from "../lib/invites";
 import { toE164 } from "../lib/phone";
@@ -172,6 +173,33 @@ export const submit = mutation({
  * the same job rather than creating a second one — a duplicate job means a
  * crew dispatched twice to a driveway that needed them once.
  */
+/**
+ * ACCEPTING — the customer agreeing to a price.
+ *
+ * The closest thing in this system to signing something, and it is treated
+ * that way: what they agreed to is SNAPSHOTTED onto a `quoteAcceptances` row
+ * at the moment they agree, not left to be read off a quote that staff can
+ * edit afterwards. Without that, "what did they agree to" is answerable only
+ * as "whatever it says now" — which is no answer at all when the disagreement
+ * is about a price, and that is the only time anybody asks.
+ *
+ * IDEMPOTENT, because the usage scene demands it: a customer on a phone with
+ * one bar, on a page that took a moment to respond, taps Accept twice. That
+ * must produce ONE acceptance. Two guards, because one is a race:
+ *   - the status check below refuses anything that is not `sent`, and
+ *   - the `by_quote` read refuses a second row even if the status were wrong.
+ * Both run inside one serializable mutation, so two concurrent taps conflict
+ * and one retries into the already-accepted branch rather than both inserting.
+ *
+ * A SECOND TAP IS NOT AN ERROR. It returns the acceptance that exists, so the
+ * page shows "Accepted" — which is true, and is what the customer meant. An
+ * error there would tell somebody who successfully accepted that they had
+ * failed, and they would ring the business about it.
+ *
+ * WITHDRAWN, EXPIRED AND UNSENT ALL REFUSE, each with its own sentence,
+ * because they need different actions from the reader: ask for a new one, ask
+ * for an updated one, and wait respectively.
+ */
 export const accept = mutation({
   args: { token: v.string() },
   handler: async (
@@ -199,6 +227,31 @@ export const accept = mutation({
      */
     if (!quote) throw rejected("that link is not valid");
 
+    /*
+     * THE ACCEPTANCE IS THE RECORD, so it is what gets checked for a repeat —
+     * not the quote's status, which is a mutable field on a mutable row.
+     */
+    const existing = await ctx.db
+      .query("quoteAcceptances")
+      .withIndex("by_quote", (q) => q.eq("quoteId", quote._id))
+      .unique();
+
+    if (existing) {
+      return {
+        number: existing.number,
+        totalCents: existing.totalCents,
+        currency: existing.currency,
+        alreadyAccepted: true,
+        jobCreated: false,
+      };
+    }
+
+    /*
+     * An accepted quote with no acceptance row predates this table. Report it
+     * as accepted rather than accepting it again — inventing a snapshot now
+     * would be a guess about the past dressed as a record of it, which is the
+     * same refusal `leads.provenance` makes.
+     */
     if (quote.status === "accepted") {
       return {
         number: quote.number,
@@ -248,8 +301,9 @@ export const accept = mutation({
     const active = locations.filter((row) => row.active);
     const location = active.length === 1 ? active[0]! : null;
 
+    let jobId: Id<"jobs"> | undefined;
     if (location) {
-      await ctx.db.insert("jobs", {
+      jobId = await ctx.db.insert("jobs", {
         clientId: quote.clientId,
         quoteId: quote._id,
         customerId: quote.customerId,
@@ -261,6 +315,26 @@ export const accept = mutation({
         currency: quote.currency,
       });
     }
+
+    /*
+     * THE SNAPSHOT. Everything the customer read, copied rather than
+     * referenced, so this row answers "what did they agree to" on its own
+     * however the quote is edited afterwards.
+     */
+    await ctx.db.insert("quoteAcceptances", {
+      clientId: quote.clientId,
+      quoteId: quote._id,
+      customerId: quote.customerId,
+      number: quote.number,
+      lineItems: quote.lineItems.map((line) => ({ ...line })),
+      subtotalCents: quote.subtotalCents,
+      totalCents: quote.totalCents,
+      currency: quote.currency,
+      validUntil: quote.expiresAt,
+      acceptedAt: now,
+      ...(jobId ? { jobId } : {}),
+      isDemo: quote.isDemo,
+    });
 
     await ctx.db.insert("auditLog", {
       clientId: quote.clientId,

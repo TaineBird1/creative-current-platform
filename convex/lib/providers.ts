@@ -534,6 +534,44 @@ export function renderMessage(input: RenderInput): { subject: string; body: stri
         ].join("\n"),
       };
 
+    case "quote_sent": {
+      const link = input.payload.link;
+      const number = input.payload.number ?? "your quote";
+      if (!link) return null;
+
+      const total = input.payload.totalCents
+        ? formatMoney(Number(input.payload.totalCents), input.payload.currency ?? "ZAR")
+        : null;
+      const until = input.payload.expiresAt
+        ? (formatWhen(Number(input.payload.expiresAt), input.timezone)?.short ?? null)
+        : null;
+
+      return {
+        subject: total ? `Your quote from ${client} — ${total}` : `Your quote from ${client}`,
+        body: [
+          `${client} has sent you a quote.`,
+          "",
+          total ? `  ${number} — ${total}` : `  ${number}`,
+          "",
+          /*
+           * The link, alone on its line. Mail clients and WhatsApp both
+           * linkify a bare URL reliably; a URL wrapped in a sentence is the
+           * one that gets truncated or half-selected.
+           */
+          "Read it and accept it here:",
+          `  ${link}`,
+          "",
+          until ? `It stands until ${until}.` : null,
+          until ? "" : null,
+          howToReach(input, "If anything on it looks wrong"),
+          "",
+          client,
+        ]
+          .filter((line) => line !== null)
+          .join("\n"),
+      };
+    }
+
     case "reminder_24h":
       if (!when) return null;
       return {
@@ -681,6 +719,28 @@ function day(at: string | undefined): string | null {
  * Naming the timezone out loud in the long form is what makes that survivable
  * for the customer who is not in it.
  */
+/**
+ * Rands from integer cents, for a message body.
+ *
+ * The same shape the invoice and quote documents render, so a customer who
+ * sees a figure in an email and then opens the link is not comparing two
+ * differently-formatted numbers and wondering which is right.
+ */
+function formatMoney(cents: number, currency: string): string | null {
+  if (!Number.isFinite(cents)) return null;
+  try {
+    return new Intl.NumberFormat("en-ZA", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+    }).format(cents / 100);
+  } catch {
+    // An unknown currency code must not take the whole message down; the
+    // renderer returning null would drop a quote nobody could then accept.
+    return null;
+  }
+}
+
 function formatWhen(at: number, timeZone: string): { short: string; long: string } | null {
   if (!Number.isFinite(at)) return null;
   const date = new Date(at);

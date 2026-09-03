@@ -172,10 +172,12 @@ export function QuoteBuilder({
 /* ------------------------------------------------------------------ rows */
 
 function QuoteRow({ quote, currency }: { quote: Quote; currency: string }) {
-  const send = useMutation(api.quotes.send);
+  const markSent = useMutation(api.quotes.markSent);
+  const sendToCustomer = useMutation(api.quotes.sendToCustomer);
   const decline = useMutation(api.quotes.decline);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   /*
    * `isExpired` is derived by the query rather than stored, so it is true
@@ -214,6 +216,7 @@ function QuoteRow({ quote, currency }: { quote: Quote; currency: string }) {
           {state === "accepted" ? null : ` · ${expiryLabel(quote.expiresAt)}`}
         </p>
         {error ? <p className={s.error}>{error}</p> : null}
+        {notice ? <p className={s.notice}>{notice}</p> : null}
       </div>
 
       <div className={s.rowActions}>
@@ -221,15 +224,52 @@ function QuoteRow({ quote, currency }: { quote: Quote; currency: string }) {
           {STATE_LABEL[state]}
         </p>
 
+{/*
+          TWO WAYS OUT OF A DRAFT, named for what each one does.
+
+          "Email it" dispatches through the outbox and is the only one that
+          sends anything. "Mark as sent" records that the client handed the
+          link over themselves, which is how this business actually works —
+          the accept link goes into their own WhatsApp thread.
+
+          Both act only on a draft, so taking one closes the other. That is
+          what stops the email path re-minting a token and killing a link the
+          customer already has.
+        */}
         {quote.status === "draft" && !quote.isExpired ? (
-          <button
-            className={s.secondary}
-            type="button"
-            disabled={busy}
-            onClick={() => run(() => send({ clientSlug: slugFromPath(), quoteId: quote._id }))}
-          >
-            {busy ? "Saving…" : "Mark as sent"}
-          </button>
+          <>
+            <button
+              className={s.secondary}
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  const result = await sendToCustomer({
+                    clientSlug: slugFromPath(),
+                    quoteId: quote._id,
+                  });
+                  /*
+                   * The BACKEND'S sentence, shown as-is. It is the only thing
+                   * that knows whether the message was queued, held for quiet
+                   * hours, or refused — and a screen that guessed would tell
+                   * somebody it had gone when it had not.
+                   */
+                  if (result.notice) setNotice(result.notice);
+                })
+              }
+            >
+              {busy ? "Sending…" : "Email it"}
+            </button>
+
+            <button
+              className={s.quietAction}
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => markSent({ clientSlug: slugFromPath(), quoteId: quote._id }))}
+            >
+              I sent it myself
+            </button>
+          </>
         ) : null}
 
         {quote.status !== "accepted" && quote.status !== "declined" ? (
@@ -265,6 +305,7 @@ type Draft = {
 };
 
 type Handover = {
+  quoteId: Quote["_id"];
   number: string;
   totalCents: number;
   acceptToken: string;
@@ -347,6 +388,7 @@ function Builder({
       });
 
       onCreated({
+        quoteId: created.quoteId,
         number: created.number,
         totalCents: created.totalCents,
         acceptToken: created.acceptToken,
@@ -500,6 +542,7 @@ function Builder({
 /* -------------------------------------------------------------- handover */
 
 function HandoverPanel({
+  quoteId,
   number,
   totalCents,
   acceptToken,
@@ -508,7 +551,9 @@ function HandoverPanel({
   currency,
   onDone,
 }: Handover & { currency: string; onDone: () => void }) {
+  const markSent = useMutation(api.quotes.markSent);
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const link =
     typeof window === "undefined" ? "" : `${window.location.origin}/q/${acceptToken}`;
@@ -575,8 +620,35 @@ function HandoverPanel({
         goes out from here.
       </p>
 
-      <button className={s.quietAction} type="button" onClick={onDone}>
-        I have sent it
+      {/*
+        THIS RECORDS THE SEND, it does not just close the panel. Left as a
+        plain dismiss, the quote would sit at `draft` after the client had
+        already handed the link over — and "Email it" would then still be
+        offered on it, re-minting a token and killing the link the customer
+        already has.
+      */}
+      <button
+        className={s.quietAction}
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await markSent({ clientSlug: slugFromPath(), quoteId });
+          } catch {
+            /*
+             * Deliberately swallowed. The link is already in the customer's
+             * hands — that happened outside this system — so refusing to
+             * close the panel would strand the client on a screen whose work
+             * is done. The quote stays a draft and the list still shows it.
+             */
+          } finally {
+            setBusy(false);
+            onDone();
+          }
+        }}
+      >
+        {busy ? "Saving…" : "I have sent it"}
       </button>
     </section>
   );

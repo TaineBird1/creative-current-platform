@@ -428,3 +428,12 @@
   flex-wrap: wrap;
   gap: var(--space-xs);
 }
+
+/* The backend's sentence about what the outbox decided. Information, not an
+   error: a message held for quiet hours went out correctly. */
+.notice {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  max-width: 46ch;
+}

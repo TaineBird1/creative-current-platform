@@ -182,6 +182,62 @@ export const operationsTables = {
     .index("by_acceptTokenHash", ["acceptTokenHash"])
     .index("by_customer", ["customerId"]),
 
+  /**
+   * WHAT THE CUSTOMER ACTUALLY AGREED TO.
+   *
+   * Accepting a quote is the closest thing in this system to signing
+   * something, and until this table existed the only record of it was the
+   * quote row itself — which staff can edit afterwards. "What did they agree
+   * to" would then have been answerable only as "whatever it says now", which
+   * is not an answer at all when the disagreement is about a price.
+   *
+   * So the terms are SNAPSHOTTED here at accept time, exactly as
+   * `invoices.issuerLegalName` and `billToName` are snapshotted onto an
+   * invoice: the document is history, and history does not move.
+   *
+   * APPEND-ONLY, and held that way by guards.test.ts alongside ledgerEntries,
+   * auditLog and consents. A record of what somebody agreed to is worth
+   * nothing if it can be revised.
+   *
+   * ONE ROW PER QUOTE, enforced by the accept path reading `by_quote` before
+   * inserting. A customer on bad signal double-tapping Accept must produce one
+   * acceptance, not two.
+   */
+  quoteAcceptances: defineTable({
+    clientId: v.id("clients"),
+    quoteId: v.id("quotes"),
+    customerId: v.id("customers"),
+    /** The number as printed on what they read. */
+    number: v.string(),
+    /** The lines as they stood. Not a reference — a copy. */
+    lineItems: v.array(v.object({
+      description: v.string(),
+      quantity: v.number(),
+      unitPriceCents: v.number(),
+      taxable: v.boolean(),
+    })),
+    subtotalCents: v.number(),
+    totalCents: v.number(),
+    currency,
+    /**
+     * The terms: when the offer they accepted would have lapsed. Kept because
+     * "was it still valid when they said yes" is the first question anybody
+     * asks about a disputed acceptance, and it is unanswerable later if the
+     * quote's own expiry is edited or the quote is re-sent.
+     */
+    validUntil: v.number(),
+    acceptedAt: v.number(),
+    /**
+     * The job this created, when the branch was unambiguous. Absent means
+     * staff still have to create it — see public/quote.accept, which refuses
+     * to guess a branch.
+     */
+    jobId: v.optional(v.id("jobs")),
+    isDemo: v.boolean(),
+  })
+    .index("by_quote", ["quoteId"])
+    .index("by_client", ["clientId", "acceptedAt"]),
+
   jobs: defineTable({
     clientId: v.id("clients"),
     quoteId: v.optional(v.id("quotes")),

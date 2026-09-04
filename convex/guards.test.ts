@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
 import { IMMUTABLE_TABLES } from "./schema";
+import { expectAbsent } from "../test-support/negative";
 
 /**
  * THE STRUCTURAL GUARD.
@@ -287,6 +288,99 @@ describe("tenancy", () => {
         "them, or they should come off the list until it does.",
       ].join("\n"),
     ).toEqual([]);
+  });
+});
+
+describe("the guards cannot be vacuous", () => {
+  /*
+   * THE RULE, enforced rather than remembered.
+   *
+   * `expect(code).not.toContain(x)` passes for two different reasons: the code
+   * is clean, or `x` matches nothing at all. Green looks identical either way,
+   * and the second is a guard that has silently stopped guarding. It has
+   * happened three times here — an empty walker, an immutability rule matching
+   * a table name inside `db.patch(id, …)` where one can never appear, and a
+   * `` that collapsed into a literal backspace character.
+   *
+   * Every one was caught by planting a violation by hand. That is a habit, and
+   * habits do not survive the session they were learned in, so the positive
+   * control now lives INSIDE the assertion: `expectAbsent` proves the pattern
+   * matches its own sample before reporting that it is absent.
+   *
+   * This test is what stops the bare form coming back. It is a literal-token
+   * scan — the middle rung of the ladder — because that is the rung a test
+   * file's own text can support.
+   */
+  const REPO_ROOT = join(CONVEX_DIR, "..");
+
+  const GUARD_FILES = [
+    "convex/guards.test.ts",
+    "apps/office/office-routes.test.ts",
+    "apps/sites/demo-guard.test.ts",
+  ];
+
+  /*
+   * SPLIT, so the scanner does not find itself.
+   *
+   * Written whole, these literals ARE the thing being banned, and the test
+   * fails on its own source — which is a false positive that reads exactly
+   * like a true one. Assembling them at runtime is the smallest honest way
+   * out; comments are stripped below for the same reason.
+   */
+  const BARE = [".not." + "toContain(", ".not." + "toMatch("];
+
+  test("EVERY negative assertion carries its own positive control", () => {
+    const offenders: string[] = [];
+    let examined = 0;
+
+    for (const file of GUARD_FILES) {
+      /*
+       * COMMENTS STRIPPED, the default everywhere else in this file. The
+       * paragraph explaining a rule is the text most likely to contain the
+       * thing it bans — which has already fooled three rules in this repo.
+       */
+      const text = stripComments(readFileSync(join(REPO_ROOT, file), "utf8"));
+      examined += 1;
+      for (const bare of BARE) {
+        /*
+         * Counted rather than merely detected, so the message can say how many
+         * — and so this cannot pass because the file failed to load.
+         */
+        let from = 0;
+        for (;;) {
+          const at = text.indexOf(bare, from);
+          if (at === -1) break;
+          offenders.push(`${file}: ${bare}`);
+          from = at + bare.length;
+        }
+      }
+    }
+
+    expect(examined, "no guard files were read").toBe(GUARD_FILES.length);
+
+    expect(
+      offenders,
+      "A bare negative assertion cannot tell 'the code is clean' from " +
+        "'this pattern matches nothing'. Use expectAbsent from " +
+        "test-support/negative, which proves the pattern matches a planted " +
+        "sample first.",
+    ).toEqual([]);
+  });
+
+  test("and the helper itself refuses a pattern that matches nothing", () => {
+    /*
+     * The control on the control. If `expectAbsent` ever stopped checking its
+     * own sample, every assertion built on it would go quietly vacuous
+     * together — which is a worse version of the bug it exists to prevent.
+     */
+    expect(() =>
+      expectAbsent({
+        pattern: "cannot-possibly-appear-anywhere",
+        from: "some source text",
+        provenBy: "a sample that does not contain it",
+        because: "this should never be reached",
+      }),
+    ).toThrow();
   });
 });
 
@@ -777,11 +871,13 @@ describe("the office origin does not enumerate the client roster", () => {
   });
 
   test("and the deleted brand query has not come back", () => {
-    expect(
-      sourceFiles.map((f) => f.path),
-      "public/brand.ts was deleted because it was the oracle. Reintroducing " +
+    expectAbsent({
+      pattern: "public/brand.ts",
+      from: sourceFiles.map((f) => f.path).join("\n"),
+      provenBy: "public/brand.ts",
+      because: "public/brand.ts was deleted because it was the oracle. Reintroducing " +
         "it needs the argument in this describe block answered first.",
-    ).not.toContain("public/brand.ts");
+    });
   });
 });
 
@@ -886,15 +982,18 @@ describe("the preview harness cannot exist in production", () => {
     const turbo = JSON.parse(readFileSync(join(CONVEX_DIR, "..", "turbo.json"), "utf8"));
     const declared: string[] = turbo.tasks?.build?.env ?? [];
 
-    expect(
-      declared,
-      [
+    expectAbsent({
+      pattern: "ALLOW_PREVIEW_ROUTES",
+      // The declared list as one string, so a single scan covers every entry.
+      from: declared.join(" "),
+      provenBy: "ALLOW_PREVIEW_ROUTES",
+      because: [
         "ALLOW_PREVIEW_ROUTES must NOT be declared in turbo.json.",
         "Declaring it lets a Vercel build see it, which turns a structural",
         "guarantee back into an environment variable somebody can get wrong —",
         "and what is behind it is a client's customer list.",
       ].join("\n"),
-    ).not.toContain("ALLOW_PREVIEW_ROUTES");
+    });
   });
 
   test("BARRIER 3: it refuses to render without the flag", () => {
@@ -1647,7 +1746,12 @@ describe("suppression fails closed", () => {
     const file = sourceFiles.find((f) => f.path === SUPPRESSION_READER)!;
     const filter = file.code.slice(file.code.indexOf("export async function filterContactable"));
     expect(filter).toMatch(/allowed:\s*\[\]/);
-    expect(filter).not.toMatch(/allowed:\s*items/);
+    expectAbsent({
+      pattern: /allowed:\s*items/,
+      from: filter,
+      provenBy: "allowed: items",
+      because: "see the surrounding test",
+    });
   });
 });
 
@@ -1924,7 +2028,12 @@ describe("provenance cannot be backfilled", () => {
     // pasted list — are exactly the ones that would not have it.
     const growth = sourceFiles.find((f) => f.path === "tables/growth.ts");
     expect(growth?.code).toMatch(/provenance:\s*v\.object\(/);
-    expect(growth?.code).not.toMatch(/provenance:\s*v\.optional\(/);
+    expectAbsent({
+      pattern: /provenance:\s*v\.optional\(/,
+      from: growth?.code ?? "",
+      provenBy: "provenance: v.optional(v.object({",
+      because: "see the surrounding test",
+    });
   });
 
   test("it carries the source, the capture time and the lawful basis", () => {

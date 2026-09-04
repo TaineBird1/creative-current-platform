@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { expectAbsent } from "../../test-support/negative";
 import {
   ADMIN_SIGN_IN,
   PUBLIC_ROUTE_IDS,
@@ -291,25 +292,116 @@ describe("the client door does not enumerate the roster", () => {
   test("IT MAKES NO QUERY AT ALL", () => {
     expect(signIn.raw.length, "the client sign-in page is missing").toBeGreaterThan(200);
     for (const forbidden of ["fetchQuery", "useQuery", "convex/nextjs", "convex/react"]) {
-      expect(
-        signIn.code,
-        `The client sign-in page calls ${forbidden}. Any per-slug lookup before ` +
+      expectAbsent({
+        pattern: forbidden,
+        from: signIn.code,
+        provenBy: `const x = await ${forbidden}(api.clients.brand, {});`,
+        because: `The client sign-in page calls ${forbidden}. Any per-slug lookup before ` +
           "authentication makes this page an oracle for whether a business is a " +
           "client, and a wordlist turns that into the roster.",
-      ).not.toContain(forbidden);
+      });
     }
   });
 
   test("and renders nothing that could differ by slug", () => {
     // businessName/accent are the two props that carried the branding.
-    expect(signIn.code).not.toContain("businessName");
-    expect(signIn.code).not.toContain("accent");
+    expectAbsent({
+      pattern: "businessName",
+      from: signIn.code,
+      provenBy: "<SignIn businessName={brand?.name} />",
+      because: "see the surrounding test",
+    });
+    expectAbsent({
+      pattern: "accent",
+      from: signIn.code,
+      provenBy: "accent={accentStyle(brand.accent)}",
+      because: "see the surrounding test",
+    });
   });
 
   test("the slug is still used for the post-sign-in redirect", () => {
     // Not a leak: the visitor typed that URL, so being sent back to it proves
     // only that they typed it. Dropping it would land a client on /admin.
     expect(signIn.code).toContain("redirectTo");
+  });
+});
+
+describe("the client outbox never shows the platform's own diagnostics", () => {
+  /*
+   * `messages.error` holds the reason a message did not go, and those
+   * sentences are written for whoever runs the PLATFORM: several name
+   * environment variables, one names a Resend key, one names a lead we are
+   * prospecting. A client reading "MESSAGING_RESEND_KEY is not set" learns
+   * nothing they can act on and a little they should not have to think about
+   * — and the prospecting one discloses another business's status to them.
+   *
+   * Same rule the client calendar follows: show the STATE, never the
+   * underlying error. This pins it, because the field is right there on the
+   * row and rendering it is a one-word change that would look like an
+   * improvement.
+   */
+  const outbox = read("app/c/[slug]/messages/Outbox.tsx");
+
+  test("it reads the status, never the error", () => {
+    expect(outbox.raw.length, "the outbox component is missing").toBeGreaterThan(500);
+    expectAbsent({
+      pattern: ".error",
+      from: outbox.code,
+      provenBy: "title={row.error}",
+      because:
+        "The client outbox renders row.error. Those sentences are the platform's, " +
+        "not the client's — and the field is not even returned by the query any " +
+        "more. Add a state to the STATES map instead.",
+    });
+  });
+
+  test("A LEAD SUPPRESSION IS INDISTINGUISHABLE FROM AN ORDINARY FAILURE", async () => {
+    /*
+     * Generic wording is not enough if the mapping is unique. A client who
+     * sees one sentence on a single customer, and a different sentence on
+     * every other refusal, has learned that this customer is special — and the
+     * reason is that they are on the platform's prospecting list.
+     *
+     * So the two must render identically. Asserted on the VALUES the component
+     * exports rather than on its source, because "the same words" is the
+     * property that matters and a source scan would pass on two copies of the
+     * same string that later diverge.
+     */
+    const { STATES_FOR_TEST } = await import("./app/c/[slug]/messages/Outbox");
+
+    const failed = STATES_FOR_TEST["failed"];
+    const lead = STATES_FOR_TEST["suppressed_lead"];
+
+    expect(failed, "no entry for failed").toBeDefined();
+    expect(lead, "no entry for suppressed_lead").toBeDefined();
+
+    expect(
+      lead,
+      "A lead suppression must render exactly as an ordinary delivery failure. " +
+        "Anything that differs — the words, the label, even the tone — tells a " +
+        "client which of their customers we are prospecting.",
+    ).toEqual(failed);
+
+    // And the same object, so no edit can make one drift from the other.
+    expect(lead, "they must be the same entry, not two equal copies").toBe(failed);
+  });
+
+  test("and every state it does show has a plain-language label", () => {
+    // A status with no entry falls through to the raw enum value, which is
+    // not English. The map is the whole translation layer.
+    for (const status of [
+      "sent",
+      "delivered",
+      "scheduled",
+      "holding_quiet_hours",
+      "sending",
+      "failed",
+      "suppressed_consent",
+      "suppressed_demo",
+      "suppressed_lead",
+    ]) {
+      expect(outbox.code, `${status} has no plain-language label`).toContain(status);
+    }
   });
 });
 
@@ -344,7 +436,12 @@ describe("there is one source, and the middleware is not a second one", () => {
   test("createRouteMatcher is gone entirely", () => {
     // It only ever built the protected list. Left imported, it is an
     // invitation to add a second, untested opinion beside the module.
-    expect(middleware.code).not.toContain("createRouteMatcher");
+    expectAbsent({
+      pattern: "createRouteMatcher",
+      from: middleware.code,
+      provenBy: 'const isPublic = createRouteMatcher(["/i/:token"]);',
+      because: "see the surrounding test",
+    });
   });
 
   test("THE MATCHER IS STILL A CATCH-ALL", () => {

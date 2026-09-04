@@ -123,7 +123,17 @@ export default async function BackOffice({
           <h1 className={s.heading}>{brand?.name ?? slug}</h1>
           <p className={s.today}>{longDate(bookings.timezone)}</p>
         </div>
-        <SignOut />
+        <div className={s.headActions}>
+          {/*
+            "Did my customer hear from us" is a question about the whole day,
+            not about one section, so it lives in the header rather than over
+            a list.
+          */}
+          <Link className={s.headLink} href={`/c/${slug}/messages`}>
+            Messages
+          </Link>
+          <SignOut />
+        </div>
       </header>
 
       <Bookings data={bookings} />

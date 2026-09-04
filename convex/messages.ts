@@ -265,10 +265,42 @@ export const outbox = tenantQuery("staff")({
       scheduledFor: number;
       sentAt: number | null;
       attempts: number;
-      /** Why it did not go, in words, when it did not go. */
-      error: string | null;
+      /*
+       * `error` IS DELIBERATELY ABSENT, and its absence is the fix rather
+       * than a simplification.
+       *
+       * That column holds the platform's own sentence about why a message did
+       * not go. Several name environment variables. One names a LEAD: when a
+       * client's customer is also a business we are prospecting, the lead
+       * check refuses the send and writes "that number belongs to <name>, a
+       * lead we are prospecting" — onto a row whose clientId is the client's,
+       * so it lands in their tenant-scoped outbox.
+       *
+       * Not rendering it was not enough. A returned field is on the wire in
+       * the RSC payload whatever the component draws, so the disclosure
+       * survived in devtools. The field is gone from the query instead, which
+       * is the difference between a rule the render has to follow and a fact
+       * about what leaves the server.
+       *
+       * THE ROW ITSELF STAYS. It is about the client's OWN customer, and the
+       * fact that somebody got no confirmation is exactly what this screen
+       * exists to tell them — dropping the row would recreate the invisible
+       * failure the messages table was built to prevent. The disclosure was
+       * never the row's existence; it was the sentence attached to it.
+       *
+       * Whoever runs the platform still sees the reason, on the rows in the
+       * database and through health checks. It is written for them.
+       */
       providerName: string | null;
-      customerId: Id<"customers"> | null;
+      /**
+       * WHO IT WAS FOR, by name. The screen asks "did this customer hear from
+       * us", and an id answers a different question — one nobody has.
+       *
+       * Null when a message is not customer-directed at all: `dispatchToClient`
+       * writes rows with no customerId, and those are ours to the client
+       * rather than theirs to a customer.
+       */
+      customerName: string | null;
     }[]
   > => {
     const rows = await ctx.db
@@ -276,22 +308,34 @@ export const outbox = tenantQuery("staff")({
       .withIndex("by_client", (q) => q.eq("clientId", ctx.tenant.clientId))
       .collect();
 
-    return rows
-      .sort(byDesc((row) => row.scheduledFor))
-      .slice(0, limit ?? 100)
-      .map((row) => ({
-        _id: row._id,
-        status: row.status,
-        channel: row.channel,
-        templateKey: row.templateKey,
-        to: row.to,
-        scheduledFor: row.scheduledFor,
-        sentAt: row.sentAt ?? null,
-        attempts: row.attempts,
-        error: row.error ?? null,
-        providerName: row.providerName ?? null,
-        customerId: row.customerId ?? null,
-      }));
+    const page = rows.sort(byDesc((row) => row.scheduledFor)).slice(0, limit ?? 100);
+
+    /*
+     * One read of the client's customers rather than one per row. The tenant's
+     * own customers only — the same index the rest of this file uses — so a
+     * name can never be resolved across a tenant boundary.
+     */
+    const names = new Map(
+      (
+        await ctx.db
+          .query("customers")
+          .withIndex("by_client_phone", (q) => q.eq("clientId", ctx.tenant.clientId))
+          .collect()
+      ).map((doc) => [doc._id, doc.name]),
+    );
+
+    return page.map((row) => ({
+      _id: row._id,
+      status: row.status,
+      channel: row.channel,
+      templateKey: row.templateKey,
+      to: row.to,
+      scheduledFor: row.scheduledFor,
+      sentAt: row.sentAt ?? null,
+      attempts: row.attempts,
+      providerName: row.providerName ?? null,
+      customerName: row.customerId ? names.get(row.customerId) ?? null : null,
+    }));
   },
 });
 

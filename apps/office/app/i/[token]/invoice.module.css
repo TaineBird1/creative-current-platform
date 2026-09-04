@@ -296,6 +296,29 @@
        stating it keeps the layout from depending on that leniency. */
     text-align: left;
   }
+
+  /*
+   * THE TOTAL SHRINKS WITH THE TABLE, and leaving it out was the same cascade
+   * collision this file already documents once, on the row where it costs
+   * most.
+   *
+   * `.totalRow th, .totalRow td` is (0,2,1) and sets `--step-0`. The narrow
+   * rule above is `.lines` at (0,1,0). So every LINE shrank to 13.12px and the
+   * TOTAL stayed at 16.035px — a 131px cell in the 109px column the lines use,
+   * pushing the table to 352px inside a 343px wrapper. `.linesWrap` scrolls,
+   * so nothing overflowed the page and nothing errored: the reader simply got
+   * `R 13 500,0` with the last digit past the edge, on the one figure they
+   * opened the invoice for. Measured on a 375px viewport, not inferred.
+   *
+   * `em`, so it stays tied to whatever the table is set to rather than
+   * becoming a second number to keep in step. 1.05 keeps the total visibly
+   * ahead of the lines; the 600 weight above was always doing most of that
+   * work anyway.
+   */
+  .totalRow th,
+  .totalRow td {
+    font-size: 1.05em;
+  }
 }
 
 @media print {

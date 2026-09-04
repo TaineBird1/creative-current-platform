@@ -355,6 +355,37 @@ describe("the client outbox never shows the platform's own diagnostics", () => {
     });
   });
 
+  test("A LEAD SUPPRESSION IS INDISTINGUISHABLE FROM AN ORDINARY FAILURE", async () => {
+    /*
+     * Generic wording is not enough if the mapping is unique. A client who
+     * sees one sentence on a single customer, and a different sentence on
+     * every other refusal, has learned that this customer is special — and the
+     * reason is that they are on the platform's prospecting list.
+     *
+     * So the two must render identically. Asserted on the VALUES the component
+     * exports rather than on its source, because "the same words" is the
+     * property that matters and a source scan would pass on two copies of the
+     * same string that later diverge.
+     */
+    const { STATES_FOR_TEST } = await import("./app/c/[slug]/messages/Outbox");
+
+    const failed = STATES_FOR_TEST["failed"];
+    const lead = STATES_FOR_TEST["suppressed_lead"];
+
+    expect(failed, "no entry for failed").toBeDefined();
+    expect(lead, "no entry for suppressed_lead").toBeDefined();
+
+    expect(
+      lead,
+      "A lead suppression must render exactly as an ordinary delivery failure. " +
+        "Anything that differs — the words, the label, even the tone — tells a " +
+        "client which of their customers we are prospecting.",
+    ).toEqual(failed);
+
+    // And the same object, so no edit can make one drift from the other.
+    expect(lead, "they must be the same entry, not two equal copies").toBe(failed);
+  });
+
   test("and every state it does show has a plain-language label", () => {
     // A status with no entry falls through to the raw enum value, which is
     // not English. The map is the whole translation layer.

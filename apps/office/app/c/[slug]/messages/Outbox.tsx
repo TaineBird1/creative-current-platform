@@ -139,6 +139,19 @@ function MessageRow({ row, timezone }: { row: Row; timezone: string }) {
  */
 type Tone = "good" | "waiting" | "bad" | "neutral";
 
+/**
+ * The one thing a client is told about a message that did not reach anybody
+ * and that they cannot act on differently.
+ *
+ * Used by `failed` AND `suppressed_lead`, by reference, so no future edit can
+ * make one of them distinguishable from the other by accident.
+ */
+const UNREACHABLE = {
+  label: "Not sent",
+  tone: "bad" as Tone,
+  detail: "We could not get this to them. Check their contact details, and ring them if it matters.",
+};
+
 const STATES: Record<string, { label: string; tone: Tone; detail: string | null }> = {
   sent: { label: "Sent", tone: "good", detail: null },
   delivered: { label: "Delivered", tone: "good", detail: null },
@@ -155,19 +168,38 @@ const STATES: Record<string, { label: string; tone: Tone; detail: string | null 
   },
   sending: { label: "Going out now", tone: "waiting", detail: null },
 
-  failed: {
-    label: "Not sent",
-    tone: "bad",
-    /*
-     * The honest general case. `error` holds the specific reason and is
-     * deliberately not shown — it is written for the platform, and several of
-     * those sentences name environment variables.
-     */
-    detail: "We could not deliver this. Check the address, and tell us if it looks right.",
-  },
+  /*
+   * ONE OBJECT, SHARED, and that is the point rather than tidiness.
+   *
+   * Generic wording is not enough if the MAPPING is unique. A client who sees
+   * one sentence on a single customer and a different sentence on every other
+   * refusal has still learned that this customer is special — and the reason
+   * that customer is special is that they are on the platform's prospecting
+   * list, which is not the client's business.
+   *
+   * So the two refusals a client cannot act on differently are literally the
+   * same entry: a delivery failure and a lead suppression render identical
+   * label, tone and words. Nothing in the row distinguishes them either —
+   * `attempts`, `channel` and the reason are not shown, and `error` is not
+   * even returned by the query.
+   *
+   * The copy has to serve both, so it says what is useful in either case and
+   * names neither: check the details, and if it matters, ring.
+   */
+  ...Object.fromEntries(
+    ["failed", "suppressed_lead"].map((status) => [status, UNREACHABLE]),
+  ),
+
   suppressed_consent: {
     label: "Not sent",
     tone: "bad",
+    /*
+     * KEPT DISTINCT, deliberately. This is a fact about the customer's own
+     * wishes, it is the client's business, and it changes what they should do
+     * — stop trying to message and ask them in person. It discloses nothing
+     * about the platform, and its existence is what keeps the shared sentence
+     * above ambiguous: a row carrying it is visibly not the same kind of thing.
+     */
     detail: "This customer has not agreed to be contacted, or has asked us to stop.",
   },
   suppressed_demo: {
@@ -175,19 +207,14 @@ const STATES: Record<string, { label: string; tone: Tone; detail: string | null 
     tone: "neutral",
     detail: "This is demonstration data, so nothing was really sent.",
   },
-  suppressed_lead: {
-    label: "Not sent",
-    tone: "bad",
-    /*
-     * Deliberately says nothing about WHY beyond "we could not". The real
-     * reason is that this contact is also on the platform's prospecting list,
-     * which is the platform's business and not this client's — and an earlier
-     * wording ("a business we are not allowed to message") hinted at the
-     * existence of that list, which is the same disclosure in softer words.
-     */
-    detail: "We could not message this contact. Ring them instead.",
-  },
 };
+
+/**
+ * Exported for the guard that asserts a lead suppression and an ordinary
+ * failure render identically. The test needs the VALUES — "the same words" is
+ * the property, and a source scan would pass on two copies that later diverge.
+ */
+export const STATES_FOR_TEST = STATES;
 
 const TEMPLATE_NAMES: Record<string, string> = {
   booking_confirmation: "Booking confirmation",

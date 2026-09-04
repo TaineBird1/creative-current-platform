@@ -1,0 +1,141 @@
+/*
+ * Operate mode, matching the bookings and quotes screens: bordered rows rather
+ * than cards, nothing decorative, and the failures first because they are the
+ * reason anybody opened this.
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-s);
+  padding-bottom: var(--space-2xs);
+  border-bottom: var(--border-hairline) solid var(--border-strong);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.count {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+.quiet {
+  margin: var(--space-m) 0 0;
+  color: var(--text-muted);
+  max-width: 48ch;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  gap: var(--space-2xs) var(--space-m);
+  padding-block: var(--space-m);
+  border-bottom: var(--border-hairline) solid var(--border);
+  align-items: start;
+}
+
+@media (min-width: 48rem) {
+  .row {
+    grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) minmax(0, 15rem);
+  }
+}
+
+.name {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--step-0);
+}
+
+.what {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+.middle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+/*
+ * The address in mono, and allowed to break. "Did they get it" is often really
+ * "did it go to the right place", and an address truncated with an ellipsis
+ * hides the one character that is wrong.
+ */
+.to {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  word-break: break-all;
+}
+
+.when {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step--1);
+  color: var(--text-faint);
+}
+
+.right {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+
+/*
+ * The state as a WORD, not a coloured dot. A legend the reader has to learn is
+ * slower than two words, and this screen is read by somebody with a customer
+ * on the phone. Colour is a second signal on top of the word, never the only
+ * one — which also keeps it legible to anybody who does not see the hue.
+ */
+.state {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.state[data-tone="good"] {
+  color: var(--signal-positive);
+}
+
+.state[data-tone="waiting"] {
+  color: var(--text-muted);
+}
+
+.state[data-tone="bad"] {
+  color: var(--signal-danger);
+}
+
+.detail {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  max-width: 40ch;
+}

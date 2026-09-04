@@ -40,6 +40,8 @@ const COLOUR_ALLOWLIST = new Set([
   // the one thing that differs per client on that screen, so a harness with no
   // ramp shows every action in the wrong colour and lies about what ships.
   join("apps", "office", "app", "preview", "quote-builder", "page.preview.tsx"),
+  // And the outbox harness. Same seam again.
+  join("apps", "office", "app", "preview", "outbox", "page.preview.tsx"),
   // Same seam: seed data supplies a client's brand colour, which is a hex by
   // definition. It is fed through the ramp, not painted.
   join("convex", "seed.ts"),

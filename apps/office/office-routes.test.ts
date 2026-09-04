@@ -313,6 +313,57 @@ describe("the client door does not enumerate the roster", () => {
   });
 });
 
+describe("the client outbox never shows the platform's own diagnostics", () => {
+  /*
+   * `messages.error` holds the reason a message did not go, and those
+   * sentences are written for whoever runs the PLATFORM: several name
+   * environment variables, one names a Resend key, one names a lead we are
+   * prospecting. A client reading "MESSAGING_RESEND_KEY is not set" learns
+   * nothing they can act on and a little they should not have to think about
+   * — and the prospecting one discloses another business's status to them.
+   *
+   * Same rule the client calendar follows: show the STATE, never the
+   * underlying error. This pins it, because the field is right there on the
+   * row and rendering it is a one-word change that would look like an
+   * improvement.
+   */
+  const outbox = read("app/c/[slug]/messages/Outbox.tsx");
+
+  test("it reads the status, never the error", () => {
+    expect(outbox.raw.length, "the outbox component is missing").toBeGreaterThan(500);
+    expect(
+      outbox.code,
+      "The client outbox renders row.error. Those sentences are the platform's, " +
+        "not the client's — add a state to the STATES map instead.",
+          /*
+       * A plain substring, not a regex. The first version of this line was
+       * written with an escaped word boundary that collapsed into a literal
+       * BACKSPACE character, producing a pattern nothing could ever match — a
+       * guard that passed against a planted `row.error` and looked green. No
+       * escapes means no way for that to happen again.
+       */
+    ).not.toContain(".error");
+  });
+
+  test("and every state it does show has a plain-language label", () => {
+    // A status with no entry falls through to the raw enum value, which is
+    // not English. The map is the whole translation layer.
+    for (const status of [
+      "sent",
+      "delivered",
+      "scheduled",
+      "holding_quiet_hours",
+      "sending",
+      "failed",
+      "suppressed_consent",
+      "suppressed_demo",
+      "suppressed_lead",
+    ]) {
+      expect(outbox.code, `${status} has no plain-language label`).toContain(status);
+    }
+  });
+});
+
 describe("there is one source, and the middleware is not a second one", () => {
   test("the middleware asks the module rather than matching paths itself", () => {
     expect(middleware.code).toContain("./lib/public-routes");

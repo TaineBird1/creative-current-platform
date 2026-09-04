@@ -268,7 +268,15 @@ export const outbox = tenantQuery("staff")({
       /** Why it did not go, in words, when it did not go. */
       error: string | null;
       providerName: string | null;
-      customerId: Id<"customers"> | null;
+      /**
+       * WHO IT WAS FOR, by name. The screen asks "did this customer hear from
+       * us", and an id answers a different question — one nobody has.
+       *
+       * Null when a message is not customer-directed at all: `dispatchToClient`
+       * writes rows with no customerId, and those are ours to the client
+       * rather than theirs to a customer.
+       */
+      customerName: string | null;
     }[]
   > => {
     const rows = await ctx.db
@@ -276,22 +284,35 @@ export const outbox = tenantQuery("staff")({
       .withIndex("by_client", (q) => q.eq("clientId", ctx.tenant.clientId))
       .collect();
 
-    return rows
-      .sort(byDesc((row) => row.scheduledFor))
-      .slice(0, limit ?? 100)
-      .map((row) => ({
-        _id: row._id,
-        status: row.status,
-        channel: row.channel,
-        templateKey: row.templateKey,
-        to: row.to,
-        scheduledFor: row.scheduledFor,
-        sentAt: row.sentAt ?? null,
-        attempts: row.attempts,
-        error: row.error ?? null,
-        providerName: row.providerName ?? null,
-        customerId: row.customerId ?? null,
-      }));
+    const page = rows.sort(byDesc((row) => row.scheduledFor)).slice(0, limit ?? 100);
+
+    /*
+     * One read of the client's customers rather than one per row. The tenant's
+     * own customers only — the same index the rest of this file uses — so a
+     * name can never be resolved across a tenant boundary.
+     */
+    const names = new Map(
+      (
+        await ctx.db
+          .query("customers")
+          .withIndex("by_client_phone", (q) => q.eq("clientId", ctx.tenant.clientId))
+          .collect()
+      ).map((doc) => [doc._id, doc.name]),
+    );
+
+    return page.map((row) => ({
+      _id: row._id,
+      status: row.status,
+      channel: row.channel,
+      templateKey: row.templateKey,
+      to: row.to,
+      scheduledFor: row.scheduledFor,
+      sentAt: row.sentAt ?? null,
+      attempts: row.attempts,
+      error: row.error ?? null,
+      providerName: row.providerName ?? null,
+      customerName: row.customerId ? names.get(row.customerId) ?? null : null,
+    }));
   },
 });
 

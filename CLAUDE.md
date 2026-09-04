@@ -802,15 +802,33 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   default, and therefore the thing an eager tightening would remove. Adding
   `aspf=s` reads as hardening and fails SPF alignment on every message this
   system sends.
-  **THE REPORTS ARE PARTIAL, and that is a fact about gmail.com, not about our
-  record.** RFC 7489 makes a `rua` on another domain conditional on THAT domain
-  authorising it; nothing exists at
-  `thecreativecurrent.co.za._report._dmarc.gmail.com` — checked, not assumed —
-  so strict receivers send us nothing and lax ones send. A `rua` on our own
-  domain fixes it and needs the MX first.
-  **STILL NO MX**, so mail TO this domain fails and the reports have nowhere to
-  come home to. `MESSAGING_REPLY_TO` is a Gmail address on both deployments and
-  does receive, so the reply rule above is satisfied today — by an address that
+  **A `rua` IS ONLY DELIVERED IF THE RECEIVING DOMAIN AUTHORISES IT, and that
+  is a fact about the destination rather than about our record.** RFC 7489
+  makes a `rua` on another domain conditional on THAT domain publishing
+  `<our-domain>._report._dmarc.<their-domain>`. The two answers, from the same
+  query, are the whole argument:
+  `thecreativecurrent.co.za._report._dmarc.gmail.com` DOES NOT EXIST, so a
+  `rua` pointed only at a Gmail address is skipped by strict receivers and
+  honoured by lax ones — partial coverage that looks complete.
+  `…_report._dmarc.dmarc-reports.cloudflare.net` DOES exist and returns
+  `v=DMARC1;`. Both checked, neither assumed.
+  So **Cloudflare's free DMARC Management is enabled**, which took delivery of
+  the reports itself and appended its address to the `rua` list, keeping the
+  Gmail one alongside it. Coverage is therefore COMPLETE through the authorised
+  destination, and it did not need the MX to get there — which was the
+  assumption in the first version of this note and was wrong. The reports also
+  arrive parsed in a dashboard rather than as daily XML nobody opens, which is
+  the difference between having reporting and reading it.
+  **THE CLOUDFLARE EMAIL DASHBOARD REPORTS `DKIM in use: No — Fail`, AND IT IS
+  WRONG.** DKIM cannot be discovered by scanning: a selector has to be known,
+  ours is `resend`, and nothing tells them to look there. The key is present
+  and resolves. `SPF policy: N/A` is the same shape of non-fact — it reads the
+  APEX, where we correctly have none, while ours is on `send.` where the
+  envelope sender actually is. Do not "fix" either. The tempting repair —
+  an SPF at the apex — edits authentication that currently works.
+  **STILL NO MX**, so mail TO this domain fails. `MESSAGING_REPLY_TO` is a
+  Gmail address on both deployments and does receive, so the reply rule above
+  is satisfied today — by an address that
   is not on the domain.
   **THE ZONE IS IN TWO CLOUDFLARE ACCOUNTS AND ONLY ONE IS SERVED.** An hour
   went into that. The dead copy has a full DNS editor, saves without complaint,

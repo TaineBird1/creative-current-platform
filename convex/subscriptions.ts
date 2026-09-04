@@ -1,6 +1,11 @@
 import { v, ConvexError } from "convex/values";
 import { ownerMutation, platformQuery, platformAction } from "./lib/functions";
-import { internalMutation, internalQuery } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  internalAction,
+  type ActionCtx,
+} from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertCents } from "./lib/money";
@@ -245,53 +250,198 @@ export const abandonStart = internalMutation({
  * does not allow and which would be wrong anyway: a transaction that waits on
  * somebody else's server holds its read set open for as long as they take.
  */
+/**
+ * OPEN A CHECKOUT. The orchestration, shared by both doors below.
+ *
+ * Extracted for the same reason `issueInvoiceFor` was: two callers running the
+ * same sequence is one sequence, not two — and the second one to drift is the
+ * one nobody is looking at. `start` is the console's door; `testModeCheckout`
+ * is the CLI's, and it can only ever open a TEST one.
+ *
+ * Takes no identity, because it needs none: the caller has already been
+ * authorised, and this does not decide who may subscribe whom.
+ */
+async function startCheckoutFor(
+  ctx: ActionCtx,
+  args: { clientSlug: string; planKey: string; callbackUrl?: string },
+): Promise<StartResult> {
+  const reference = newStartReference();
+
+  const reserved = await ctx.runMutation(internal.subscriptions.reserveStart, {
+    clientSlug: args.clientSlug,
+    planKey: args.planKey,
+    reference,
+  });
+
+  if (reserved.already) {
+    return {
+      ok: false,
+      reason:
+        `${reserved.clientName} already has a ${reserved.status} subscription. ` +
+        "Cancel it before starting another, or nobody can tell which one is billing.",
+    };
+  }
+
+  const result = await paystack().initialize({
+    email: reserved.email!,
+    planCode: reserved.planCode!,
+    reference,
+    /*
+     * Our own identifiers, carried through. Paystack echoes metadata on
+     * transaction events, which lets a webhook say whose payment this is
+     * without a lookup — and gives a second attribution route if the
+     * reference is ever missing.
+     */
+    metadata: { clientId: reserved.clientId!, subscriptionId: reserved.subscriptionId },
+    callbackUrl: args.callbackUrl,
+  });
+
+  if (!result.ok) {
+    await ctx.runMutation(internal.subscriptions.abandonStart, {
+      subscriptionId: reserved.subscriptionId,
+    });
+    return { ok: false, reason: result.error };
+  }
+
+  return {
+    ok: true,
+    subscriptionId: reserved.subscriptionId,
+    checkoutUrl: result.authorizationUrl,
+    reference: result.reference,
+  };
+}
+
 export const start = platformAction({
   args: { clientSlug: v.string(), planKey: v.string(), callbackUrl: v.optional(v.string()) },
+  handler: (ctx, args): Promise<StartResult> => startCheckoutFor(ctx, args),
+});
+
+/**
+ * THE TEST-MODE DOOR, and it exists because there was no door at all.
+ *
+ * `setPlan` and `start` are both auth-gated and there is no subscriptions
+ * screen, so `npx convex run` cannot reach either — every attempt comes back
+ * UNAUTHENTICATED. That left the Paystack flow verifiable only by its own
+ * tests, and those run against SYNTHETIC payloads. The one thing a live run
+ * settles is a fact about PAYSTACK rather than about this code: whether a real
+ * `subscription.create` event carries the metadata we send. Nothing in a test
+ * suite can answer that.
+ *
+ * Exactly the situation `onboarding.takeFirstBooking` exists for, and the same
+ * shape of answer: one internal function, reachable from the CLI, that goes
+ * THROUGH the real path rather than around it.
+ *
+ * IT REFUSES A LIVE KEY, and that is the whole safety argument. A CLI door
+ * into a payment flow is a door into charging somebody's card, so this one is
+ * welded to test mode: `paystackMode()` must be exactly "test". Not a warning,
+ * not a confirmation prompt — a refusal, checked before anything is written.
+ * The mistake is removed rather than guarded, per the barrier rules.
+ *
+ * It writes the plan too, because a plan needs `providerPlanCode` from the
+ * Paystack dashboard and `setPlan` is just as unreachable. Editing a plan
+ * never re-prices an existing subscription — see `setPlan`.
+ *
+ *   npx convex run subscriptions:testModeCheckout '{"clientSlug":"renu-solar-live","planKey":"care-standard","planName":"Care plan","amountCents":95000,"providerPlanCode":"PLN_xxxxx"}'
+ */
+export const testModeCheckout = internalAction({
+  args: {
+    clientSlug: v.string(),
+    planKey: v.string(),
+    planName: v.string(),
+    amountCents: v.number(),
+    interval: v.optional(v.union(v.literal("monthly"), v.literal("annually"))),
+    /** From the Paystack dashboard. A checkout without one subscribes nobody. */
+    providerPlanCode: v.string(),
+    callbackUrl: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<StartResult> => {
-    const reference = newStartReference();
-
-    const reserved = await ctx.runMutation(internal.subscriptions.reserveStart, {
-      clientSlug: args.clientSlug,
-      planKey: args.planKey,
-      reference,
-    });
-
-    if (reserved.already) {
+    const mode = paystackMode();
+    if (mode !== "test") {
       return {
         ok: false,
         reason:
-          `${reserved.clientName} already has a ${reserved.status} subscription. ` +
-          "Cancel it before starting another, or nobody can tell which one is billing.",
+          mode === "live"
+            ? "PAYSTACK_SECRET_KEY on this deployment is a LIVE key. This door only " +
+              "opens test checkouts — a CLI shortcut into charging a real card is not " +
+              "a thing worth having. Use the console for a live subscription."
+            : "No Paystack key on this deployment. Set PAYSTACK_SECRET_KEY to an " +
+              "sk_test_ key first; it exercises the whole flow and charges nobody.",
       };
     }
 
-    const result = await paystack().initialize({
-      email: reserved.email!,
-      planCode: reserved.planCode!,
-      reference,
-      /*
-       * Our own identifiers, carried through. Paystack echoes metadata on
-       * transaction events, which lets a webhook say whose payment this is
-       * without a lookup — and gives a second attribution route if the
-       * reference is ever missing.
-       */
-      metadata: { clientId: reserved.clientId!, subscriptionId: reserved.subscriptionId },
-      callbackUrl: args.callbackUrl,
+    await ctx.runMutation(internal.subscriptions.upsertPlanForTest, {
+      planKey: args.planKey,
+      planName: args.planName,
+      amountCents: args.amountCents,
+      interval: args.interval ?? "monthly",
+      providerPlanCode: args.providerPlanCode,
+      clientSlug: args.clientSlug,
     });
 
-    if (!result.ok) {
-      await ctx.runMutation(internal.subscriptions.abandonStart, {
-        subscriptionId: reserved.subscriptionId,
-      });
-      return { ok: false, reason: result.error };
+    return startCheckoutFor(ctx, {
+      clientSlug: args.clientSlug,
+      planKey: args.planKey,
+      ...(args.callbackUrl !== undefined ? { callbackUrl: args.callbackUrl } : {}),
+    });
+  },
+});
+
+/**
+ * The plan write behind the test door.
+ *
+ * The venture is derived from the CLIENT rather than passed, so a test plan
+ * cannot land on the wrong venture through a mistyped id — and there is one
+ * fewer thing to get right at a keyboard.
+ */
+export const upsertPlanForTest = internalMutation({
+  args: {
+    clientSlug: v.string(),
+    planKey: v.string(),
+    planName: v.string(),
+    amountCents: v.number(),
+    interval: v.union(v.literal("monthly"), v.literal("annually")),
+    providerPlanCode: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const client = await ctx.db
+      .query("clients")
+      .withIndex("by_slug", (q) => q.eq("slug", args.clientSlug.trim().toLowerCase()))
+      .unique();
+    if (!client) throw bad("NO_SUCH_CLIENT", `No client with the slug "${args.clientSlug}".`);
+
+    const venture = await ctx.db.get(client.ventureId);
+    if (!venture) throw bad("NO_SUCH_VENTURE", "That client's venture is missing.");
+
+    const key = args.planKey.trim().toLowerCase();
+    const name = args.planName.trim();
+    if (!key || !name) throw bad("INVALID", "A plan needs a key and a name.");
+    assertCents(args.amountCents, "amountCents");
+    if (args.amountCents <= 0) {
+      throw bad("BAD_MONEY", "A plan costs more than nothing.");
     }
 
-    return {
-      ok: true,
-      subscriptionId: reserved.subscriptionId,
-      checkoutUrl: result.authorizationUrl,
-      reference: result.reference,
+    const fields = {
+      ventureId: client.ventureId,
+      key,
+      name,
+      amountCents: args.amountCents,
+      currency: venture.currency,
+      interval: args.interval,
+      provider: "paystack" as const,
+      providerPlanCode: args.providerPlanCode.trim(),
+      active: true,
     };
+
+    const existing = await ctx.db
+      .query("plans")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+
+    if (existing) {
+      await patchDoc(ctx, existing._id, fields);
+      return { planId: existing._id, created: false };
+    }
+    return { planId: await ctx.db.insert("plans", fields), created: true };
   },
 });
 

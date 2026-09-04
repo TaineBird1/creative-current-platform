@@ -738,7 +738,10 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   `db.insert("bookings")` appearing in the file.
 - **A REPLY HAS SOMEWHERE TO LAND, OR THE COPY DOES NOT ASK FOR ONE.** The
   From address is on a SENDING domain, which may have no MX record — and a
-  domain with no MX swallows every reply in silence. A booking confirmation is
+  reply to a domain with no MX never arrives. The SENDER gets a bounce; the
+  BUSINESS hears nothing at all, and that second half is the one that costs,
+  because the person who needed to know is the one told nothing. A booking
+  confirmation is
   the most replied-to message this system will ever send: somebody wanting to
   move an appointment hits reply, because that is what people do. A
   confirmation whose reply goes nowhere is a customer who believes they have
@@ -757,8 +760,15 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   has two numbers and the wrong one is worse than none — they phone Hillcrest
   about a Ballito job and are told nothing is booked. No number, no promise.
   Nothing here can check MX from the Convex runtime, so nothing guesses:
-  `dig MX thecreativecurrent.co.za +short` is the check, and
+  `Resolve-DnsName thecreativecurrent.co.za -Type MX` is the check, and
   `health:messagingConfig` reports the fallback.
+  **IT USED TO SAY `dig`, WHICH IS NOT INSTALLED ON WINDOWS.** The barrier rule
+  below, caught in the wild rather than reasoned about: a documented check that
+  cannot run on the machine it is documented for leaves NO TRACE of not having
+  been run. There is no error to search for and nobody reports not having done
+  a thing. It sat here unrunnable until 4 Sep 2026, and the answer when it was
+  finally asked was that there is still no MX — which is to say the check would
+  have mattered every one of the days nobody could run it.
 - **MEASURED, 2 Sep 2026: the pipeline sent a real email to a real inbox.** A
   real client (`renu-solar-live`, neither demo nor seed), a booking through
   `createBooking`, one `outbox:drain`, and the row reached `sent` with Resend
@@ -777,6 +787,38 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   and SPF (on `send.`) but **no MX and no DMARC record at all** — both
   outstanding. That it landed in the inbox anyway is a fact about Gmail's
   tolerance for a warm sender, not evidence the records are unnecessary.
+- **DNS AS AT 4 Sep 2026: DMARC IS PUBLISHED, MX IS STILL MISSING.** Kept as a
+  SEPARATE entry rather than edited into the line above, because that line is a
+  dated measurement: overwriting it with a later state destroys the only record
+  of what the 2 Sep send actually proved, which was less than it appeared to.
+  `_dmarc` serves `v=DMARC1; p=none; rua=mailto:tainebird17@gmail.com`,
+  confirmed on BOTH authoritative nameservers and on 1.1.1.1 and 8.8.8.8.
+  Gmail and Yahoo's bulk-sender requirement is met — it needs a valid record to
+  exist and does not care that the policy is `none`.
+  **ALIGNMENT PASSES ON BOTH MECHANISMS, AND `aspf=s` WOULD BREAK IT.** DKIM
+  signs `d=thecreativecurrent.co.za` against an apex From, so it aligns however
+  strictly you ask. SPF authenticates on `send.thecreativecurrent.co.za`
+  against that same apex From, which passes ONLY under relaxed alignment — the
+  default, and therefore the thing an eager tightening would remove. Adding
+  `aspf=s` reads as hardening and fails SPF alignment on every message this
+  system sends.
+  **THE REPORTS ARE PARTIAL, and that is a fact about gmail.com, not about our
+  record.** RFC 7489 makes a `rua` on another domain conditional on THAT domain
+  authorising it; nothing exists at
+  `thecreativecurrent.co.za._report._dmarc.gmail.com` — checked, not assumed —
+  so strict receivers send us nothing and lax ones send. A `rua` on our own
+  domain fixes it and needs the MX first.
+  **STILL NO MX**, so mail TO this domain fails and the reports have nowhere to
+  come home to. `MESSAGING_REPLY_TO` is a Gmail address on both deployments and
+  does receive, so the reply rule above is satisfied today — by an address that
+  is not on the domain.
+  **THE ZONE IS IN TWO CLOUDFLARE ACCOUNTS AND ONLY ONE IS SERVED.** An hour
+  went into that. The dead copy has a full DNS editor, saves without complaint,
+  and is never read, because the registry delegates to `dave`/`piper`. It looks
+  exactly like success from inside. Identify the live zone by a record you have
+  already resolved from those nameservers — the `send.` SPF and
+  `resend._domainkey` rows are the fingerprint — never by the dashboard
+  appearing correct.
 - **EMAIL SENDS. WHATSAPP DOES NOT, AND SAYS SO.** `lib/providers.ts` is the
   provider seam: one interface, one driver per channel, chosen by `driverFor`.
   Email is live over Resend. WhatsApp and SMS get a **logging no-op that

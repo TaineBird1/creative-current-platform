@@ -215,8 +215,16 @@ function QuoteRow({ quote, currency }: { quote: Quote; currency: string }) {
       <div className={s.lines}>
         <p className={s.total}>{money(quote.totalCents, currency)}</p>
         <p className={s.meta}>
-          {quote.lineItems.length} line{quote.lineItems.length === 1 ? "" : "s"}
-          {state === "accepted" ? null : ` · ${expiryLabel(quote.expiresAt)}`}
+          {workLabel(quote.lineItems)}
+          {/*
+            NO EXPIRY BESIDE THE CHIP THAT ALREADY SAYS IT. An expired quote
+            read `1 line · expired` directly above a state chip reading
+            `EXPIRED`, which is the same word twice in adjacent lines. Accepted
+            has never shown one, for the same reason it does not apply.
+          */}
+          {state === "accepted" || state === "expired"
+            ? null
+            : ` · ${expiryLabel(quote.expiresAt)}`}
         </p>
         {error ? <p className={s.error}>{error}</p> : null}
         {notice ? <p className={s.notice}>{notice}</p> : null}
@@ -732,6 +740,29 @@ function money(cents: number, currency: string): string {
     currency,
     minimumFractionDigits: 2,
   }).format(cents / 100);
+}
+
+/**
+ * WHAT THE QUOTE IS FOR, not how it is stored.
+ *
+ * This line used to read `2 lines`, which names the shape of the record and
+ * tells the reader nothing — and on an accepted quote, where no expiry is
+ * shown, `1 line` was the entire line of text. The person scanning this list
+ * is deciding which quote to open, and the thing that identifies one is the
+ * work: "8kW hybrid inverter, fitted".
+ *
+ * The count survives where it carries something the description does not —
+ * that there is more below the first line — as `+2 more` rather than a total,
+ * because the first item is already named.
+ *
+ * A quote with no lines cannot be sent, but it can exist as a draft, so the
+ * empty case says so rather than rendering a stray bullet.
+ */
+function workLabel(lineItems: readonly { description: string }[]): string {
+  const first = lineItems[0]?.description?.trim();
+  if (!first) return "nothing priced yet";
+  const rest = lineItems.length - 1;
+  return rest > 0 ? `${first} · +${rest} more` : first;
 }
 
 function expiryLabel(expiresAt: number): string {

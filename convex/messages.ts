@@ -265,8 +265,32 @@ export const outbox = tenantQuery("staff")({
       scheduledFor: number;
       sentAt: number | null;
       attempts: number;
-      /** Why it did not go, in words, when it did not go. */
-      error: string | null;
+      /*
+       * `error` IS DELIBERATELY ABSENT, and its absence is the fix rather
+       * than a simplification.
+       *
+       * That column holds the platform's own sentence about why a message did
+       * not go. Several name environment variables. One names a LEAD: when a
+       * client's customer is also a business we are prospecting, the lead
+       * check refuses the send and writes "that number belongs to <name>, a
+       * lead we are prospecting" — onto a row whose clientId is the client's,
+       * so it lands in their tenant-scoped outbox.
+       *
+       * Not rendering it was not enough. A returned field is on the wire in
+       * the RSC payload whatever the component draws, so the disclosure
+       * survived in devtools. The field is gone from the query instead, which
+       * is the difference between a rule the render has to follow and a fact
+       * about what leaves the server.
+       *
+       * THE ROW ITSELF STAYS. It is about the client's OWN customer, and the
+       * fact that somebody got no confirmation is exactly what this screen
+       * exists to tell them — dropping the row would recreate the invisible
+       * failure the messages table was built to prevent. The disclosure was
+       * never the row's existence; it was the sentence attached to it.
+       *
+       * Whoever runs the platform still sees the reason, on the rows in the
+       * database and through health checks. It is written for them.
+       */
       providerName: string | null;
       /**
        * WHO IT WAS FOR, by name. The screen asks "did this customer hear from
@@ -309,7 +333,6 @@ export const outbox = tenantQuery("staff")({
       scheduledFor: row.scheduledFor,
       sentAt: row.sentAt ?? null,
       attempts: row.attempts,
-      error: row.error ?? null,
       providerName: row.providerName ?? null,
       customerName: row.customerId ? names.get(row.customerId) ?? null : null,
     }));

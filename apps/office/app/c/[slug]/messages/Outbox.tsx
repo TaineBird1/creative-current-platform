@@ -178,7 +178,14 @@ const STATES: Record<string, { label: string; tone: Tone; detail: string | null 
   suppressed_lead: {
     label: "Not sent",
     tone: "bad",
-    detail: "That number or address belongs to a business we are not allowed to message.",
+    /*
+     * Deliberately says nothing about WHY beyond "we could not". The real
+     * reason is that this contact is also on the platform's prospecting list,
+     * which is the platform's business and not this client's — and an earlier
+     * wording ("a business we are not allowed to message") hinted at the
+     * existence of that list, which is the same disclosure in softer words.
+     */
+    detail: "We could not message this contact. Ring them instead.",
   },
 };
 

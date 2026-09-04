@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { expectAbsent } from "../../test-support/negative";
 import {
   ADMIN_SIGN_IN,
   PUBLIC_ROUTE_IDS,
@@ -291,19 +292,31 @@ describe("the client door does not enumerate the roster", () => {
   test("IT MAKES NO QUERY AT ALL", () => {
     expect(signIn.raw.length, "the client sign-in page is missing").toBeGreaterThan(200);
     for (const forbidden of ["fetchQuery", "useQuery", "convex/nextjs", "convex/react"]) {
-      expect(
-        signIn.code,
-        `The client sign-in page calls ${forbidden}. Any per-slug lookup before ` +
+      expectAbsent({
+        pattern: forbidden,
+        from: signIn.code,
+        provenBy: `const x = await ${forbidden}(api.clients.brand, {});`,
+        because: `The client sign-in page calls ${forbidden}. Any per-slug lookup before ` +
           "authentication makes this page an oracle for whether a business is a " +
           "client, and a wordlist turns that into the roster.",
-      ).not.toContain(forbidden);
+      });
     }
   });
 
   test("and renders nothing that could differ by slug", () => {
     // businessName/accent are the two props that carried the branding.
-    expect(signIn.code).not.toContain("businessName");
-    expect(signIn.code).not.toContain("accent");
+    expectAbsent({
+      pattern: "businessName",
+      from: signIn.code,
+      provenBy: "<SignIn businessName={brand?.name} />",
+      because: "see the surrounding test",
+    });
+    expectAbsent({
+      pattern: "accent",
+      from: signIn.code,
+      provenBy: "accent={accentStyle(brand.accent)}",
+      because: "see the surrounding test",
+    });
   });
 
   test("the slug is still used for the post-sign-in redirect", () => {
@@ -331,18 +344,15 @@ describe("the client outbox never shows the platform's own diagnostics", () => {
 
   test("it reads the status, never the error", () => {
     expect(outbox.raw.length, "the outbox component is missing").toBeGreaterThan(500);
-    expect(
-      outbox.code,
-      "The client outbox renders row.error. Those sentences are the platform's, " +
-        "not the client's — add a state to the STATES map instead.",
-          /*
-       * A plain substring, not a regex. The first version of this line was
-       * written with an escaped word boundary that collapsed into a literal
-       * BACKSPACE character, producing a pattern nothing could ever match — a
-       * guard that passed against a planted `row.error` and looked green. No
-       * escapes means no way for that to happen again.
-       */
-    ).not.toContain(".error");
+    expectAbsent({
+      pattern: ".error",
+      from: outbox.code,
+      provenBy: "title={row.error}",
+      because:
+        "The client outbox renders row.error. Those sentences are the platform's, " +
+        "not the client's — and the field is not even returned by the query any " +
+        "more. Add a state to the STATES map instead.",
+    });
   });
 
   test("and every state it does show has a plain-language label", () => {
@@ -395,7 +405,12 @@ describe("there is one source, and the middleware is not a second one", () => {
   test("createRouteMatcher is gone entirely", () => {
     // It only ever built the protected list. Left imported, it is an
     // invitation to add a second, untested opinion beside the module.
-    expect(middleware.code).not.toContain("createRouteMatcher");
+    expectAbsent({
+      pattern: "createRouteMatcher",
+      from: middleware.code,
+      provenBy: 'const isPublic = createRouteMatcher(["/i/:token"]);',
+      because: "see the surrounding test",
+    });
   });
 
   test("THE MATCHER IS STILL A CATCH-ALL", () => {

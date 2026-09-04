@@ -1032,6 +1032,37 @@ Ventures:   1 Sites (platform) · 2 Systems (consulting). Property venture later
   read by the right person on the day they are in a hurry.
   Every command documented in this file now runs in PowerShell. Keep it that
   way: the next POSIX-only form goes in `scripts/`, not in prose.
+- **EVERY NEGATIVE ASSERTION CARRIES ITS OWN POSITIVE CONTROL. THE BARE FORM
+  IS BANNED.** `expect(code).not.toContain(x)` passes for two completely
+  different reasons — the code is clean, or `x` matches nothing at all — and
+  green looks identical either way. The second is a guard that has silently
+  stopped guarding, which is the failure mode of every vacuous guard found
+  here: a walker pointed at the wrong extension, an immutability rule matching
+  a table name inside `db.patch(id, ...)` where one can never appear, and a
+  `` written through a generating script that collapsed into a literal
+  BACKSPACE character.
+  All three were caught by planting a violation by hand and noticing the test
+  stayed green. THAT IS A HABIT, AND HABITS DO NOT SURVIVE A SESSION BOUNDARY.
+  So the control lives INSIDE the assertion: `expectAbsent` in
+  `test-support/negative.ts` takes a `provenBy` sample the pattern MUST match,
+  checks that FIRST, and only then reports absence. A mangled pattern fails on
+  the spot rather than reporting safety it never checked.
+  `guards.test.ts` bans the bare `.not.toContain` / `.not.toMatch` across all
+  three guard files — a literal-token scan, the middle rung of the ladder,
+  which is the rung a test file's own text can support. It strips comments
+  (the paragraph explaining a rule is the text most likely to contain the thing
+  it bans) and assembles its own needles at runtime so the scanner does not
+  find itself. Three controls, all seen red: a bare assertion reappearing, a
+  pattern that matches nothing, and the helper itself stopping checking.
+  `expectNoOffenders` is the same idea for a scan that collects offenders: it
+  takes how many things were EXAMINED, so a scan pointed at nothing fails
+  instead of returning an empty list.
+- **FILTERING TEST OUTPUT HIDES A FAILED SUITE, AND A PIPE HIDES THE EXIT
+  CODE.** `vitest run | grep -E "Tests "` reported `61 passed` while
+  `guards.test.ts` failed to compile and contributed NOTHING — the count came
+  from the other two files, and the transform error was on a line the grep
+  discarded. `cmd | tail; echo $?` then reported 0, because that is `tail`'s
+  status. Read the summary line unfiltered, or check the real exit code.
 - **COMMENT-STRIPPING IS THE DEFAULT IN THE GUARD HELPERS, AND THE NAMES
   ENFORCE IT.** `sourceFiles` exposes `code` (stripped) and `raw` (not), and
   deliberately no `text` — so scanning prose is something somebody has to type

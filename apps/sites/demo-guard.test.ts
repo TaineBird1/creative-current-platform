@@ -2,6 +2,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "vitest";
+import { expectAbsent } from "../../test-support/negative";
 
 /**
  * A DEMO MAY NOT RENDER WITHOUT ITS GUARANTEES.
@@ -167,8 +168,18 @@ describe("the disclosure is the renderer's job, not a template's", () => {
     // the screenshot is what gets forwarded.
     const css = files.find((f) => f.path === "components/DemoDisclosure.module.css");
     const style = css?.code ?? readFileSync(join(SITES_DIR, "components/DemoDisclosure.module.css"), "utf8");
-    expect(style).not.toMatch(/position:\s*fixed/);
-    expect(disclosure!.code).not.toMatch(/onClick|useState|dismiss/i);
+    expectAbsent({
+      pattern: /position:\s*fixed/,
+      from: style,
+      provenBy: "position: fixed;",
+      because: "see the surrounding test",
+    });
+    expectAbsent({
+      pattern: /onClick|useState|dismiss/i,
+      from: disclosure!.code,
+      provenBy: "onClick={() => setDismissed(true)}",
+      because: "see the surrounding test",
+    });
   });
 });
 

@@ -26,6 +26,13 @@ const SCREENS = [
   { href: "/admin", label: "Clients" },
   { href: "/admin/finance", label: "Money" },
   { href: "/admin/domains", label: "Domains" },
+  /*
+   * LAST, because it is opened once and then almost never — the opposite end
+   * of the same ordering that puts Queue first. It is here at all because a
+   * screen nobody can navigate to is most of the way to a screen that does
+   * not exist, which is exactly how this one came to be missing.
+   */
+  { href: "/admin/issuer", label: "Invoicing" },
 ] as const;
 
 export function AdminNav() {

@@ -1,7 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
-import { safeParseSiteConfig } from "@cc/site-config";
+import { safeParseSiteConfig, parseDateRange } from "@cc/site-config";
 import { hashToken } from "../lib/invites";
 import { toE164 } from "../lib/phone";
 import { patchDoc } from "../lib/db";
@@ -55,8 +55,27 @@ export const submit = mutation({
 
     // Required fields come from the CONFIG, not from the browser's idea of them.
     for (const field of section.fields) {
-      if (field.required && !args.answers[field.key]?.trim()) {
+      const supplied = args.answers[field.key]?.trim();
+
+      if (field.required && !supplied) {
         throw rejected(`${field.label} is required`);
+      }
+
+      /*
+       * A DATE RANGE IS CHECKED FOR SHAPE, NOT MERELY FOR PRESENCE.
+       *
+       * Every other kind is a string and a string is what gets stored, so
+       * non-empty is the whole of the check. This one is stored as a value
+       * something later has to READ — a guest house books from it — and a
+       * half-picked range like `2027-07-12/` is non-empty, so the required
+       * check above waves it straight through.
+       *
+       * Validated with the SAME parser the browser used, because a second
+       * opinion about the format here would be a second opinion about which
+       * enquiries are accepted.
+       */
+      if (field.kind === "dateRange" && supplied && !parseDateRange(supplied)) {
+        throw rejected(`${field.label} needs a start date and an end date`);
       }
     }
     // Silently drop answers to fields the section does not declare.

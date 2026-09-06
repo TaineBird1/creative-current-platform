@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import type { Section } from "@cc/site-config";
+import { joinDateRange, parseDateRange, splitDateRange } from "@cc/site-config";
 import { Band } from "./Blocks";
 import s from "./sections.module.css";
 
@@ -67,13 +68,32 @@ export function QuoteForm({
     }
     for (const field of section.fields) {
       if (field.kind === "photos") continue;
-      if (field.required && !values[field.key]?.trim()) {
+      const supplied = values[field.key]?.trim();
+
+      if (field.required && !supplied) {
         // Never interpolate the label into a sentence: half of them are
         // questions, and "What are we quoting? is needed" is not English.
         next[field.key] =
           field.kind === "select"
             ? "Pick one so we can price this."
             : "We need this to price the job.";
+        continue;
+      }
+
+      /*
+       * A HALF-PICKED RANGE IS NOT EMPTY, so the required check above passes
+       * it. Somebody who chose a departure and never chose a return has an
+       * answer of `2027-07-12/`, which is truthy and unusable. The server
+       * refuses it through the same parser; catching it here is what turns
+       * that refusal into a message beside the field rather than a rejected
+       * submission after the fact.
+       */
+      if (field.kind === "dateRange" && supplied && !parseDateRange(supplied)) {
+        const { start, end } = splitDateRange(supplied);
+        next[field.key] =
+          start && end
+            ? "The return date cannot be before the departure date."
+            : "Pick both a departure and a return date.";
       }
     }
     if (!consent) next.consent = "We need your agreement before we can contact you.";
@@ -191,6 +211,7 @@ export function QuoteForm({
               label={field.label}
               optional={!field.required}
               error={errors[field.key]}
+              group={field.kind === "dateRange"}
             >
               {field.kind === "select" ? (
                 <select
@@ -210,6 +231,16 @@ export function QuoteForm({
                     </option>
                   ))}
                 </select>
+              ) : field.kind === "dateRange" ? (
+                <DateRangeControl
+                  id={`${formId}-${field.key}`}
+                  value={values[field.key] ?? ""}
+                  invalid={Boolean(errors[field.key])}
+                  onChange={(next) => {
+                    setValues((v) => ({ ...v, [field.key]: next }));
+                    clear(field.key);
+                  }}
+                />
               ) : field.kind === "longtext" ? (
                 <textarea
                   id={`${formId}-${field.key}`}
@@ -278,26 +309,122 @@ export function QuoteForm({
   );
 }
 
+/**
+ * TWO NATIVE DATE INPUTS, NOT A CALENDAR WIDGET.
+ *
+ * `<input type="date">` opens the phone's own picker — the one the customer
+ * already knows, which handles their locale and their screen reader without
+ * being asked. A hand-built calendar on a 375px screen is the version that
+ * looks better in a screenshot and is worse in a hand, and it would be the
+ * only bespoke date UI in the codebase to keep working.
+ *
+ * The two halves are joined into one stored answer because a quote answer IS
+ * one string. A PARTIAL range is stored and kept — somebody picks a departure
+ * before they pick a return, and blanking their first choice because the
+ * second is missing would be the form arguing with them mid-thought. It is
+ * refused at submit, by the same parser the server uses.
+ *
+ * `min` on the return input is the start date, so the commonest mistake is
+ * unavailable rather than merely rejected — the barrier rule, at the scale of
+ * one control.
+ */
+function DateRangeControl({
+  id,
+  value,
+  invalid,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  invalid: boolean;
+  onChange: (value: string) => void;
+}) {
+  const { start, end } = splitDateRange(value);
+
+  return (
+    <div className={s.dateRange}>
+      <span className={s.dateLeg}>
+        <label className={s.dateLabel} htmlFor={id}>
+          Going out
+        </label>
+        <input
+          id={id}
+          type="date"
+          className={s.control}
+          value={start}
+          aria-invalid={invalid}
+          onChange={(e) => onChange(joinDateRange(e.target.value, end))}
+        />
+      </span>
+      <span className={s.dateLeg}>
+        <label className={s.dateLabel} htmlFor={`${id}-end`}>
+          Coming back
+        </label>
+        <input
+          id={`${id}-end`}
+          type="date"
+          className={s.control}
+          value={end}
+          min={start || undefined}
+          aria-invalid={invalid}
+          onChange={(e) => onChange(joinDateRange(start, e.target.value))}
+        />
+      </span>
+    </div>
+  );
+}
+
 function Field({
   id,
   label,
   optional,
   error,
+  group,
   children,
 }: {
   id: string;
   label: string;
   optional?: boolean;
   error?: string;
+  /**
+   * TWO CONTROLS ANSWERING ONE QUESTION.
+   *
+   * A `<label for>` names exactly one input, so on a date range it named the
+   * departure and left the return with only its own sub-label: a screen
+   * reader announced "When are you going? Going out" and then, on the next
+   * control, "Coming back" — with nothing to say which question that
+   * belonged to. Measured in the tree, not guessed; the first input came back
+   * carrying TWO labels and the second one orphaned.
+   *
+   * So the question labels the GROUP and each leg keeps its own short label.
+   * A span rather than a label, because a label that names nothing is the bug
+   * being fixed.
+   */
+  group?: boolean;
   children: React.ReactNode;
 }) {
+  const labelId = `${id}-label`;
+
   return (
     <div className={s.field}>
-      <label className={s.label} htmlFor={id}>
-        {label}
-        {optional ? <span className={s.optional}> — optional</span> : null}
-      </label>
-      {children}
+      {group ? (
+        <span className={s.label} id={labelId}>
+          {label}
+          {optional ? <span className={s.optional}> — optional</span> : null}
+        </span>
+      ) : (
+        <label className={s.label} htmlFor={id}>
+          {label}
+          {optional ? <span className={s.optional}> — optional</span> : null}
+        </label>
+      )}
+      {group ? (
+        <div role="group" aria-labelledby={labelId}>
+          {children}
+        </div>
+      ) : (
+        children
+      )}
       {error ? (
         <p className={s.error} role="alert">
           {error}

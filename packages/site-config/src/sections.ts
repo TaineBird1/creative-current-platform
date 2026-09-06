@@ -67,7 +67,12 @@ export const quoteSection = z.object({
   ...base,
   type: z.literal("quote"),
   heading: z.string().min(1),
-  fields: z.array(z.object({ key, label: z.string().min(1), kind: z.enum(["text", "longtext", "number", "select", "photos"]), required: z.boolean().default(false), options: z.array(z.string()).optional() })).min(1),
+  /**
+   * `dateRange` carries an ISO 8601 interval in ONE answer — see
+   * `date-range.ts` for why a standard rather than free text. Both the
+   * browser and `public/quote.ts` validate it through the same parser.
+   */
+  fields: z.array(z.object({ key, label: z.string().min(1), kind: z.enum(["text", "longtext", "number", "select", "photos", "dateRange"]), required: z.boolean().default(false), options: z.array(z.string()).optional() })).min(1),
   photoUpload: z.object({ enabled: z.boolean().default(true), maxFiles: z.number().int().min(1).max(10).default(5) }),
   /** POPIA: the exact words the customer agreed to, stored with the submission. */
   consentText: z.string().min(20),

@@ -543,3 +543,41 @@ textarea.control {
 :global([data-variant="field-manual"]) .narrativeBody {
   max-width: 62ch;
 }
+
+/* ---- date range ------------------------------------------------------- */
+
+/*
+ * TWO LEGS, SIDE BY SIDE WHERE THERE IS ROOM AND STACKED WHERE THERE IS NOT.
+ *
+ * Departure and return are one decision, so they sit together — but two date
+ * inputs side by side on a 375px phone leaves each about 150px, and a native
+ * date control does not shrink gracefully below its own text. Stacked is the
+ * default and the pair only splits once there is width for it.
+ */
+.dateRange {
+  display: grid;
+  gap: var(--space-s);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 26rem) {
+  .dateRange {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.dateLeg {
+  display: grid;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+/*
+ * A second, quieter label under the field's own. "Dates" alone does not say
+ * which box is which, and a placeholder cannot: a native date input shows the
+ * locale's own format there and ignores anything else.
+ */
+.dateLabel {
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}

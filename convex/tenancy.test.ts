@@ -95,8 +95,8 @@ async function seedTwoTenants(h: Harness) {
         answers: {},
         photoStorageIds: [],
         status: "new",
-        consentText: "I agree to be contacted about this enquiry.",
-        lawfulBasis: "consent",
+        noticeText: "We use these details to answer this enquiry and nothing else.",
+        lawfulBasis: "contract",
         submittedAt: Date.now(),
         isDemo: false,
       });

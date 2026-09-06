@@ -37,7 +37,7 @@ export function QuoteForm({
   const [values, setValues] = useState<Record<string, string>>({});
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [consent, setConsent] = useState(false);
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   /*
@@ -96,7 +96,6 @@ export function QuoteForm({
             : "Pick both a departure and a return date.";
       }
     }
-    if (!consent) next.consent = "We need your agreement before we can contact you.";
     return next;
   }
 
@@ -111,7 +110,7 @@ export function QuoteForm({
     setState("sending");
     try {
       const outcome = await onSubmit?.({
-        slug, sectionId: section.id, name, phone, answers: values, consentAccepted: consent,
+        slug, sectionId: section.id, name, phone, answers: values, marketingOptIn,
       });
       setNotice(outcome?.notice ?? null);
       setState("sent");
@@ -268,26 +267,37 @@ export function QuoteForm({
             </Field>
           ))}
 
-        <div>
-          <label className={s.consent} htmlFor={`${formId}-consent`}>
-            <input
-              id={`${formId}-consent`}
-              type="checkbox"
-              checked={consent}
-              aria-invalid={Boolean(errors.consent)}
-              onChange={(e) => {
-                setConsent(e.target.checked);
-                clear("consent");
-              }}
-            />
-            <span>{section.consentText}</span>
-          </label>
-          {errors.consent ? (
-            <p className={s.error} role="alert">
-              {errors.consent}
-            </p>
-          ) : null}
-        </div>
+        {/*
+          THE NOTICE. Text, not a control, and there is nothing to accept.
+          Answering the enquiry somebody just submitted does not run on their
+          permission, so asking for it would be inviting them to refuse the
+          thing they came here for.
+        */}
+        <p className={s.notice}>{section.noticeText}</p>
+
+        {/*
+          MARKETING, WHICH IS SEPARATE AND ACTUALLY OPTIONAL.
+
+          Unticked by default and never validated: nothing below it can stop
+          the form submitting. A pre-ticked box is not consent, and neither is
+          one you have to tick to get served — the whole reason this is its
+          own control rather than a second sentence in the notice.
+
+          Rendered only when the client configured one.
+        */}
+        {section.marketingConsent ? (
+          <div>
+            <label className={s.consent} htmlFor={`${formId}-marketing`}>
+              <input
+                id={`${formId}-marketing`}
+                type="checkbox"
+                checked={marketingOptIn}
+                onChange={(e) => setMarketingOptIn(e.target.checked)}
+              />
+              <span>{section.marketingConsent.text}</span>
+            </label>
+          </div>
+        ) : null}
 
         {errors.form ? (
           <p className={s.error} role="alert">

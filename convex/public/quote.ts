@@ -30,11 +30,23 @@ export const submit = mutation({
     email: v.optional(v.string()),
     answers: v.record(v.string(), v.string()),
     photoStorageIds: v.optional(v.array(v.id("_storage"))),
-    consentAccepted: v.boolean(),
+    /**
+     * ACCEPTED AND IGNORED. It used to be required, and refusing without it
+     * was the bug: answering an enquiry runs on contract, not consent, so
+     * there was nothing for the customer to decline that would not also
+     * decline the thing they had just asked for.
+     *
+     * Kept in the signature rather than removed, because `apps/sites` and
+     * this backend deploy separately — an already-published bundle still
+     * sends it, and a validator that rejected an unexpected argument would
+     * take every live enquiry form down for the length of that window.
+     */
+    consentAccepted: v.optional(v.boolean()),
+    /** The marketing tick. Optional, and its absence is simply "no". */
+    marketingOptIn: v.optional(v.boolean()),
     userAgent: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (!args.consentAccepted) throw rejected("consent is required");
     if (args.name.trim().length < 2) throw rejected("name is required");
     if (!/^\+?[0-9 ()-]{7,20}$/.test(args.phone)) throw rejected("a valid phone is required");
 
@@ -94,8 +106,24 @@ export const submit = mutation({
       answers,
       photoStorageIds: args.photoStorageIds ?? [],
       status: "new",
-      consentText: section.consentText,
-      lawfulBasis: "consent",
+      noticeText: section.noticeText,
+      /*
+       * CONTRACT, NOT CONSENT — s11(1)(b), necessary to conclude or perform
+       * a contract at the data subject's own request. Recording "consent"
+       * for a box nobody could decline stated a basis that was not true, on
+       * the one row that exists to answer what the lawful basis was.
+       */
+      lawfulBasis: "contract",
+      /*
+       * The tick is stored either way, so "they were asked and said no" is
+       * distinguishable from "they were never asked" — a form configured
+       * without a marketing box leaves this false, and so does a customer
+       * who declined. The WORDS are kept only when it was actually ticked,
+       * because that is the only case there is a permission to evidence.
+       */
+      marketingOptIn: args.marketingOptIn === true,
+      marketingConsentText:
+        args.marketingOptIn === true ? section.marketingConsent?.text : undefined,
       submittedAt: Date.now(),
       userAgent: args.userAgent?.slice(0, 300),
       // A demo site produces demo submissions. They are never real leads and

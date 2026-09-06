@@ -2,13 +2,14 @@ import { v, ConvexError } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { ownerMutation } from "./lib/functions";
-import { promoteSiteToLive } from "./siteConfigs";
+import { promoteSiteToLive, insertSite } from "./siteConfigs";
 import { mintClientOwnerInvite } from "./invites";
 import { dispatchToClient } from "./lib/messaging";
 import { clientSignInUrl } from "./lib/links";
 import { issueInvoiceFor } from "./invoices";
 import type { Id } from "./_generated/dataModel";
 import { createBooking } from "./bookings";
+import { enquiryOnlyConfig } from "@cc/site-config";
 import { toE164, toStorageKey } from "./lib/phone";
 import { patchDoc } from "./lib/db";
 
@@ -670,3 +671,232 @@ async function freeSlug(ctx: MutationCtx, businessName: string): Promise<string>
   }
   throw bad("SLUG_EXHAUSTED", `Could not find a free slug for "${businessName}".`);
 }
+
+/**
+ * A BACK OFFICE FOR A CLIENT WHOSE WEBSITE IS NOT OURS.
+ *
+ * `convertWonDeal` is the wrong tool for this, and the reasons are not
+ * cosmetic. It needs a WON DEAL, which a client who came direct never had —
+ * there is no lead and no deal, and manufacturing them to satisfy a signature
+ * would put fabricated rows in the pipeline that every count downstream
+ * reads. And it ISSUES A BUILD INVOICE, which for a fee already invoiced and
+ * paid outside this platform means a second document bearing a different
+ * number for one payment, with no way afterwards to say which one the money
+ * settled. That is exactly the harm the invoice-numbering rule exists to
+ * prevent, arriving through the onboarding path rather than the numbering.
+ *
+ * So this creates the tenancy and nothing financial: a client, a draft site
+ * declaring the enquiry form, a route in by invite, and the email that tells
+ * them. No deal is touched, no lead is converted, no invoice is issued.
+ *
+ * IT IS STILL ONE TRANSACTION, which is the part worth keeping from
+ * `convertWonDeal`. Every partial state is its own quiet disaster: a client
+ * with no site is a back office that can never receive an enquiry; a site
+ * with no membership is a tenant nobody can sign into; an invite with no
+ * client is a link to nothing. Convex mutations are serializable, so either
+ * all of it exists or none of it does.
+ *
+ * THE SITE IS NEVER SERVED, structurally rather than by a setting.
+ * `publish: false` leaves `publishedConfig` absent; `public/site.ts` answers
+ * an absent one with a holding page, while `public/quote.ts` falls back to
+ * `config`. So the row that declares the form cannot become a second, wrong
+ * copy of the client's real website at a guessable URL — using the
+ * draft/published split that already meant precisely this, rather than a new
+ * flag somebody would have to get right.
+ */
+export const addBackOffice = ownerMutation({
+  args: {
+    ventureId: v.id("ventures"),
+    businessName: v.string(),
+    slug: v.string(),
+    /** The person who will own the back office. An invite is minted for them. */
+    ownerEmail: v.string(),
+    primaryContactPhone: v.optional(v.string()),
+    brandColour: v.string(),
+    accent: v.any(),
+    externalSiteUrl: v.optional(v.string()),
+    locations: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        suburb: v.string(),
+        city: v.string(),
+        region: v.string(),
+        addressLine: v.optional(v.string()),
+        timezone: v.optional(v.string()),
+        phone: v.optional(v.string()),
+        email: v.optional(v.string()),
+      }),
+    ),
+    enquiry: v.object({
+      heading: v.string(),
+      fields: v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          kind: v.union(
+            v.literal("text"),
+            v.literal("longtext"),
+            v.literal("number"),
+            v.literal("select"),
+            v.literal("photos"),
+            v.literal("dateRange"),
+          ),
+          required: v.optional(v.boolean()),
+          options: v.optional(v.array(v.string())),
+        }),
+      ),
+      noticeText: v.string(),
+      marketingConsentText: v.optional(v.string()),
+      submitLabel: v.optional(v.string()),
+      successMessage: v.optional(v.string()),
+    }),
+    now: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const ownerEmail = required(args.ownerEmail, "The owner's email").toLowerCase();
+    const businessName = required(args.businessName, "The business name");
+    const slug = required(args.slug, "A slug").toLowerCase();
+
+    const venture = await ctx.db.get(args.ventureId);
+    if (!venture) throw bad("NO_SUCH_VENTURE", "No such venture.");
+    if (!venture.active) {
+      throw bad("VENTURE_ARCHIVED", `"${venture.name}" is archived.`);
+    }
+
+    /*
+     * REFUSED, NOT SUFFIXED. `freeSlug` takes the next free candidate, which
+     * is right when a machine derives one from a business name and wrong when
+     * a person typed it: quietly onboarding `champagne-holidays-2` hands them
+     * a sign-in URL that is not the one anybody was told.
+     */
+    const taken = await ctx.db
+      .query("clients")
+      .withIndex("by_slug", (q) => q.eq("slug", slug))
+      .first();
+    if (taken) {
+      throw bad("SLUG_TAKEN", `"${slug}" is already in use. Pick another.`);
+    }
+
+    if (args.locations.length === 0) {
+      throw bad("INVALID", "A client needs at least one location.");
+    }
+    if (args.enquiry.fields.length === 0) {
+      throw bad("INVALID", "The enquiry form needs at least one field.");
+    }
+
+    const clientId = await ctx.db.insert("clients", {
+      ventureId: args.ventureId,
+      kind: "platform",
+      name: businessName,
+      slug,
+      status: "live",
+      timezone: args.locations[0]?.timezone ?? "Africa/Johannesburg",
+      currency: venture.currency,
+      primaryContactEmail: ownerEmail,
+      primaryContactPhone: args.primaryContactPhone?.trim() || undefined,
+      /*
+       * Quotes on and nothing else. The Feature Manager hides absent modules
+       * rather than locking them, so this record is the honest "here is what
+       * they actually bought" instead of a console full of dead tabs.
+       */
+      featureFlags: { quotes: true },
+      isDemo: false,
+      isSeed: false,
+      goLiveAt: now,
+    });
+
+    /*
+     * Through `insertSite`, the only writer of the sites table, whose Zod
+     * parse is the only thing between that `v.any()` column and rubbish.
+     */
+    const siteId = await insertSite(ctx, {
+      clientId,
+      slug,
+      status: "draft",
+      isDemo: false,
+      publish: false,
+      config: enquiryOnlyConfig({
+        businessName,
+        slug,
+        brandColour: args.brandColour,
+        accent: args.accent,
+        currency: venture.currency,
+        externalSiteUrl: args.externalSiteUrl,
+        locations: args.locations,
+        enquiry: {
+          heading: args.enquiry.heading,
+          fields: args.enquiry.fields.map((field) => ({
+            key: field.key,
+            label: field.label,
+            kind: field.kind,
+            required: field.required ?? false,
+            options: field.options,
+          })),
+          noticeText: args.enquiry.noticeText,
+          marketingConsentText: args.enquiry.marketingConsentText,
+          submitLabel: args.enquiry.submitLabel,
+          successMessage: args.enquiry.successMessage,
+        },
+      }),
+    });
+
+    const invite = await mintClientOwnerInvite(ctx, {
+      clientId,
+      email: ownerEmail,
+      createdBy: ctx.platform.userId,
+    });
+
+    /*
+     * AND THEY ARE TOLD. An invite minted and never sent is an onboarding
+     * that works and reaches nobody — the gap `convertWonDeal` used to have,
+     * closed there and not worth reopening here.
+     *
+     * The outcome is RETURNED rather than assumed, so the screen can say a
+     * held or refused delivery out loud instead of reporting success.
+     */
+    const inviteDelivery = await dispatchToClient(ctx, {
+      message: { kind: "client.invite", inviteId: invite.inviteId },
+      clientId,
+      templateKey: "client_invite",
+      payload: {
+        businessName,
+        signInUrl: clientSignInUrl(slug),
+        email: ownerEmail,
+      },
+      triggeredAt: now,
+      now,
+    });
+
+    await ctx.db.insert("auditLog", {
+      actorUserId: ctx.platform.userId,
+      action: "onboarding.addBackOffice",
+      entityTable: "clients",
+      entityId: clientId,
+      ventureId: args.ventureId,
+      clientId,
+      after: {
+        name: businessName,
+        slug,
+        ownerEmail,
+        externalSiteUrl: args.externalSiteUrl,
+        /* Stated in the record: this onboarding billed nobody. */
+        invoiced: false,
+      },
+      at: now,
+    });
+
+    return {
+      clientId,
+      siteId,
+      slug,
+      signInUrl: clientSignInUrl(slug),
+      inviteId: invite.inviteId,
+      inviteToken: invite.token,
+      inviteDelivery: inviteDelivery.outcome,
+      /** What the client's own form must post as `sectionId`. */
+      enquirySectionId: "enquiry",
+    };
+  },
+});

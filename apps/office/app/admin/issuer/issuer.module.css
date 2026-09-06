@@ -1,0 +1,448 @@
+/*
+ * WHO ISSUES THE INVOICES. Admin world — monochrome ink, no accent.
+ *
+ * Operate mode. The reader is the owner, doing a one-off setup task that
+ * silently blocks every invoice until it is finished, and the screen's job is
+ * to make the blocked state impossible to miss and the finish line obvious.
+ */
+
+.page {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: var(--space-l) var(--space-m) var(--space-2xl);
+  display: grid;
+  gap: var(--space-l);
+}
+
+.pageHead {
+  display: grid;
+  gap: var(--space-2xs);
+}
+
+.pageHeading {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-3);
+  letter-spacing: var(--tracking-tight);
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  max-width: 58ch;
+}
+
+/* ---- the state, which is the headline --------------------------------- */
+
+/*
+ * NOT A BADGE. Whether anything can be invoiced is the reason this screen
+ * exists, so it gets a full-width block at the top rather than a chip beside
+ * the heading — a chip reads as decoration and this is the finding.
+ */
+.state {
+  display: grid;
+  gap: var(--space-3xs);
+  padding: var(--space-m);
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid var(--border);
+  border-left-width: 3px;
+  background: var(--bg-raised);
+}
+
+.state[data-tone="blocked"] {
+  border-left-color: var(--signal-danger);
+}
+
+.state[data-tone="pending"] {
+  border-left-color: var(--signal-warning);
+}
+
+.state[data-tone="ready"] {
+  border-left-color: var(--signal-positive);
+}
+
+.stateHeading {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+}
+
+.stateBody {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  max-width: 62ch;
+}
+
+/* ---- venture switcher -------------------------------------------------- */
+
+/*
+ * An issuer is PER VENTURE, because one person can trade as a sole prop for
+ * consulting and form a company for the sites business. The switcher is
+ * always shown, even with one venture, so the scope of what is being edited
+ * is never something you have to remember.
+ */
+.ventures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.venture {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  min-height: 2.25rem;
+  padding: var(--space-3xs) var(--space-s);
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  text-decoration: none;
+}
+
+.venture[aria-current="page"] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.ventureState {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---- the form ---------------------------------------------------------- */
+
+.form {
+  display: grid;
+  gap: var(--space-l);
+}
+
+.group {
+  display: grid;
+  gap: var(--space-s);
+  padding-top: var(--space-m);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.groupHead {
+  display: grid;
+  gap: var(--space-3xs);
+}
+
+.groupTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+}
+
+.groupNote {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--step--1);
+  max-width: 62ch;
+}
+
+.grid {
+  display: grid;
+  gap: var(--space-s);
+}
+
+@media (min-width: 40rem) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.field {
+  display: grid;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+
+.optional {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.control {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: var(--space-2xs) var(--space-s);
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: var(--radius-m);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+/* Figures a person retypes into a banking app get the mono face. */
+.mono {
+  font-family: var(--font-mono);
+}
+
+.control::placeholder {
+  color: var(--text-faint);
+}
+
+.control:hover {
+  border-color: var(--text-faint);
+}
+
+.control:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.control[aria-invalid="true"] {
+  border-color: var(--signal-danger);
+}
+
+.fieldNote {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--step--1);
+}
+
+/* ---- warnings that are about consequences, not validity ---------------- */
+
+.warn {
+  margin: 0;
+  padding: var(--space-2xs) var(--space-s);
+  border-radius: var(--radius-s);
+  border-left: 3px solid var(--signal-warning);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: var(--step--1);
+}
+
+.error {
+  margin: 0;
+  color: var(--signal-danger);
+  font-size: var(--step--1);
+}
+
+.ok {
+  margin: 0;
+  color: var(--signal-positive);
+  font-size: var(--step--1);
+}
+
+/* ---- actions ----------------------------------------------------------- */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-s);
+  align-items: center;
+}
+
+.primary,
+.secondary {
+  min-height: 2.75rem;
+  padding: var(--space-2xs) var(--space-m);
+  font: inherit;
+  font-weight: 600;
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid transparent;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.primary {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--ink-200);
+}
+
+.secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.secondary:hover:not(:disabled) {
+  border-color: var(--text);
+  background: var(--bg-raised);
+}
+
+.primary:disabled,
+.secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.primary:focus-visible,
+.secondary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---- confirmation ------------------------------------------------------ */
+
+/*
+ * Deliberately looks like a separate act rather than one more field. It is
+ * the only thing on this screen that a person, not a validator, can do.
+ */
+.confirm {
+  display: grid;
+  gap: var(--space-s);
+  padding: var(--space-m);
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) solid var(--border-strong);
+  background: var(--bg-raised);
+}
+
+.confirmTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+}
+
+.confirmBody {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--step--1);
+  max-width: 62ch;
+}
+
+.confirmRow {
+  display: grid;
+  gap: var(--space-s);
+  align-items: end;
+}
+
+@media (min-width: 34rem) {
+  .confirmRow {
+    grid-template-columns: minmax(0, 24rem) auto;
+  }
+}
+
+/* ---- what prints ------------------------------------------------------- */
+
+/*
+ * THE POINT OF THE SCREEN, not a nicety. The whole regime exists to stop a
+ * name nobody read printing on a document a client keeps — so the name gets
+ * shown as it will print, before anyone is asked to vouch for it.
+ */
+.preview {
+  display: grid;
+  gap: var(--space-s);
+  padding: var(--space-m);
+  border-radius: var(--radius-m);
+  border: var(--border-hairline) dashed var(--border-strong);
+}
+
+.previewLabel {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.paper {
+  display: grid;
+  gap: var(--space-m);
+  padding: var(--space-m);
+  border-radius: var(--radius-s);
+  background: var(--bg-raised);
+  /* A grid item's default `min-width: auto` refuses to shrink below its
+     content, which is how the bank block pushed this container wider than
+     the page rather than wrapping inside it. */
+  min-width: 0;
+}
+
+.paperName {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  letter-spacing: var(--tracking-tight);
+}
+
+.paperLine {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--step--1);
+}
+
+.paperBank {
+  display: grid;
+  gap: var(--space-3xs);
+  padding-top: var(--space-s);
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+/*
+ * STACKED BY DEFAULT, two columns only when there is room.
+ *
+ * It was `minmax(0, 9rem) minmax(0, 1fr)` at every width, which on a 375px
+ * phone left 85px for a mono account number and overran its own container by
+ * 34px — the figure a person is about to retype into a banking app, clipped.
+ * `minmax(0, …)` permits the COLUMN to shrink; it does not make an unbroken
+ * run of tabular digits any narrower.
+ *
+ * Same failure and same fix as the invoice document's own narrow layout, and
+ * found the same way: by opening the page at 375px rather than reading it.
+ */
+.paperBankRow {
+  display: grid;
+  gap: var(--space-3xs);
+  font-size: var(--step--1);
+  min-width: 0;
+  /* Each row is its own `dl`, and a `dl` carries a 1em block margin by
+     default — which was stacking on top of the container's gap and spacing
+     four short rows like four paragraphs. */
+  margin: 0;
+}
+
+.paperBankRow dd {
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 26rem) {
+  .paperBankRow {
+    grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+    gap: var(--space-s);
+  }
+}
+
+.paperBankRow dt {
+  color: var(--text-faint);
+}
+
+.paperBankRow dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.paperMissing {
+  margin: 0;
+  color: var(--signal-warning);
+  font-size: var(--step--1);
+}

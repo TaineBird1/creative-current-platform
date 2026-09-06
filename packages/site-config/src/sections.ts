@@ -67,10 +67,44 @@ export const quoteSection = z.object({
   ...base,
   type: z.literal("quote"),
   heading: z.string().min(1),
-  fields: z.array(z.object({ key, label: z.string().min(1), kind: z.enum(["text", "longtext", "number", "select", "photos"]), required: z.boolean().default(false), options: z.array(z.string()).optional() })).min(1),
+  /**
+   * `dateRange` carries an ISO 8601 interval in ONE answer — see
+   * `date-range.ts` for why a standard rather than free text. Both the
+   * browser and `public/quote.ts` validate it through the same parser.
+   */
+  fields: z.array(z.object({ key, label: z.string().min(1), kind: z.enum(["text", "longtext", "number", "select", "photos", "dateRange"]), required: z.boolean().default(false), options: z.array(z.string()).optional() })).min(1),
   photoUpload: z.object({ enabled: z.boolean().default(true), maxFiles: z.number().int().min(1).max(10).default(5) }),
-  /** POPIA: the exact words the customer agreed to, stored with the submission. */
-  consentText: z.string().min(20),
+
+  /**
+   * THE NOTICE. Plain text, always shown, and DELIBERATELY NOT A CHECKBOX.
+   *
+   * Answering an enquiry somebody submitted does not run on consent. It is
+   * necessary to conclude or perform a contract at the data subject's own
+   * request — POPIA s11(1)(b) — and saying so is more honest than asking.
+   *
+   * A tickbox here would invite someone to refuse permission for the thing
+   * they just asked for, which is incoherent: refusing would mean "do not
+   * answer my enquiry". Worse, a REQUIRED tickbox is consent that cannot be
+   * declined, and consent that cannot be declined is not consent — so
+   * recording it as such would put a false lawful basis on the row. That is
+   * what this field used to be, named `consentText` and blocking submit.
+   *
+   * Stored with the submission as the words that were actually on the page.
+   */
+  noticeText: z.string().min(20),
+
+  /**
+   * MARKETING CONSENT. Separate, optional, unticked, and never blocks submit.
+   *
+   * This is the half that IS consent — POPIA s69 governs direct marketing by
+   * electronic communication, and it needs an opt-in that could have been
+   * withheld. Which is exactly why it has to be a different control from the
+   * notice above: bundled together, neither one means anything.
+   *
+   * ABSENT MEANS NO CHECKBOX AT ALL. A client who does not market should not
+   * show a box, rather than show one nobody acts on.
+   */
+  marketingConsent: z.object({ text: z.string().min(20) }).optional(),
   submitLabel: z.string().min(1).default("Request a quote"),
   /** Shown after submission. No redirect, no account, no "check your email". */
   successMessage: z.string().min(1).default("Got it. We will call you back."),

@@ -1,7 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
-import { safeParseSiteConfig } from "@cc/site-config";
+import { safeParseSiteConfig, parseDateRange } from "@cc/site-config";
 import { hashToken } from "../lib/invites";
 import { toE164 } from "../lib/phone";
 import { patchDoc } from "../lib/db";
@@ -30,11 +30,23 @@ export const submit = mutation({
     email: v.optional(v.string()),
     answers: v.record(v.string(), v.string()),
     photoStorageIds: v.optional(v.array(v.id("_storage"))),
-    consentAccepted: v.boolean(),
+    /**
+     * ACCEPTED AND IGNORED. It used to be required, and refusing without it
+     * was the bug: answering an enquiry runs on contract, not consent, so
+     * there was nothing for the customer to decline that would not also
+     * decline the thing they had just asked for.
+     *
+     * Kept in the signature rather than removed, because `apps/sites` and
+     * this backend deploy separately — an already-published bundle still
+     * sends it, and a validator that rejected an unexpected argument would
+     * take every live enquiry form down for the length of that window.
+     */
+    consentAccepted: v.optional(v.boolean()),
+    /** The marketing tick. Optional, and its absence is simply "no". */
+    marketingOptIn: v.optional(v.boolean()),
     userAgent: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (!args.consentAccepted) throw rejected("consent is required");
     if (args.name.trim().length < 2) throw rejected("name is required");
     if (!/^\+?[0-9 ()-]{7,20}$/.test(args.phone)) throw rejected("a valid phone is required");
 
@@ -55,8 +67,27 @@ export const submit = mutation({
 
     // Required fields come from the CONFIG, not from the browser's idea of them.
     for (const field of section.fields) {
-      if (field.required && !args.answers[field.key]?.trim()) {
+      const supplied = args.answers[field.key]?.trim();
+
+      if (field.required && !supplied) {
         throw rejected(`${field.label} is required`);
+      }
+
+      /*
+       * A DATE RANGE IS CHECKED FOR SHAPE, NOT MERELY FOR PRESENCE.
+       *
+       * Every other kind is a string and a string is what gets stored, so
+       * non-empty is the whole of the check. This one is stored as a value
+       * something later has to READ — a guest house books from it — and a
+       * half-picked range like `2027-07-12/` is non-empty, so the required
+       * check above waves it straight through.
+       *
+       * Validated with the SAME parser the browser used, because a second
+       * opinion about the format here would be a second opinion about which
+       * enquiries are accepted.
+       */
+      if (field.kind === "dateRange" && supplied && !parseDateRange(supplied)) {
+        throw rejected(`${field.label} needs a start date and an end date`);
       }
     }
     // Silently drop answers to fields the section does not declare.
@@ -75,8 +106,24 @@ export const submit = mutation({
       answers,
       photoStorageIds: args.photoStorageIds ?? [],
       status: "new",
-      consentText: section.consentText,
-      lawfulBasis: "consent",
+      noticeText: section.noticeText,
+      /*
+       * CONTRACT, NOT CONSENT — s11(1)(b), necessary to conclude or perform
+       * a contract at the data subject's own request. Recording "consent"
+       * for a box nobody could decline stated a basis that was not true, on
+       * the one row that exists to answer what the lawful basis was.
+       */
+      lawfulBasis: "contract",
+      /*
+       * The tick is stored either way, so "they were asked and said no" is
+       * distinguishable from "they were never asked" — a form configured
+       * without a marketing box leaves this false, and so does a customer
+       * who declined. The WORDS are kept only when it was actually ticked,
+       * because that is the only case there is a permission to evidence.
+       */
+      marketingOptIn: args.marketingOptIn === true,
+      marketingConsentText:
+        args.marketingOptIn === true ? section.marketingConsent?.text : undefined,
       submittedAt: Date.now(),
       userAgent: args.userAgent?.slice(0, 300),
       // A demo site produces demo submissions. They are never real leads and

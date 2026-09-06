@@ -142,9 +142,34 @@ export const operationsTables = {
       v.literal("new"), v.literal("contacted"),
       v.literal("quoted"), v.literal("won"), v.literal("lost"),
     ),
-    /** POPIA: what they agreed to, in the words shown on the page. */
-    consentText: v.string(),
+    /**
+     * POPIA: the NOTICE that was on the page, in the words shown.
+     *
+     * Was `consentText`, and the rename is the point rather than tidying:
+     * this is not something the customer agreed to. Answering the enquiry
+     * they submitted is necessary to conclude a contract at their request,
+     * so `lawfulBasis` below is `contract` on this row and the notice is
+     * evidence of what they were told, not of what they permitted.
+     */
+    noticeText: v.string(),
     lawfulBasis: v.union(v.literal("consent"), v.literal("contract"), v.literal("legitimate_interest")),
+
+    /**
+     * MARKETING, WHICH IS THE HALF THAT REALLY IS CONSENT.
+     *
+     * Recorded HERE and not in `consents`, because that table is keyed on a
+     * `customerId` and an enquiry has no customer yet — there is nothing to
+     * attach a consent row to. It is also written by exactly two modules,
+     * held by a guard, and a third opinion about who may be marketed to is
+     * precisely what that guard exists to prevent.
+     *
+     * So this is the EVIDENCE, and the consent row is written later by
+     * `customers.ts` when the enquiry becomes a customer and a subject for
+     * one exists. Absent on rows submitted before the split.
+     */
+    marketingOptIn: v.optional(v.boolean()),
+    /** The words beside the box, kept only when it was actually ticked. */
+    marketingConsentText: v.optional(v.string()),
     submittedAt: v.number(),
     userAgent: v.optional(v.string()),
     /** True when the submission came from a demo site: never a real lead. */

@@ -4,8 +4,21 @@
     {
       "name": "office-preview",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["run", "dev:preview"],
+      "runtimeArgs": [
+        "run",
+        "dev:preview"
+      ],
       "port": 3200
+    },
+    {
+      "name": "sites",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@cc/sites",
+        "dev"
+      ],
+      "port": 3100
     }
   ]
 }

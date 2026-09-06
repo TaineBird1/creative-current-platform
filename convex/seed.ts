@@ -118,7 +118,9 @@ export const check = internalMutation({
         phone: r.phone,
         status: r.status,
         answers: r.answers,
-        consentText: r.consentText.slice(0, 40),
+        noticeText: r.noticeText.slice(0, 40),
+        /* Reported so "asked and declined" is legible beside "never asked". */
+        marketingOptIn: r.marketingOptIn ?? false,
         isDemo: r.isDemo,
       })),
     };

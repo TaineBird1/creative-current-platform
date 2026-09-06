@@ -380,8 +380,32 @@ export function solarTradesTemplate(input: SeedInput): SiteConfig {
           },
         ],
         photoUpload: { enabled: true, maxFiles: 5 },
-        consentText:
-          "I agree that my details may be used to contact me about this enquiry. I can ask for them to be deleted at any time.",
+        /*
+         * A STATEMENT, NOT A REQUEST. It says what happens to the details
+         * somebody has just chosen to send, which needs no permission —
+         * answering the enquiry is the thing they asked for.
+         */
+        noticeText:
+          `${input.businessName} will use these details to answer this enquiry and arrange any work that follows, ` +
+          `and keeps them only for as long as that takes. To see what is held, correct it or have it deleted, ` +
+          `email ${input.email ?? "the address on this page"}.`,
+
+        /*
+         * NO "REPLY STOP", deliberately, and this is not a wording
+         * preference. `lib/providers.ts` has no inbound pipeline and no
+         * provider webhook, so nothing in this system can act on an inbound
+         * STOP — CLAUDE.md says messaging is not STOP-compliant and must not
+         * be described as such. Offering it would be a promise the platform
+         * cannot keep, printed on the one line whose whole job is to be
+         * trustworthy. An email address is a route that works, because a
+         * person reads it.
+         */
+        marketingConsent: {
+          text:
+            `Tick this if ${input.businessName} may also send you occasional offers and news. ` +
+            `You can ask us to stop at any time by emailing ${input.email ?? "us"}. ` +
+            `Leaving it unticked will not affect this enquiry.`,
+        },
         submitLabel: "Request a quote",
         successMessage:
           "Got it. We will call you back on the number you gave us, usually the same working day.",

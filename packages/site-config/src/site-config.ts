@@ -116,13 +116,56 @@ export const siteConfig = z
 export type SiteConfig = z.infer<typeof siteConfig>;
 
 /**
+ * A QUOTE SECTION WRITTEN BEFORE THE CONSENT SPLIT STILL PARSES.
+ *
+ * `consentText` became `noticeText` when the single required tickbox was
+ * separated into a notice (no checkbox) and a marketing opt-in (optional).
+ * The rename is right and the field's meaning genuinely changed, so keeping
+ * the old name would have left a field called "consent" holding something
+ * that is not consent.
+ *
+ * But a stored config that fails to parse does not error visibly — it serves
+ * a HOLDING PAGE, because that is what `public/site.ts` does with an
+ * unparseable config, and `public/quote.ts` refuses every submission. So a
+ * bare rename takes a live client's site down at the moment of deploy, and
+ * the only symptom is a site that has quietly stopped being their site.
+ *
+ * Done at the PARSE BOUNDARY rather than in the section schema, because
+ * `section` is a discriminated union and a preprocess wrapper is not a
+ * ZodObject — the union would stop discriminating. One place, at the edge,
+ * which is where a migration belongs anyway.
+ *
+ * REMOVABLE once no stored config carries `consentText`. Two rows carried it
+ * when this was written, one on each deployment.
+ */
+function renameLegacyConsentText(input: unknown): unknown {
+  if (!input || typeof input !== "object") return input;
+  const cfg = input as { sections?: unknown };
+  if (!Array.isArray(cfg.sections)) return input;
+
+  let touched = false;
+  const sections = cfg.sections.map((raw) => {
+    if (!raw || typeof raw !== "object") return raw;
+    const section = raw as Record<string, unknown>;
+    if (section.type !== "quote") return raw;
+    if (section.noticeText !== undefined || section.consentText === undefined) return raw;
+
+    touched = true;
+    const { consentText, ...rest } = section;
+    return { ...rest, noticeText: consentText };
+  });
+
+  return touched ? { ...cfg, sections } : input;
+}
+
+/**
  * The ONLY way a config enters the database. Demo generation and real
  * onboarding both call this — one compose pipeline, no second path.
  */
 export function parseSiteConfig(input: unknown): SiteConfig {
-  return siteConfig.parse(input);
+  return siteConfig.parse(renameLegacyConsentText(input));
 }
 
 export function safeParseSiteConfig(input: unknown) {
-  return siteConfig.safeParse(input);
+  return siteConfig.safeParse(renameLegacyConsentText(input));
 }

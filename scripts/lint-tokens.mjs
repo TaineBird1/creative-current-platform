@@ -42,6 +42,11 @@ const COLOUR_ALLOWLIST = new Set([
   join("apps", "office", "app", "preview", "quote-builder", "page.preview.tsx"),
   // And the outbox harness. Same seam again.
   join("apps", "office", "app", "preview", "outbox", "page.preview.tsx"),
+  // Onboarding a client: the operator types or picks the client's brand
+  // colour, which is a hex by definition and by the time it reaches the
+  // client's back office it has been through buildAccentRamp. Same seam as
+  // every entry above -- colour arriving as DATA, never painted as style.
+  join("apps", "office", "app", "admin", "clients", "new", "AddBackOffice.tsx"),
   // Same seam: seed data supplies a client's brand colour, which is a hex by
   // definition. It is fed through the ramp, not painted.
   join("convex", "seed.ts"),

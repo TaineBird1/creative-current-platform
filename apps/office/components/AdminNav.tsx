@@ -25,6 +25,7 @@ const SCREENS = [
   { href: "/admin/tasks", label: "Inbox" },
   { href: "/admin", label: "Clients" },
   { href: "/admin/finance", label: "Money" },
+  { href: "/admin/clients/new", label: "Add client" },
   { href: "/admin/domains", label: "Domains" },
   /*
    * LAST, because it is opened once and then almost never — the opposite end

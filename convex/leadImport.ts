@@ -1,6 +1,10 @@
 import { v, ConvexError } from "convex/values";
 import { internalMutation } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { ownerMutation } from "./lib/functions";
 import { toE164 } from "./lib/phone";
+import { existingLeadKeys } from "./lib/leadAccess";
 
 /**
  * BULK IMPORT, WITH THE PROVENANCE THAT MAKES IT DEFENSIBLE.
@@ -31,8 +35,7 @@ const source = v.union(
   v.literal("inbound"),
 );
 
-export const importLeads = internalMutation({
-  args: {
+const importArgs = {
     ventureId: v.id("ventures"),
     niche: v.string(),
     source,
@@ -58,8 +61,30 @@ export const importLeads = internalMutation({
         ownerNameSource: v.optional(v.string()),
       }),
     ),
-  },
-  handler: async (ctx, args) => {
+} as const;
+
+type ImportArgs = {
+  ventureId: Id<"ventures">;
+  niche: string;
+  source: "places" | "sa_venues" | "campaign_list" | "referral" | "inbound";
+  lawfulBasis: "consent" | "legitimate_interest";
+  capturedAt: number;
+  rows: Array<{
+    businessName: string;
+    phone?: string;
+    website?: string;
+    area?: string;
+    placeId?: string;
+    detail: string;
+    auditFaults?: string[];
+    callNote?: string;
+    ownerName?: string;
+    ownerNameConfidence?: "low" | "medium" | "high";
+    ownerNameSource?: string;
+  }>;
+};
+
+async function runImport(ctx: MutationCtx, args: ImportArgs) {
     const venture = await ctx.db.get(args.ventureId);
     if (!venture) {
       throw new ConvexError({ code: "NO_SUCH_VENTURE", message: "No such venture." });
@@ -77,15 +102,18 @@ export const importLeads = internalMutation({
       });
     }
 
-    const existing = await ctx.db.query("leads").collect();
     /*
-     * Keyed on the STORED E.164, which is already canonical — re-normalising
-     * it here would be a second opinion about a value lib/phone.ts has
-     * already decided, and second opinions are how the two normalisers this
-     * codebase used to have came about.
+     * THIS FILE NO LONGER READS THE LEADS TABLE, and that is what let the
+     * import have a screen at all.
+     *
+     * It used to `collect()` the table here, on an allowlist whose stated
+     * safety condition was that nothing in a browser could reach this module.
+     * That was a real property and the right one — so rather than widen the
+     * exemption to add a console, the read moved to `lib/leadAccess.ts`,
+     * which is already the only thing permitted to read leads and which hands
+     * back two sets of KEYS. No lead document reaches this function.
      */
-    const byPhone = new Map(existing.filter((row) => row.phone).map((row) => [row.phone!, row]));
-    const byName = new Map(existing.map((row) => [row.businessName.trim().toLowerCase(), row]));
+    const { phones: byPhone, names: byName } = await existingLeadKeys(ctx);
 
     let created = 0;
     let skipped = 0;
@@ -102,7 +130,7 @@ export const importLeads = internalMutation({
       if (row.phone?.trim() && !parsed.ok) unusable.push(`${name}: ${parsed.reason}`);
 
       const duplicate =
-        (phone && byPhone.get(phone)) || byName.get(name.toLowerCase()) || null;
+        (phone !== null && byPhone.has(phone)) || byName.has(name.toLowerCase());
 
       if (duplicate) {
         // Left exactly as it is. Its provenance is already recorded, and
@@ -113,7 +141,7 @@ export const importLeads = internalMutation({
 
       if (!phone) withoutPhone++;
 
-      const leadId = await ctx.db.insert("leads", {
+      await ctx.db.insert("leads", {
         ventureId: args.ventureId,
         placeId: row.placeId,
         businessName: name,
@@ -138,8 +166,10 @@ export const importLeads = internalMutation({
         },
       });
 
-      if (phone) byPhone.set(phone, (await ctx.db.get(leadId))!);
-      byName.set(name.toLowerCase(), (await ctx.db.get(leadId))!);
+      /* Within-batch dedupe: a file listing the same business twice is
+         ordinary, and the second one must not become a second row. */
+      if (phone) byPhone.add(phone);
+      byName.add(name.toLowerCase());
       created++;
     }
 
@@ -151,5 +181,31 @@ export const importLeads = internalMutation({
      * one figure, the typos hide inside the blanks forever.
      */
     return { created, skipped, withoutPhone, unusable };
-  },
+}
+
+/**
+ * THE CLI PATH, kept. A big first import is a file, and a file is easier to
+ * run from a terminal than to paste into a textarea.
+ */
+export const importLeads = internalMutation({
+  args: importArgs,
+  handler: (ctx, args) => runImport(ctx, args as ImportArgs),
+});
+
+/**
+ * THE CONSOLE PATH, which this module could not have had before.
+ *
+ * It reads no leads — `existingLeadKeys` does, in the one module allowed to —
+ * so the exemption that kept every export here internal is gone rather than
+ * widened. What this returns is counts plus the names of rows in the
+ * caller's OWN file whose number would not parse; nothing about a lead
+ * already in the table reaches the browser.
+ *
+ * Owner-gated, not merely platform: an import writes provenance that can
+ * never be corrected afterwards, so it is the same level of decision as
+ * naming the issuer.
+ */
+export const importFromConsole = ownerMutation({
+  args: importArgs,
+  handler: (ctx, args) => runImport(ctx, args as ImportArgs),
 });

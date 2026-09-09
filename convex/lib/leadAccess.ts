@@ -290,3 +290,56 @@ export async function recipientIsLead(
     };
   }
 }
+
+/**
+ * THE DEDUPE KEYS, AND NOTHING ELSE.
+ *
+ * An import has to know whether a row is already here — re-running a
+ * corrected file is normal, and a non-idempotent import puts a business in
+ * the queue twice and gets them phoned twice by the same person.
+ *
+ * That check needs an UNFILTERED read: a suppressed lead is still a
+ * duplicate, and an import that "did not find" one would insert a second row
+ * for a business that asked us to stop. So the read cannot go through
+ * `listContactable`.
+ *
+ * WHICH IS WHY IT LIVES HERE AND RETURNS SETS OF STRINGS. `leadImport.ts`
+ * used to query the table itself, on an allowlist whose stated safety
+ * condition was that nothing in a browser could reach it — a real property,
+ * and one that stopped the import ever having a screen. Moving the read here
+ * removes the exemption instead of widening it: this module is already the
+ * only thing permitted to read leads, and what leaves is two sets of keys.
+ * No document, no name that was not already in the caller's own file, and
+ * nothing a screen could render.
+ *
+ * GLOBAL, NOT PER-VENTURE, which matches the behaviour this replaces. A
+ * business listed under two ventures is one business and one number, and
+ * phoning them twice because the second venture had not heard of them is the
+ * failure dedupe exists to prevent.
+ */
+export type LeadKeys = {
+  /** Stored E.164 numbers. Already canonical — never re-normalised here. */
+  phones: Set<string>;
+  /** Business names, trimmed and lowercased. */
+  names: Set<string>;
+};
+
+export async function existingLeadKeys(ctx: QueryCtx): Promise<LeadKeys> {
+  const rows = await ctx.db.query("leads").collect();
+
+  const phones = new Set<string>();
+  const names = new Set<string>();
+
+  for (const row of rows) {
+    /*
+     * The STORED value, used as-is. `lib/phone.ts` has already decided what
+     * this number's canonical form is, and re-normalising it here would be a
+     * second opinion about the suppression key — which is how this codebase
+     * came to have three phone normalisers that agreed only by accident.
+     */
+    if (row.phone) phones.add(row.phone);
+    names.add(row.businessName.trim().toLowerCase());
+  }
+
+  return { phones, names };
+}

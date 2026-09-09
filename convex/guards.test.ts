@@ -1778,38 +1778,28 @@ describe("the queue is filtered, not the dial", () => {
   const CANDIDATE_ASSEMBLERS = new Set(["queue.ts", "seed.ts"]);
 
   /**
-   * Reads leads WITHOUT returning any, and so cannot put a suppressed name on
-   * a screen. `leadImport` scans for duplicates and returns counts.
+   * THE DEDUPE EXEMPTION IS GONE, and removing it is the point rather than a
+   * tidy-up.
    *
-   * A narrower exemption than the assemblers, with its own condition below:
-   * these must be unreachable from a browser at all. "It only returns counts"
-   * is a promise about today's code; "it is an internalMutation" is a
-   * property the next person cannot quietly change without noticing.
+   * `leadImport.ts` used to read the table itself, on an allowlist whose
+   * stated safety condition was that nothing in a browser could reach it —
+   * "it only returns counts" being a promise about that day's code, while
+   * "it is an internalMutation" was a property nobody could quietly change.
+   *
+   * That property was real and it was also what stopped the import ever
+   * having a screen. So rather than widen the exemption to admit a console,
+   * the unfiltered read moved INTO `lib/leadAccess.ts` as `existingLeadKeys`,
+   * which returns two sets of strings and no document. `leadImport.ts` reads
+   * no leads at all now, needs no exemption, and is caught by the ordinary
+   * rule below if anyone puts a query back.
+   *
+   * One fewer file may touch the table than before this screen existed.
    */
-  const INTERNAL_DEDUPE = new Set(["leadImport.ts"]);
-
-  test("dedupe readers are unreachable from a browser", () => {
-    const offenders: string[] = [];
-    for (const path of INTERNAL_DEDUPE) {
-      const file = sourceFiles.find((f) => f.path === path);
-      if (!file) continue;
-      for (const m of file.code.matchAll(/export\s+const\s+(\w+)\s*=\s*(\w+)\s*\(/g)) {
-        if (!/^internal(Query|Mutation|Action)$/.test(m[2]!)) {
-          offenders.push(`${path}: ${m[1]} is ${m[2]}, not internal`);
-        }
-      }
-    }
-    expect(
-      offenders,
-      "A file on the dedupe allowlist reads leads without filtering. It is only safe while nothing in a browser can call it.",
-    ).toEqual([]);
-  });
 
   test("only lib/leadAccess.ts and the queue assemblers read the leads table", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (file.path === LEAD_READER || CANDIDATE_ASSEMBLERS.has(file.path)) continue;
-      if (INTERNAL_DEDUPE.has(file.path)) continue;
       if (/query\(\s*"leads"/.test(file.code)) {
         offenders.push(`${file.path}: queries leads directly`);
       }

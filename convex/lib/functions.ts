@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import {
   customQuery,
   customMutation,
@@ -98,6 +98,25 @@ const requireCaller = makeFunctionReference<
 export const platformAction = customAction(
   action,
   customCtx(async (ctx) => ({ platform: await ctx.runQuery(requireCaller, {}) })),
+);
+
+/**
+ * OWNER-ONLY, for an action that SPENDS MONEY.
+ *
+ * `requireCaller` answers with the caller's platform role, so the owner check
+ * happens here rather than being a second membership lookup. A sourcing run
+ * is a loop over a paid API — the spend cap makes a bug survivable, and this
+ * makes it deliberate.
+ */
+export const ownerAction = customAction(
+  action,
+  customCtx(async (ctx) => {
+    const platform = await ctx.runQuery(requireCaller, {});
+    if (platform.role !== "owner") {
+      throw new ConvexError({ code: "FORBIDDEN", message: "Requires platform:owner" });
+    }
+    return { platform };
+  }),
 );
 
 export type TenantQueryCtx = { tenant: TenantContext };

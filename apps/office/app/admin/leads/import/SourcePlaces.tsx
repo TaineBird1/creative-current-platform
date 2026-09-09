@@ -27,7 +27,32 @@ import s from "./import.module.css";
 
 type Venture = { _id: string; name: string };
 
-export function SourcePlaces({ ventures }: { ventures: Venture[] }) {
+/**
+ * WHAT THIS MONTH HAS COST, beside the button that spends more.
+ *
+ * Passed IN rather than fetched here, and that is not a style choice. It was
+ * a `useQuery` on an owner-gated query first, which throws when the caller is
+ * not signed in — so the preview harness rendered an error boundary and no
+ * form at all. Every other admin screen fetches on the server, where the
+ * refusal is caught and turned into a page rather than a crash; this now does
+ * the same, and the harness can pass a fixture.
+ */
+export type SpendStatus = {
+  period: string;
+  capCents: number | null;
+  spentCents: number;
+  remainingCents: number | null;
+  unitCostCents: Record<string, number> | null;
+  willRefuse: boolean;
+} | null;
+
+export function SourcePlaces({
+  ventures,
+  spend,
+}: {
+  ventures: Venture[];
+  spend: SpendStatus;
+}) {
   const run = useAction(api.sourcing.run);
 
   const [ventureId, setVentureId] = useState(ventures[0]?._id ?? "");
@@ -144,11 +169,34 @@ export function SourcePlaces({ ventures }: { ventures: Venture[] }) {
         </div>
       </section>
 
+      {/*
+        NO CAP IS ITS OWN STATE, not "R0.00 of R0.00". One reads as spent out
+        and the other as never configured, and they need different actions —
+        so `willRefuse` is answered by the backend rather than inferred from a
+        zero here.
+      */}
+      {spend?.willRefuse ? (
+        <p className={s.error}>
+          No spend cap is set for {spend.period}. Sourcing will refuse every
+          call until one exists — an uncapped loop over a paid API is an
+          invoice, not an error.
+        </p>
+      ) : spend ? (
+        <p className={s.hint}>
+          {spend.period}: R {(spend.spentCents / 100).toFixed(2)} spent of R{" "}
+          {((spend.capCents ?? 0) / 100).toFixed(2)}
+          {spend.unitCostCents?.textSearch
+            ? ` — about ${Math.floor((spend.remainingCents ?? 0) / spend.unitCostCents.textSearch)} searches left`
+            : ""}
+          .
+        </p>
+      ) : null}
+
       <div className={s.actions}>
         <button
           className={s.primary}
           type="submit"
-          disabled={busy || textQuery.trim() === "" || niche.trim() === ""}
+          disabled={busy || textQuery.trim() === "" || niche.trim() === "" || spend?.willRefuse === true}
         >
           {busy ? "Searching…" : `Search and import (${maxPages} paid ${maxPages === 1 ? "search" : "searches"})`}
         </button>

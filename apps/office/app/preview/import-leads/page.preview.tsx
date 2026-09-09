@@ -49,7 +49,19 @@ export default function ImportLeadsPreview() {
         </header>
 
         <ImportLeads ventures={VENTURES} />
-        <SourcePlaces ventures={VENTURES} />
+        {/* A configured cap, so the ordinary state is what gets reviewed.
+            `?nocap=1` shows the refusal instead. */}
+        <SourcePlaces
+          ventures={VENTURES}
+          spend={{
+            period: "2026-09",
+            capCents: 2000,
+            spentCents: 360,
+            remainingCents: 1640,
+            unitCostCents: { textSearch: 60 },
+            willRefuse: false,
+          }}
+        />
       </main>
     </div>
   );

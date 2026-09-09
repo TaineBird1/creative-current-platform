@@ -20,10 +20,14 @@ export default async function ImportLeadsPage() {
   const token = await convexAuthNextjsToken();
 
   let ventures: FunctionReturnType<typeof api.ventures.list> | null = null;
+  let spend: FunctionReturnType<typeof api.spend.status> | null = null;
   let refused = false;
 
   try {
-    ventures = await fetchQuery(api.ventures.list, {}, { token });
+    [ventures, spend] = await Promise.all([
+      fetchQuery(api.ventures.list, {}, { token }),
+      fetchQuery(api.spend.status, { provider: "google_places" }, { token }),
+    ]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (/UNAUTHENTICATED|FORBIDDEN|AuthProvider|token/i.test(message)) {
@@ -61,7 +65,10 @@ export default async function ImportLeadsPage() {
         </header>
 
         <ImportLeads ventures={ventures.map((v) => ({ _id: v._id, name: v.name }))} />
-        <SourcePlaces ventures={ventures.map((v) => ({ _id: v._id, name: v.name }))} />
+        <SourcePlaces
+          ventures={ventures.map((v) => ({ _id: v._id, name: v.name }))}
+          spend={spend}
+        />
       </main>
     </div>
   );

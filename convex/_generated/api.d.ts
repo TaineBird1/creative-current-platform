@@ -68,6 +68,7 @@ import type * as services from "../services.js";
 import type * as siteConfigs from "../siteConfigs.js";
 import type * as siteRevalidate from "../siteRevalidate.js";
 import type * as sourcing from "../sourcing.js";
+import type * as spend from "../spend.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as tables_growth from "../tables/growth.js";
 import type * as tables_identity from "../tables/identity.js";
@@ -150,6 +151,7 @@ declare const fullApi: ApiFromModules<{
   siteConfigs: typeof siteConfigs;
   siteRevalidate: typeof siteRevalidate;
   sourcing: typeof sourcing;
+  spend: typeof spend;
   subscriptions: typeof subscriptions;
   "tables/growth": typeof tables_growth;
   "tables/identity": typeof tables_identity;

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { ImportLeads } from "../../admin/leads/import/ImportLeads";
+import { SourcePlaces } from "../../admin/leads/import/SourcePlaces";
 import s from "../../admin/leads/import/import.module.css";
 
 /**
@@ -48,6 +49,7 @@ export default function ImportLeadsPreview() {
         </header>
 
         <ImportLeads ventures={VENTURES} />
+        <SourcePlaces ventures={VENTURES} />
       </main>
     </div>
   );

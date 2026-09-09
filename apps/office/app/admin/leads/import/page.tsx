@@ -5,6 +5,7 @@ import { api } from "@cc/convex/api";
 import { SignOut } from "@/components/SignOut";
 import { AdminNav } from "@/components/AdminNav";
 import { ImportLeads } from "./ImportLeads";
+import { SourcePlaces } from "./SourcePlaces";
 import s from "./import.module.css";
 
 /**
@@ -60,6 +61,7 @@ export default async function ImportLeadsPage() {
         </header>
 
         <ImportLeads ventures={ventures.map((v) => ({ _id: v._id, name: v.name }))} />
+        <SourcePlaces ventures={ventures.map((v) => ({ _id: v._id, name: v.name }))} />
       </main>
     </div>
   );

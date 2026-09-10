@@ -102,6 +102,7 @@ export default async function Console({
       <div className={s.shell}>
         <header className={s.topbar}>
           <p className={s.brand}>The Creative Current</p>
+          <AdminNav />
           <div className={s.who}>
             <span className={s.role}>{role}</span>
             <SignOut />

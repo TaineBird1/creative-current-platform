@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ADMIN_SCREENS } from "./admin-screens";
 import s from "./admin-nav.module.css";
 
 /**
@@ -17,32 +18,17 @@ import s from "./admin-nav.module.css";
  * looking at. Keeping them apart is why this sits in the top bar and the
  * switcher stays under the heading.
  *
- * Ordered by how often it is opened, not alphabetically or by module. Queue
- * first because it is opened every morning.
+ * The list itself lives in `admin-screens.ts` so `admin-nav.test.ts` can
+ * import it. Rendering it is not the same as listing it — this component
+ * rendered nothing on the console for as long as the console forgot to place
+ * it — so the two are guarded separately.
  */
-const SCREENS = [
-  { href: "/admin/queue", label: "Queue" },
-  { href: "/admin/tasks", label: "Inbox" },
-  { href: "/admin", label: "Clients" },
-  { href: "/admin/finance", label: "Money" },
-  { href: "/admin/leads/import", label: "Import leads" },
-  { href: "/admin/clients/new", label: "Add client" },
-  { href: "/admin/domains", label: "Domains" },
-  /*
-   * LAST, because it is opened once and then almost never — the opposite end
-   * of the same ordering that puts Queue first. It is here at all because a
-   * screen nobody can navigate to is most of the way to a screen that does
-   * not exist, which is exactly how this one came to be missing.
-   */
-  { href: "/admin/issuer", label: "Invoicing" },
-] as const;
-
 export function AdminNav() {
   const pathname = usePathname();
 
   return (
     <nav className={s.nav} aria-label="Admin sections">
-      {SCREENS.map((screen) => {
+      {ADMIN_SCREENS.map((screen) => {
         /*
          * Exact match for /admin, prefix for the rest — otherwise "Clients"
          * would light up on every page, since every path starts with /admin.

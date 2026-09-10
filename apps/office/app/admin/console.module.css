@@ -38,12 +38,64 @@
   z-index: 2;
 }
 
+/*
+ * ON A PHONE THE NAV TAKES ITS OWN ROW, because three fixed things do not fit
+ * in 375px and no amount of spacing tuning changes that.
+ *
+ * Measured: the brand is 127px and the sign-out block 104px once neither is
+ * allowed to wrap. That is 231px of a 375px screen before a single gap, so
+ * even with zero padding the nav could never exceed 144px — a stub showing
+ * "Queue Inbo…", which reads as broken rather than as scrollable.
+ *
+ * NOT THE SAME AS LETTING THE NAV WRAP, which `admin-nav.module.css` argues
+ * against and is right to: wrapped ITEMS are unbounded, three or four rows
+ * deep as labels are added, and they push the page heading off the screen.
+ * One row is bounded — it costs a fixed 40px, once, and buys the nav the full
+ * 343px, which is the whole list in two swipes.
+ *
+ * Targeted as `> nav` rather than by class because the nav lives in another
+ * CSS module and its class name is not visible from here. It is the only
+ * direct nav child of the bar; the venture switcher is inside <main>.
+ */
+@media (max-width: 30rem) {
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: var(--space-2xs);
+    padding-inline: var(--space-s);
+  }
+
+  .topbar > nav {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
+/*
+ * The sign-out block wraps to "Sign / out" at 375px otherwise — the same
+ * squeeze that stacked the brand, arriving at the other end of the bar.
+ */
+.who {
+  white-space: nowrap;
+}
+
 .brand {
   font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--text);
   margin: 0;
+  /*
+   * NOWRAP, and it is load-bearing rather than tidy. The nav beside it scrolls,
+   * so it shrinks to nothing willingly — which leaves this the only flex item
+   * the browser can take width from, and a three-word name obliges by becoming
+   * three lines. MEASURED at 375px before this line existed: the brand
+   * collapsed to 51px, "The / Creative / Current" stacked, and the bar grew
+   * from 56px to 76px on every admin screen.
+   *
+   * It shipped that way for weeks because nothing linked to these screens, so
+   * nobody was on them to see it — the same absence that hid the missing nav.
+   */
+  white-space: nowrap;
 }
 
 .who {

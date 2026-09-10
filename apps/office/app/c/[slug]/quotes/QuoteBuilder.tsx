@@ -516,7 +516,22 @@ function Builder({
                 className={s.input}
                 value={line.description}
                 onChange={(e) => setLines(edit(lines, i, { description: e.target.value }))}
-                placeholder="8kW inverter, supplied and fitted"
+                /*
+                 * NO TRADE IN THE PLACEHOLDER. This screen is the CLIENT's
+                 * own white-labelled back office, and it read "8kW inverter,
+                 * supplied and fitted" — written while the only client was a
+                 * solar installer, and shown unchanged to a travel company
+                 * pricing a holiday. A placeholder is copy the client reads
+                 * as ours, so a wrong one says we built this for somebody
+                 * else.
+                 *
+                 * INSTRUCTION RATHER THAN EXAMPLE, deliberately: every
+                 * concrete example names a trade, and the next niche is guest
+                 * houses. What it has to teach is the SHAPE — words a
+                 * customer recognises, not a part number — and that is
+                 * sayable without naming an industry.
+                 */
+                placeholder="In words the customer will recognise"
                 autoComplete="off"
               />
             </label>
